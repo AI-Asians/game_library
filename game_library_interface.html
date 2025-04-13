@@ -636,17 +636,69 @@
         // Add all elements to card
         card.appendChild(thumbnailContainer);
         card.appendChild(infoContainer);
-
         // Add click event
         card.addEventListener("click", () => {
           // Use the game name with the colon for directory
-          const gamePath = `game_library_output/${game}/game1.html`;
-          console.log("Opening game:", gamePath);
+          const baseGamePath = `game_library_output/${game}/game`;
+          console.log("Opening game:", baseGamePath + "1.html");
           showStatus(`Loading ${title.textContent}...`);
 
           // Display game in popup
-          gameFrame.src = gamePath;
+          gameFrame.src = baseGamePath + "1.html";
           gamePopupOverlay.style.display = "flex";
+
+          // Create game variant buttons
+          const variantButtonsContainer = document.createElement("div");
+          variantButtonsContainer.className = "game-variant-buttons";
+          variantButtonsContainer.style.position = "absolute";
+          variantButtonsContainer.style.top = "10px";
+          variantButtonsContainer.style.left = "50%";
+          variantButtonsContainer.style.transform = "translateX(-50%)";
+          variantButtonsContainer.style.zIndex = "1000";
+          variantButtonsContainer.style.display = "flex";
+          variantButtonsContainer.style.gap = "10px";
+
+          // Position the container above the game popup instead of inside it
+          document
+            .querySelector(".game-popup-overlay")
+            .appendChild(variantButtonsContainer);
+
+          for (let i = 1; i <= 3; i++) {
+            const button = document.createElement("button");
+            button.textContent = `Game ${i}`;
+            button.style.padding = "5px 10px";
+            button.style.cursor = "pointer";
+            button.style.backgroundColor = i === 1 ? "#4CAF50" : "#f0f0f0";
+            button.style.border = "none";
+            button.style.borderRadius = "4px";
+
+            button.addEventListener("click", () => {
+              // Update active button styling
+              variantButtonsContainer
+                .querySelectorAll("button")
+                .forEach((btn) => {
+                  btn.style.backgroundColor = "#f0f0f0";
+                });
+              button.style.backgroundColor = "#4CAF50";
+
+              // Load the selected game variant
+              gameFrame.src = baseGamePath + i + ".html";
+              showStatus(`Loading ${title.textContent} (Variant ${i})...`);
+            });
+
+            variantButtonsContainer.appendChild(button);
+          }
+
+          // Remove buttons when game is closed
+          document.getElementById("closeButton").addEventListener(
+            "click",
+            () => {
+              if (document.querySelector(".game-variant-buttons")) {
+                document.querySelector(".game-variant-buttons").remove();
+              }
+            },
+            { once: true }
+          );
         });
 
         return card;
