@@ -562,7 +562,7 @@
 
       // Build thumbnail path for a game
       function getThumbnailPath(game) {
-        return `/Users/benedictneo/game_library/game_library_output/${game}/thumbnail.png`;
+        return `game_library_output/${game}/thumbnail.png`;
       }
 
       // Show status message
@@ -640,7 +640,7 @@
         // Add click event
         card.addEventListener("click", () => {
           // Use the game name with the colon for directory
-          const gamePath = `file:///Users/benedictneo/game_library/game_library_output/${game}/game1.html`;
+          const gamePath = `game_library_output/${game}/game1.html`;
           console.log("Opening game:", gamePath);
           showStatus(`Loading ${title.textContent}...`);
 
