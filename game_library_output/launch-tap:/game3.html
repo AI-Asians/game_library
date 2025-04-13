@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capital Quiz Launcher</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #111;
+      overflow: hidden;
+    }
+    canvas {
+      border: 4px solid #444;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // Canvas setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+
+    // Game colors (limited palette)
+    const COLORS = {
+      bg: '#0f380f',       // Dark green background
+      ground: '#8bac0f',   // Light green ground
+      text: '#9bbc0f',     // Light green text
+      cannon: '#306230',   // Darker green cannon
+      projectile: '#e0f8d0', // Light projectile
+      power: '#ff0000',    // Red power meter
+      target1: '#880000',  // Red target (wrong)
+      target2: '#0000aa',  // Blue target (wrong)
+      target3: '#aaaa00',  // Yellow target (correct)
+      target4: '#aa00aa',  // Purple target (wrong)
+      explosion: '#ffffff', // White explosion
+      ui: '#306230'        // UI elements
+    };
+
+    // Game variables
+    let gameState = 'aiming'; // aiming, firing, result
+    let powerLevel = 0;
+    let powerIncreasing = true;
+    let cannonAngle = Math.PI/4;
+    let projectileX = 0;
+    let projectileY = 0;
+    let projectileVelocityX = 0;
+    let projectileVelocityY = 0;
+    let gravity = 0.2;
+    let wind = (Math.random() - 0.5) * 0.05;
+    let targets = [];
+    let explosionParticles = [];
+    let result = '';
+    let restartButton = {
+      x: canvas.width/2 - 50,
+      y: canvas.height/2 + 50,
+      width: 100,
+      height: 40
+    };
+    
+    // Sound generation
+    function playSound(frequency, duration, type = 'square') {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      oscillator.start();
+      
+      setTimeout(() => {
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        setTimeout(() => oscillator.stop(), 100);
+      }, duration);
+    }
+
+    // Initialize targets
+    function initTargets() {
+      const targetWidth = isMobile ? 60 : 100;
+      const targetHeight = isMobile ? 60 : 70;
+      const startY = isMobile ? 150 : 200;
+      const targetSpacing = isMobile ? 70 : 150;
+      
+      targets = [
+        { x: targetSpacing, y: startY, width: targetWidth, height: targetHeight, text: 'London', color: COLORS.target1, correct: false },
+        { x: targetSpacing * 2, y: startY, width: targetWidth, height: targetHeight, text: 'Berlin', color: COLORS.target2, correct: false },
+        { x: targetSpacing * 3, y: startY, width: targetWidth, height: targetHeight, text: 'Paris', color: COLORS.target3, correct: true },
+        { x: targetSpacing * 4, y: startY, width: targetWidth, height: targetHeight, text: 'Rome', color: COLORS.target4, correct: false }
+      ];
+    }
+
+    // Reset game
+    function resetGame() {
+      gameState = 'aiming';
+      powerLevel = 0;
+      powerIncreasing = true;
+      projectileX = 0;
+      projectileY = 0;
+      explosionParticles = [];
+      result = '';
+      wind = (Math.random() - 0.5) * 0.05;
+      initTargets();
+    }
+
+    // Draw pixelated rectangle
+    function drawPixelRect(x, y, width, height, color) {
+      const pixelSize = 4;
+      x = Math.floor(x / pixelSize) * pixelSize;
+      y = Math.floor(y / pixelSize) * pixelSize;
+      width = Math.ceil(width / pixelSize) * pixelSize;
+      height = Math.ceil(height / pixelSize) * pixelSize;
+      
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, width, height);
+    }
+
+    // Draw cannon
+    function drawCannon() {
+      ctx.save();
+      ctx.translate(60, canvas.height - 80);
+      ctx.rotate(-cannonAngle);
+      drawPixelRect(-10, -10, 60, 20, COLORS.cannon);
+      ctx.restore();
+    }
+
+    // Draw power meter
+    function drawPowerMeter() {
+      const meterWidth = 150;
+      const meterHeight = 20;
+      const meterX = 80;
+      const meterY = canvas.height - 40;
+      
+      // Outer border
+      drawPixelRect(meterX - 2, meterY - 2, meterWidth + 4, meterHeight + 4, COLORS.text);
+      
+      // Background
+      drawPixelRect(meterX, meterY, meterWidth, meterHeight, COLORS.ui);
+      
+      // Power level
+      drawPixelRect(meterX, meterY, meterWidth * powerLevel, meterHeight, COLORS.power);
+    }
+
+    // Draw projectile
+    function drawProjectile() {
+      if (gameState === 'firing') {
+        ctx.fillStyle = COLORS.projectile;
+        
+        // Draw trajectory trail (faded)
+        ctx.globalAlpha = 0.3;
+        for (let i = 1; i <= 5; i++) {
+          const trailX = projectileX - projectileVelocityX * i * 0.1;
+          const trailY = projectileY - projectileVelocityY * i * 0.1 + gravity * i * i * 0.5;
+          ctx.beginPath();
+          ctx.arc(trailX, trailY, 6 - i, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        
+        // Main projectile
+        ctx.beginPath();
+        ctx.arc(projectileX, projectileY, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Draw targets
+    function drawTargets() {
+      targets.forEach(target => {
+        drawPixelRect(target.x, target.y, target.width, target.height, target.color);
+        
+        // Draw target text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(target.text, target.x + target.width/2, target.y + target.height/2 + 6);
+      });
+    }
+
+    // Draw particles
+    function drawExplosion() {
+      explosionParticles.forEach(particle => {
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(particle.x, particle.y, 4, 4);
+      });
+    }
+
+    // Update explosion particles
+    function updateExplosion() {
+      for (let i = explosionParticles.length - 1; i >= 0; i--) {
+        const particle = explosionParticles[i];
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.life--;
+        
+        if (particle.life <= 0) {
+          explosionParticles.splice(i, 1);
+        }
+      }
+    }
+
+    // Create explosion
+    function createExplosion(x, y, color) {
+      for (let i = 0; i < 30; i++) {
+        explosionParticles.push({
+          x: x,
+          y: y,
+          vx: (Math.random() - 0.5) * 5,
+          vy: (Math.random() - 0.5) * 5,
+          life: 20 + Math.random() * 20,
+          color: color
+        });
+      }
+    }
+
+    // Draw the game
+    function draw() {
+      // Clear the canvas
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw ground
+      drawPixelRect(0, canvas.height - 60, canvas.width, 60, COLORS.ground);
+      
+      // Draw question
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('What is the capital of France?', canvas.width/2, 50);
+      
+      // Draw wind indicator
+      ctx.fillStyle = COLORS.text;
+      ctx.textAlign = 'right';
+      let windText = "Wind: ";
+      if (wind > 0.01) windText += ">>>";
+      else if (wind > 0) windText += ">";
+      else if (wind < -0.01) windText += "<<<";
+      else if (wind < 0) windText += "<";
+      else windText += "none";
+      ctx.fillText(windText, canvas.width - 20, 80);
+      
+      // Draw targets
+      drawTargets();
+      
+      // Draw cannon
+      drawCannon();
+      
+      // Draw power meter if in aiming state
+      if (gameState === 'aiming') {
+        drawPowerMeter();
+      }
+      
+      // Draw projectile
+      drawProjectile();
+      
+      // Draw explosion particles
+      drawExplosion();
+      
+      // Draw result
+      if (gameState === 'result') {
+        ctx.fillStyle = result === 'correct' ? '#00ff00' : '#ff0000';
+        ctx.font = '32px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(result === 'correct' ? 'CORRECT!' : 'WRONG!', canvas.width/2, canvas.height/2);
+        
+        // Draw restart button
+        drawPixelRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height, COLORS.ui);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '16px Arial';
+        ctx.fillText('RESTART', canvas.width/2, restartButton.y + 25);
+      }
+    }
+
+    // Update game state
+    function update() {
+      if (gameState === 'aiming') {
+        // Increase or decrease power level
+        if (powerIncreasing) {
+          powerLevel += 0.01;
+          if (powerLevel >= 1) {
+            powerIncreasing = false;
+          }
+        } else {
+          powerLevel -= 0.01;
+          if (powerLevel <= 0) {
+            powerIncreasing = true;
+          }
+        }
+      } else if (gameState === 'firing') {
+        // Update projectile position
+        projectileX += projectileVelocityX;
+        projectileY += projectileVelocityY;
+        projectileVelocityY += gravity;
+        projectileVelocityX += wind;
+        
+        // Check for collisions with targets
+        for (let i = 0; i < targets.length; i++) {
+          const target = targets[i];
+          if (projectileX > target.x && 
+              projectileX < target.x + target.width &&
+              projectileY > target.y && 
+              projectileY < target.y + target.height) {
+            
+            // Hit a target
+            createExplosion(projectileX, projectileY, target.color);
+            playSound(target.correct ? 440 : 220, 300);
+            
+            result = target.correct ? 'correct' : 'wrong';
+            gameState = 'result';
+            break;
+          }
+        }
+        
+        // Check if projectile is off-screen
+        if (projectileX < 0 || projectileX > canvas.width || projectileY > canvas.height) {
+          gameState = 'result';
+          result = 'wrong';
+          playSound(110, 300);
+        }
+      }
+      
+      // Update explosion particles
+      updateExplosion();
+    }
+
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Fire the projectile
+    function fireProjectile() {
+      gameState = 'firing';
+      
+      // Calculate initial position
+      projectileX = 60;
+      projectileY = canvas.height - 80;
+      
+      // Calculate velocity
+      const power = 15 * powerLevel;
+      projectileVelocityX = Math.cos(cannonAngle) * power;
+      projectileVelocityY = -Math.sin(cannonAngle) * power;
+      
+      // Play sound
+      playSound(330, 200);
+    }
+
+    // Handle click or tap
+    function handleClick(event) {
+      // Get mouse position
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      
+      if (gameState === 'aiming') {
+        fireProjectile();
+      } else if (gameState === 'result') {
+        // Check if restart button was clicked
+        if (mouseX > restartButton.x && 
+            mouseX < restartButton.x + restartButton.width &&
+            mouseY > restartButton.y && 
+            mouseY < restartButton.y + restartButton.height) {
+          resetGame();
+        }
+      }
+    }
+
+    // Initialize the game
+    function init() {
+      initTargets();
+      canvas.addEventListener('click', handleClick);
+      gameLoop();
+    }
+
+    // Start the game
+    init();
+  </script>
+</body>
+</html>

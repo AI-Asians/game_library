@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capital Puzzle Quiz</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #111;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      background-color: #000;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth < 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game colors (limited 8-bit palette)
+    const COLORS = {
+      background: '#0f380f',
+      border: '#8bac0f',
+      tile: '#306230',
+      tileHover: '#9bbc0f',
+      text: '#e0f8d0',
+      highlight: '#9bbc0f',
+      emptySlot: '#0f380f',
+      answerZone: '#88531b',
+      answerZoneHighlight: '#d77643',
+      correct: '#73c936',
+      incorrect: '#cf573c'
+    };
+    
+    // Audio context for retro sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Sound effects
+    function playSound(type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      switch(type) {
+        case 'move':
+          oscillator.type = 'square';
+          oscillator.frequency.value = 220;
+          gainNode.gain.value = 0.1;
+          oscillator.start();
+          setTimeout(() => oscillator.stop(), 100);
+          break;
+        case 'correct':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+          oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+          gainNode.gain.value = 0.1;
+          oscillator.start();
+          setTimeout(() => oscillator.stop(), 300);
+          break;
+        case 'wrong':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+          oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.1);
+          gainNode.gain.value = 0.1;
+          oscillator.start();
+          setTimeout(() => oscillator.stop(), 300);
+          break;
+      }
+    }
+    
+    // Game state
+    let gameState = {
+      tiles: [],
+      emptyTile: { row: 0, col: 0 },
+      gridSize: 3,
+      tileWidth: 0,
+      tileHeight: 0,
+      gameOver: false,
+      result: null,
+      answerZone: { row: 2, col: 1 },
+      selectedTile: null,
+      answerOptions: [
+        "Paris",
+        "London",
+        "Berlin",
+        "Madrid",
+        "Rome",
+        "empty",
+        "Oslo",
+        "Dublin",
+        "Amsterdam"
+      ]
+    };
+    
+    // Initialize game
+    function initGame() {
+      gameState.gameOver = false;
+      gameState.result = null;
+      
+      // Calculate tile dimensions
+      const boardSize = Math.min(canvas.width * 0.8, canvas.height * 0.6);
+      gameState.tileWidth = boardSize / gameState.gridSize;
+      gameState.tileHeight = boardSize / gameState.gridSize;
+      
+      // Initial tile positions (ordered)
+      gameState.tiles = [];
+      for (let i = 0; i < gameState.gridSize * gameState.gridSize; i++) {
+        const row = Math.floor(i / gameState.gridSize);
+        const col = i % gameState.gridSize;
+        gameState.tiles.push({
+          row,
+          col,
+          content: gameState.answerOptions[i],
+          originalPos: i
+        });
+        if (gameState.answerOptions[i] === "empty") {
+          gameState.emptyTile = { row, col };
+        }
+      }
+      
+      // Shuffle the tiles (ensure solvable)
+      shuffleTiles();
+    }
+    
+    // Check if puzzle is solvable
+    function isSolvable(tiles) {
+      let inversionCount = 0;
+      const flatTiles = tiles.filter(t => t.content !== "empty").map(t => t.content);
+      
+      for (let i = 0; i < flatTiles.length - 1; i++) {
+        for (let j = i + 1; j < flatTiles.length; j++) {
+          if (flatTiles[i] > flatTiles[j]) {
+            inversionCount++;
+          }
+        }
+      }
+      
+      // For 3x3 grid, puzzle is solvable if inversion count is even
+      return inversionCount % 2 === 0;
+    }
+    
+    // Shuffle tiles while ensuring the puzzle is solvable
+    function shuffleTiles() {
+      let shuffledTiles;
+      do {
+        shuffledTiles = [...gameState.tiles];
+        for (let i = shuffledTiles.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledTiles[i], shuffledTiles[j]] = [shuffledTiles[j], shuffledTiles[i]];
+          
+          // Update row and col properties after swap
+          shuffledTiles[i].row = Math.floor(i / gameState.gridSize);
+          shuffledTiles[i].col = i % gameState.gridSize;
+          shuffledTiles[j].row = Math.floor(j / gameState.gridSize);
+          shuffledTiles[j].col = j % gameState.gridSize;
+          
+          // Update empty tile position
+          if (shuffledTiles[i].content === "empty") {
+            gameState.emptyTile = { row: shuffledTiles[i].row, col: shuffledTiles[i].col };
+          } else if (shuffledTiles[j].content === "empty") {
+            gameState.emptyTile = { row: shuffledTiles[j].row, col: shuffledTiles[j].col };
+          }
+        }
+      } while (!isSolvable(shuffledTiles));
+      
+      gameState.tiles = shuffledTiles;
+    }
+    
+    // Draw the game
+    function drawGame() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw title/question
+      ctx.fillStyle = COLORS.text;
+      ctx.font = `${Math.floor(canvas.width / 30)}px sans-serif`;
+      ctx.textAlign = 'center';
+      const question = "What is the capital of France?";
+      ctx.fillText(question, canvas.width / 2, canvas.height * 0.1);
+      
+      // Draw instruction
+      ctx.font = `${Math.floor(canvas.width / 40)}px sans-serif`;
+      ctx.fillText("Slide the tiles and move the correct answer to the gold square", canvas.width / 2, canvas.height * 0.15);
+      
+      // Calculate board position (centered)
+      const boardSize = gameState.tileWidth * gameState.gridSize;
+      const boardX = (canvas.width - boardSize) / 2;
+      const boardY = canvas.height * 0.2;
+      
+      // Draw answer zone
+      const answerX = boardX + gameState.answerZone.col * gameState.tileWidth;
+      const answerY = boardY + gameState.answerZone.row * gameState.tileHeight;
+      ctx.fillStyle = COLORS.answerZone;
+      ctx.fillRect(
+        answerX, 
+        answerY, 
+        gameState.tileWidth, 
+        gameState.tileHeight
+      );
+      
+      // Draw "Submit" text on answer zone
+      ctx.fillStyle = COLORS.text;
+      ctx.font = `${Math.floor(gameState.tileWidth / 6)}px sans-serif`;
+      ctx.fillText("SUBMIT", 
+        answerX + gameState.tileWidth / 2, 
+        answerY + gameState.tileHeight + 20
+      );
+      
+      // Draw tiles
+      for (const tile of gameState.tiles) {
+        if (tile.content === "empty") continue;
+        
+        const x = boardX + tile.col * gameState.tileWidth;
+        const y = boardY + tile.row * gameState.tileHeight;
+        
+        // Determine if tile can be moved
+        const isMovable = isAdjacentToEmpty(tile);
+        
+        // Tile background
+        ctx.fillStyle = COLORS.tile;
+        if (gameState.selectedTile === tile) {
+          ctx.fillStyle = COLORS.tileHover;
+        }
+        ctx.fillRect(x, y, gameState.tileWidth, gameState.tileHeight);
+        
+        // Tile border
+        ctx.strokeStyle = COLORS.border;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, gameState.tileWidth, gameState.tileHeight);
+        
+        // Highlight if movable
+        if (isMovable) {
+          // Draw 8-bit style arrow indicators
+          ctx.fillStyle = COLORS.highlight;
+          const arrowSize = gameState.tileWidth / 8;
+          
+          if (tile.row > gameState.emptyTile.row) { // Can move up
+            drawPixelArrow(x + gameState.tileWidth/2, y + arrowSize, "up", arrowSize);
+          } else if (tile.row < gameState.emptyTile.row) { // Can move down
+            drawPixelArrow(x + gameState.tileWidth/2, y + gameState.tileHeight - arrowSize, "down", arrowSize);
+          } else if (tile.col > gameState.emptyTile.col) { // Can move left
+            drawPixelArrow(x + arrowSize, y + gameState.tileHeight/2, "left", arrowSize);
+          } else if (tile.col < gameState.emptyTile.col) { // Can move right
+            drawPixelArrow(x + gameState.tileWidth - arrowSize, y + gameState.tileHeight/2, "right", arrowSize);
+          }
+        }
+        
+        // Tile content text
+        ctx.fillStyle = COLORS.text;
+        ctx.font = `${Math.floor(gameState.tileWidth / 6)}px sans-serif`;
+        ctx.fillText(
+          tile.content, 
+          x + gameState.tileWidth / 2, 
+          y + gameState.tileHeight / 2 + 5
+        );
+        
+        // Check if tile is in answer zone
+        if (tile.row === gameState.answerZone.row && tile.col === gameState.answerZone.col) {
+          // Highlight answer zone
+          ctx.strokeStyle = COLORS.answerZoneHighlight;
+          ctx.lineWidth = 5;
+          ctx.strokeRect(x, y, gameState.tileWidth, gameState.tileHeight);
+        }
+      }
+      
+      // Draw empty slot
+      const emptyX = boardX + gameState.emptyTile.col * gameState.tileWidth;
+      const emptyY = boardY + gameState.emptyTile.row * gameState.tileHeight;
+      ctx.fillStyle = COLORS.emptySlot;
+      ctx.fillRect(emptyX, emptyY, gameState.tileWidth, gameState.tileHeight);
+      
+      // Game over state
+      if (gameState.gameOver) {
+        // Overlay
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Result
+        ctx.fillStyle = gameState.result ? COLORS.correct : COLORS.incorrect;
+        ctx.font = `${Math.floor(canvas.width / 15)}px sans-serif`;
+        ctx.fillText(
+          gameState.result ? "Correct!" : "Incorrect!", 
+          canvas.width / 2, 
+          canvas.height / 2
+        );
+        
+        // Draw restart button
+        const btnWidth = canvas.width / 4;
+        const btnHeight = canvas.height / 12;
+        const btnX = (canvas.width - btnWidth) / 2;
+        const btnY = canvas.height / 2 + btnHeight;
+        
+        ctx.fillStyle = COLORS.tile;
+        ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+        ctx.strokeStyle = COLORS.border;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(btnX, btnY, btnWidth, btnHeight);
+        
+        ctx.fillStyle = COLORS.text;
+        ctx.font = `${Math.floor(canvas.width / 30)}px sans-serif`;
+        ctx.fillText("Restart", canvas.width / 2, btnY + btnHeight / 1.5);
+      }
+    }
+    
+    // Draw 8-bit style arrow
+    function drawPixelArrow(x, y, direction, size) {
+      ctx.fillStyle = COLORS.highlight;
+      
+      switch (direction) {
+        case "up":
+          ctx.fillRect(x - size, y + size, size*2, size/2);
+          ctx.fillRect(x - size/2, y, size, size);
+          ctx.fillRect(x, y - size/2, size/3, size);
+          ctx.fillRect(x - size/3, y - size/2, size/3, size);
+          break;
+        case "down":
+          ctx.fillRect(x - size, y - size, size*2, size/2);
+          ctx.fillRect(x - size/2, y - size, size, size);
+          ctx.fillRect(x, y, size/3, size);
+          ctx.fillRect(x - size/3, y, size/3, size);
+          break;
+        case "left":
+          ctx.fillRect(x + size, y - size, size/2, size*2);
+          ctx.fillRect(x, y - size/2, size, size);
+          ctx.fillRect(x - size/2, y, size, size/3);
+          ctx.fillRect(x - size/2, y - size/3, size, size/3);
+          break;
+        case "right":
+          ctx.fillRect(x - size, y - size, size/2, size*2);
+          ctx.fillRect(x - size, y - size/2, size, size);
+          ctx.fillRect(x, y, size, size/3);
+          ctx.fillRect(x, y - size/3, size, size/3);
+          break;
+      }
+    }
+    
+    // Check if a tile is adjacent to the empty spot
+    function isAdjacentToEmpty(tile) {
+      return (
+        (Math.abs(tile.row - gameState.emptyTile.row) === 1 && tile.col === gameState.emptyTile.col) ||
+        (Math.abs(tile.col - gameState.emptyTile.col) === 1 && tile.row === gameState.emptyTile.row)
+      );
+    }
+    
+    // Check for win condition
+    function checkAnswer() {
+      // Find which tile is in the answer zone
+      const answerTile = gameState.tiles.find(
+        t => t.row === gameState.answerZone.row && t.col === gameState.answerZone.col
+      );
+      
+      if (answerTile) {
+        gameState.gameOver = true;
+        gameState.result = answerTile.content === "Paris";
+        
+        // Play appropriate sound
+        if (gameState.result) {
+          playSound('correct');
+        } else {
+          playSound('wrong');
+        }
+      }
+    }
+    
+    // Move a tile
+    function moveTile(tile) {
+      if (!isAdjacentToEmpty(tile)) return;
+      
+      // Swap positions with empty tile
+      const tempRow = tile.row;
+      const tempCol = tile.col;
+      
+      tile.row = gameState.emptyTile.row;
+      tile.col = gameState.emptyTile.col;
+      
+      gameState.emptyTile.row = tempRow;
+      gameState.emptyTile.col = tempCol;
+      
+      playSound('move');
+      
+      // Check if a tile is in the answer zone
+      if (tile.row === gameState.answerZone.row && tile.col === gameState.answerZone.col) {
+        checkAnswer();
+      }
+    }
+    
+    // Handle mouse/touch events
+    function handleClick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      let x, y;
+      if (e.type.startsWith('touch')) {
+        x = (e.touches[0].clientX - rect.left) * scaleX;
+        y = (e.touches[0].clientY - rect.top) * scaleY;
+      } else {
+        x = (e.clientX - rect.left) * scaleX;
+        y = (e.clientY - rect.top) * scaleY;
+      }
+      
+      // Calculate board position
+      const boardSize = gameState.tileWidth * gameState.gridSize;
+      const boardX = (canvas.width - boardSize) / 2;
+      const boardY = canvas.height * 0.2;
+      
+      if (gameState.gameOver) {
+        // Check if restart button is clicked
+        const btnWidth = canvas.width / 4;
+        const btnHeight = canvas.height / 12;
+        const btnX = (canvas.width - btnWidth) / 2;
+        const btnY = canvas.height / 2 + btnHeight;
+        
+        if (
+          x >= btnX && x <= btnX + btnWidth &&
+          y >= btnY && y <= btnY + btnHeight
+        ) {
+          initGame();
+        }
+      } else {
+        // Check if a tile is clicked
+        for (const tile of gameState.tiles) {
+          if (tile.content === "empty") continue;
+          
+          const tileX = boardX + tile.col * gameState.tileWidth;
+          const tileY = boardY + tile.row * gameState.tileHeight;
+          
+          if (
+            x >= tileX && x <= tileX + gameState.tileWidth &&
+            y >= tileY && y <= tileY + gameState.tileHeight
+          ) {
+            moveTile(tile);
+            break;
+          }
+        }
+      }
+    }
+    
+    // Handle mouse move for hover effect
+    function handleMouseMove(e) {
+      if (gameState.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      
+      // Calculate board position
+      const boardSize = gameState.tileWidth * gameState.gridSize;
+      const boardX = (canvas.width - boardSize) / 2;
+      const boardY = canvas.height * 0.2;
+      
+      gameState.selectedTile = null;
+      
+      // Check if hovering over a tile
+      for (const tile of gameState.tiles) {
+        if (tile.content === "empty") continue;
+        
+        const tileX = boardX + tile.col * gameState.tileWidth;
+        const tileY = boardY + tile.row * gameState.tileHeight;
+        
+        if (
+          x >= tileX && x <= tileX + gameState.tileWidth &&
+          y >= tileY && y <= tileY + gameState.tileHeight &&
+          isAdjacentToEmpty(tile)
+        ) {
+          gameState.selectedTile = tile;
+          break;
+        }
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      drawGame();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Event listeners
+    canvas.addEventListener('mousedown', handleClick);
+    canvas.addEventListener('touchstart', handleClick);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    
+    // Start the game
+    initGame();
+    gameLoop();
+  </script>
+</body>
+</html>

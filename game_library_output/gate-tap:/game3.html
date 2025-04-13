@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medieval Gate True/False Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh;
+        }
+        canvas { 
+            max-width: 100%; 
+            max-height: 100%; 
+            display: block; 
+            image-rendering: pixelated; 
+        }
+        #restartBtn {
+            position: absolute;
+            padding: 10px 20px;
+            background: #7B5E57;
+            color: white;
+            border: 4px solid #4D3833;
+            font-family: sans-serif;
+            font-size: 18px;
+            cursor: pointer;
+            display: none;
+            image-rendering: pixelated;
+        }
+        #restartBtn:hover {
+            background: #8E6E67;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const colors = {
+            sky: '#5C94FC',
+            ground: '#507B2A',
+            wall: '#8E6E67',
+            wallDark: '#4D3833',
+            trueGate: '#6B8CFF',
+            falseGate: '#B55E4F',
+            text: '#FFF',
+            shadow: 'rgba(0,0,0,0.5)',
+            stone: '#A4A4A4',
+            stoneDark: '#646464',
+            torch: '#FFA91F',
+            torchGlow: '#FFDB72'
+        };
+        
+        // Game state
+        let gameState = {
+            question: "The Great Wall of China is visible from space.",
+            correctAnswer: false,
+            selectedAnswer: null,
+            gateLeft: { x: canvas.width * 0.25, y: canvas.height * 0.55, width: canvas.width * 0.2, height: canvas.height * 0.25, open: 0, wobble: 0 },
+            gateRight: { x: canvas.width * 0.55, y: canvas.height * 0.55, width: canvas.width * 0.2, height: canvas.height * 0.25, open: 0, wobble: 0 },
+            gameOver: false
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Generate beep sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'click':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime);
+                    }, 100);
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime);
+                    }, 200);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(196, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(146.83, audioCtx.currentTime);
+                    }, 150);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw pixel art stone wall
+        function drawWall(x, y, width, height) {
+            const blockWidth = width / 8;
+            const blockHeight = height / 6;
+            
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 6; j++) {
+                    // Alternate stone pattern
+                    const offsetX = j % 2 === 0 ? 0 : blockWidth / 2;
+                    const stoneWidth = j % 2 === 0 && i === 7 ? blockWidth / 2 : blockWidth;
+                    
+                    // Draw stone with slight random color variation
+                    const colorVar = Math.random() * 15 - 7;
+                    const baseColor = parseInt(colors.wall.substr(1), 16);
+                    const color = '#' + Math.max(0, Math.min(0xFFFFFF, baseColor + colorVar)).toString(16).padStart(6, '0');
+                    
+                    if (i < 8 && (j % 2 === 0 || i < 7)) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(
+                            Math.floor(x + i * blockWidth + offsetX), 
+                            Math.floor(y + j * blockHeight), 
+                            Math.ceil(stoneWidth), 
+                            Math.ceil(blockHeight)
+                        );
+                        
+                        // Stone borders
+                        ctx.strokeStyle = colors.wallDark;
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(
+                            Math.floor(x + i * blockWidth + offsetX), 
+                            Math.floor(y + j * blockHeight), 
+                            Math.ceil(stoneWidth), 
+                            Math.ceil(blockHeight)
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw decorative torch
+        function drawTorch(x, y) {
+            // Torch holder
+            ctx.fillStyle = colors.stoneDark;
+            ctx.fillRect(x - 2, y, 4, 10);
+            
+            // Torch base
+            ctx.fillStyle = colors.wallDark;
+            ctx.fillRect(x - 6, y - 15, 12, 15);
+            
+            // Flame animation
+            const flickerOffset = Math.sin(Date.now() / 100) * 3;
+            
+            // Flame glow
+            ctx.fillStyle = colors.torchGlow;
+            ctx.beginPath();
+            ctx.arc(x, y - 20, 10 + flickerOffset, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Flame
+            ctx.fillStyle = colors.torch;
+            ctx.beginPath();
+            ctx.moveTo(x - 4, y - 15);
+            ctx.lineTo(x, y - 25 - flickerOffset);
+            ctx.lineTo(x + 4, y - 15);
+            ctx.fill();
+        }
+        
+        // Draw gate with medieval style
+        function drawGate(gate, text, isSelected, isCorrect) {
+            // Apply wobble animation
+            const wobbleOffset = Math.sin(gate.wobble) * 2;
+            
+            // Gate shadow
+            ctx.fillStyle = colors.shadow;
+            ctx.fillRect(gate.x + 5, gate.y + 5, gate.width, gate.height);
+            
+            // Gate frame
+            ctx.fillStyle = colors.wallDark;
+            ctx.fillRect(gate.x - 10, gate.y - 10, gate.width + 20, gate.height + 10);
+            
+            // Stone wall around gate
+            drawWall(gate.x - 10, gate.y - 10, gate.width + 20, gate.height + 10);
+            
+            // Draw torches next to gate
+            drawTorch(gate.x - 15, gate.y + 50);
+            drawTorch(gate.x + gate.width + 15, gate.y + 50);
+            
+            // Gate door (with wobble and opening animation)
+            let doorX = gate.x;
+            let doorWidth = gate.width;
+            
+            if (gate.open > 0) {
+                doorX = gate.x + (gate.open * gate.width / 2);
+                doorWidth = gate.width - (gate.open * gate.width);
+            }
+            
+            ctx.fillStyle = text === "TRUE" ? colors.trueGate : colors.falseGate;
+            ctx.fillRect(
+                doorX + wobbleOffset, 
+                gate.y, 
+                doorWidth, 
+                gate.height
+            );
+            
+            // Gate hinges
+            ctx.fillStyle = colors.stoneDark;
+            ctx.fillRect(gate.x + 5, gate.y + 20, 8, 12);
+            ctx.fillRect(gate.x + 5, gate.y + gate.height - 30, 8, 12);
+            
+            // Gate planks
+            ctx.fillStyle = text === "TRUE" ? colors.trueGate : colors.falseGate;
+            for (let i = 1; i < 5; i++) {
+                ctx.fillRect(
+                    doorX + wobbleOffset, 
+                    gate.y + (i * gate.height / 5) - 10, 
+                    doorWidth, 
+                    15
+                );
+            }
+            
+            // Draw gate text
+            ctx.fillStyle = colors.text;
+            ctx.font = Math.floor(gate.width / 6) + "px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, doorX + doorWidth / 2 + wobbleOffset, gate.y + gate.height / 2);
+            
+            // Show result if gate is opened
+            if (gate.open >= 1 && isSelected) {
+                ctx.fillStyle = isCorrect ? 'rgba(0,255,0,0.5)' : 'rgba(255,0,0,0.5)';
+                ctx.fillRect(gate.x, gate.y, gate.width, gate.height);
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = Math.floor(gate.width / 8) + "px sans-serif";
+                ctx.fillText(
+                    isCorrect ? "CORRECT!" : "WRONG!", 
+                    gate.x + gate.width / 2, 
+                    gate.y + gate.height / 2
+                );
+            }
+        }
+        
+        // Draw the entire game scene
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw sky and ground
+            ctx.fillStyle = colors.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height * 0.7);
+            ctx.fillStyle = colors.ground;
+            ctx.fillRect(0, canvas.height * 0.7, canvas.width, canvas.height * 0.3);
+            
+            // Draw castle wall background
+            const wallHeight = canvas.height * 0.3;
+            const wallY = canvas.height * 0.7 - wallHeight;
+            ctx.fillStyle = colors.wallDark;
+            ctx.fillRect(0, wallY, canvas.width, wallHeight);
+            
+            // Draw stone pattern on wall
+            for (let x = 0; x < canvas.width; x += 40) {
+                for (let y = wallY; y < canvas.height * 0.7; y += 20) {
+                    const stoneWidth = 38;
+                    const stoneHeight = 18;
+                    
+                    // Alternate pattern
+                    const offsetX = Math.floor(y / 20) % 2 === 0 ? 0 : 20;
+                    
+                    ctx.fillStyle = colors.wall;
+                    ctx.fillRect(x + offsetX, y, stoneWidth, stoneHeight);
+                    
+                    // Stone borders
+                    ctx.strokeStyle = colors.wallDark;
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x + offsetX, y, stoneWidth, stoneHeight);
+                }
+            }
+            
+            // Draw question box
+            const padding = canvas.width * 0.05;
+            const boxWidth = canvas.width - padding * 2;
+            const boxHeight = canvas.height * 0.15;
+            const boxY = canvas.height * 0.2;
+            
+            ctx.fillStyle = colors.shadow;
+            ctx.fillRect(padding + 5, boxY + 5, boxWidth, boxHeight);
+            
+            ctx.fillStyle = colors.wallDark;
+            ctx.fillRect(padding, boxY, boxWidth, boxHeight);
+            
+            // Draw stone pattern on question box
+            for (let x = padding; x < padding + boxWidth; x += 20) {
+                for (let y = boxY; y < boxY + boxHeight; y += 10) {
+                    const stoneWidth = 18;
+                    const stoneHeight = 8;
+                    
+                    // Alternate pattern
+                    const offsetX = Math.floor(y / 10) % 2 === 0 ? 0 : 10;
+                    
+                    ctx.fillStyle = colors.wall;
+                    ctx.fillRect(x + offsetX, y, stoneWidth, stoneHeight);
+                }
+            }
+            
+            // Draw question text
+            ctx.fillStyle = colors.text;
+            ctx.font = Math.floor(canvas.width / 30) + "px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(
+                gameState.question, 
+                canvas.width / 2, 
+                boxY + boxHeight / 2
+            );
+            
+            // Draw gates
+            drawGate(
+                gameState.gateLeft, 
+                "TRUE", 
+                gameState.selectedAnswer === true,
+                gameState.correctAnswer === true
+            );
+            
+            drawGate(
+                gameState.gateRight, 
+                "FALSE", 
+                gameState.selectedAnswer === false,
+                gameState.correctAnswer === false
+            );
+        }
+        
+        // Update game logic
+        function update() {
+            // Update gate wobble animation
+            gameState.gateLeft.wobble += 0.05;
+            gameState.gateRight.wobble += 0.05;
+            
+            // Update gate opening animation
+            if (gameState.selectedAnswer === true && gameState.gateLeft.open < 1) {
+                gameState.gateLeft.open = Math.min(1, gameState.gateLeft.open + 0.1);
+            }
+            
+            if (gameState.selectedAnswer === false && gameState.gateRight.open < 1) {
+                gameState.gateRight.open = Math.min(1, gameState.gateRight.open + 0.1);
+            }
+            
+            // Show restart button when gate is fully open
+            if ((gameState.selectedAnswer === true && gameState.gateLeft.open >= 1) ||
+                (gameState.selectedAnswer === false && gameState.gateRight.open >= 1)) {
+                
+                if (!gameState.gameOver) {
+                    gameState.gameOver = true;
+                    
+                    // Position the restart button at the center bottom
+                    restartBtn.style.display = 'block';
+                    restartBtn.style.left = (canvas.width / 2 - restartBtn.offsetWidth / 2) + 'px';
+                    restartBtn.style.top = (canvas.height * 0.85) + 'px';
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch click
+        function handleClick(e) {
+            if (gameState.selectedAnswer !== null) return;
+            
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
+            
+            // Check if true gate was clicked
+            if (clickX >= gameState.gateLeft.x && 
+                clickX <= gameState.gateLeft.x + gameState.gateLeft.width &&
+                clickY >= gameState.gateLeft.y && 
+                clickY <= gameState.gateLeft.y + gameState.gateLeft.height) {
+                
+                gameState.selectedAnswer = true;
+                playSound('click');
+                
+                // After a slight delay, play the result sound
+                setTimeout(() => {
+                    playSound(gameState.selectedAnswer === gameState.correctAnswer ? 'correct' : 'incorrect');
+                }, 300);
+            }
+            
+            // Check if false gate was clicked
+            if (clickX >= gameState.gateRight.x && 
+                clickX <= gameState.gateRight.x + gameState.gateRight.width &&
+                clickY >= gameState.gateRight.y && 
+                clickY <= gameState.gateRight.y + gameState.gateRight.height) {
+                
+                gameState.selectedAnswer = false;
+                playSound('click');
+                
+                // After a slight delay, play the result sound
+                setTimeout(() => {
+                    playSound(gameState.selectedAnswer === gameState.correctAnswer ? 'correct' : 'incorrect');
+                }, 300);
+            }
+        }
+        
+        // Setup event listeners
+        canvas.addEventListener('click', handleClick);
+        
+        // Restart button handler
+        restartBtn.addEventListener('click', () => {
+            gameState.selectedAnswer = null;
+            gameState.gateLeft.open = 0;
+            gameState.gateRight.open = 0;
+            gameState.gameOver = false;
+            restartBtn.style.display = 'none';
+            playSound('click');
+        });
+        
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>

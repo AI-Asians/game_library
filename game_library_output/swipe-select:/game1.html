@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Detect if mobile
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (retro palette)
+        const COLORS = {
+            background: '#5A6988',
+            question: '#FFFFFF',
+            optionText: '#FFFFFF',
+            optionBg: '#2C3E50',
+            selectedBg: '#E74C3C',
+            correctBg: '#27AE60',
+            wrongBg: '#C0392B',
+            border: '#8E44AD',
+            highlight: '#F39C12',
+            arrow: '#ECF0F1',
+            shadowDark: '#34495E',
+            uiAccent: '#3498DB'
+        };
+        
+        // Game variables
+        const question = "What is the capital of France?";
+        const options = ["London", "Berlin", "Paris", "Madrid", "Rome"];
+        const correctAnswer = "Paris";
+        
+        // Swipe mechanics
+        let options_x = [];
+        const optionWidth = Math.min(canvas.width * 0.7, 200);
+        const optionHeight = 60;
+        const optionSpacing = 80;
+        const centerY = canvas.height / 2;
+        const centerX = canvas.width / 2;
+        
+        // Initialize options positions
+        for (let i = 0; i < options.length; i++) {
+            options_x.push(centerX + i * optionSpacing);
+        }
+        
+        // Physics variables
+        let velocity = 0;
+        let isDragging = false;
+        let startX = 0;
+        let lastX = 0;
+        let selectedOption = null;
+        let gameOver = false;
+        let correct = false;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Play a beep sound
+        function playBeep(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        // Play a tick sound
+        function playTick() {
+            playBeep(800, 30, 'square');
+        }
+        
+        // Play correct sound
+        function playCorrect() {
+            playBeep(440, 100, 'square');
+            setTimeout(() => playBeep(660, 150, 'square'), 100);
+            setTimeout(() => playBeep(880, 200, 'square'), 250);
+        }
+        
+        // Play wrong sound
+        function playWrong() {
+            playBeep(300, 200, 'sawtooth');
+            setTimeout(() => playBeep(200, 400, 'sawtooth'), 200);
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color, shadowColor = null) {
+            const pixelSize = 4;
+            ctx.fillStyle = color;
+            
+            // Draw shadow if specified
+            if (shadowColor) {
+                ctx.fillStyle = shadowColor;
+                for (let i = 0; i < width; i += pixelSize) {
+                    for (let j = 0; j < height; j += pixelSize) {
+                        ctx.fillRect(x + i + pixelSize, y + j + pixelSize, pixelSize, pixelSize);
+                    }
+                }
+            }
+            
+            // Draw main rectangle
+            ctx.fillStyle = color;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        // Draw pixelated border
+        function drawPixelBorder(x, y, width, height, thickness, color) {
+            // Top
+            drawPixelRect(x, y, width, thickness, color);
+            // Bottom
+            drawPixelRect(x, y + height - thickness, width, thickness, color);
+            // Left
+            drawPixelRect(x, y, thickness, height, color);
+            // Right
+            drawPixelRect(x + width - thickness, y, thickness, height, color);
+        }
+        
+        // Draw a pixelated arrow
+        function drawArrow(x, y, direction, color) {
+            const size = 20;
+            ctx.fillStyle = color;
+            
+            if (direction === 'left') {
+                for (let i = 0; i < size; i += 4) {
+                    ctx.fillRect(x - i/2, y - i/2, 4, 4);
+                    ctx.fillRect(x - i/2, y + i/2, 4, 4);
+                }
+                for (let i = 0; i < size; i += 4) {
+                    ctx.fillRect(x + i/2 - size/2, y, 4, 4);
+                }
+            } else {
+                for (let i = 0; i < size; i += 4) {
+                    ctx.fillRect(x + i/2, y - i/2, 4, 4);
+                    ctx.fillRect(x + i/2, y + i/2, 4, 4);
+                }
+                for (let i = 0; i < size; i += 4) {
+                    ctx.fillRect(x - i/2 - size/2, y, 4, 4);
+                }
+            }
+        }
+        
+        // Get current centered option
+        function getCenteredOption() {
+            let closestDistance = Infinity;
+            let closestIndex = -1;
+            
+            for (let i = 0; i < options.length; i++) {
+                const distance = Math.abs(options_x[i] - centerX);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestIndex = i;
+                }
+            }
+            
+            // Only return as centered if it's close enough to center
+            return closestDistance < optionWidth / 2 ? options[closestIndex] : null;
+        }
+        
+        // Main game loop
+        function update() {
+            // Apply velocity with friction
+            if (!isDragging && !gameOver) {
+                for (let i = 0; i < options.length; i++) {
+                    options_x[i] += velocity;
+                }
+                
+                velocity *= 0.95; // Apply friction
+                
+                // Check if velocity is very low and snap to closest option
+                if (Math.abs(velocity) < 0.5) {
+                    velocity = 0;
+                    
+                    // Check if any option is centered
+                    const centeredOption = getCenteredOption();
+                    if (centeredOption && !selectedOption) {
+                        selectedOption = centeredOption;
+                        
+                        // Check if answer is correct
+                        if (selectedOption === correctAnswer) {
+                            correct = true;
+                            playCorrect();
+                        } else {
+                            correct = false;
+                            playWrong();
+                        }
+                        
+                        // End game
+                        gameOver = true;
+                        setTimeout(showRestartButton, 1000);
+                    }
+                }
+                
+                // Tick sound when option passes center
+                for (let i = 0; i < options.length; i++) {
+                    if ((options_x[i] - centerX) * (options_x[i] - velocity - centerX) <= 0) {
+                        playTick();
+                    }
+                }
+            }
+            
+            draw();
+            requestAnimationFrame(update);
+        }
+        
+        // Draw everything
+        function draw() {
+            // Background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw some 8-bit decoration
+            for (let i = 0; i < 12; i++) {
+                const x = (i % 4) * (canvas.width / 4);
+                const y = Math.floor(i / 4) * 20;
+                drawPixelRect(x, y, 12, 12, COLORS.uiAccent);
+                drawPixelRect(x, canvas.height - y - 12, 12, 12, COLORS.uiAccent);
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 120);
+            
+            // Selection zone indicator
+            const selectionZoneWidth = optionWidth + 20;
+            const selectionZoneHeight = optionHeight + 40;
+            drawPixelRect(centerX - selectionZoneWidth / 2, centerY - selectionZoneHeight / 2, 
+                         selectionZoneWidth, selectionZoneHeight, '#00000000');
+            drawPixelBorder(centerX - selectionZoneWidth / 2, centerY - selectionZoneHeight / 2, 
+                         selectionZoneWidth, selectionZoneHeight, 4, COLORS.highlight);
+            
+            // Draw swipe arrows
+            drawArrow(80, centerY, 'left', COLORS.arrow);
+            drawArrow(canvas.width - 80, centerY, 'right', COLORS.arrow);
+            
+            // Draw options
+            for (let i = 0; i < options.length; i++) {
+                const option = options[i];
+                const x = options_x[i] - optionWidth / 2;
+                const y = centerY - optionHeight / 2;
+                
+                let bgColor = COLORS.optionBg;
+                
+                // Change color based on game state
+                if (gameOver && option === selectedOption) {
+                    bgColor = correct ? COLORS.correctBg : COLORS.wrongBg;
+                } else if (option === getCenteredOption()) {
+                    bgColor = COLORS.selectedBg;
+                }
+                
+                // Draw option background with shadow
+                drawPixelRect(x, y, optionWidth, optionHeight, bgColor, COLORS.shadowDark);
+                
+                // Draw border for centered option
+                if (option === getCenteredOption() || (gameOver && option === selectedOption)) {
+                    drawPixelBorder(x, y, optionWidth, optionHeight, 4, COLORS.border);
+                }
+                
+                // Draw option text
+                ctx.fillStyle = COLORS.optionText;
+                ctx.font = "20px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(option, options_x[i], centerY + 7);
+            }
+            
+            // Draw restart button if game is over
+            if (gameOver && restartButtonVisible) {
+                drawPixelRect(
+                    restartButton.x, 
+                    restartButton.y, 
+                    restartButton.width, 
+                    restartButton.height, 
+                    COLORS.uiAccent, 
+                    COLORS.shadowDark
+                );
+                drawPixelBorder(
+                    restartButton.x, 
+                    restartButton.y, 
+                    restartButton.width, 
+                    restartButton.height, 
+                    4, 
+                    COLORS.border
+                );
+                
+                ctx.fillStyle = COLORS.optionText;
+                ctx.font = "20px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("Restart", 
+                    restartButton.x + restartButton.width / 2, 
+                    restartButton.y + restartButton.height / 2 + 7
+                );
+            }
+        }
+        
+        // Input event handlers
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleStart({ clientX: touch.clientX });
+        });
+        
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleMove({ clientX: touch.clientX });
+        });
+        
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            handleEnd();
+        });
+        
+        function handleStart(e) {
+            if (gameOver && restartButtonVisible) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                if (mouseX >= restartButton.x && 
+                    mouseX <= restartButton.x + restartButton.width &&
+                    mouseY >= restartButton.y && 
+                    mouseY <= restartButton.y + restartButton.height) {
+                    resetGame();
+                    return;
+                }
+            }
+            
+            if (!gameOver) {
+                isDragging = true;
+                const rect = canvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                lastX = startX;
+            }
+        }
+        
+        function handleMove(e) {
+            if (isDragging && !gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const currentX = e.clientX - rect.left;
+                const dx = currentX - lastX;
+                
+                // Move all options
+                for (let i = 0; i < options.length; i++) {
+                    options_x[i] += dx;
+                }
+                
+                velocity = dx * 0.8; // Set velocity based on movement
+                lastX = currentX;
+            }
+        }
+        
+        function handleEnd() {
+            isDragging = false;
+        }
+        
+        // Restart button
+        const restartButton = {
+            x: canvas.width / 2 - 80,
+            y: canvas.height - 120,
+            width: 160,
+            height: 50
+        };
+        let restartButtonVisible = false;
+        
+        function showRestartButton() {
+            restartButtonVisible = true;
+        }
+        
+        function resetGame() {
+            // Reset game state
+            velocity = 0;
+            selectedOption = null;
+            gameOver = false;
+            correct = false;
+            restartButtonVisible = false;
+            
+            // Reset options positions
+            for (let i = 0; i < options.length; i++) {
+                options_x[i] = centerX + i * optionSpacing;
+            }
+        }
+        
+        // Start the game
+        update();
+    </script>
+</body>
+</html>

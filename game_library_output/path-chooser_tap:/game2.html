@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Path Chooser</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+        }
+        canvas {
+            border: 2px solid #555;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #333;
+            color: white;
+            border: 2px solid #555;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: '#0f380f',
+            path: '#8bac0f',
+            pathWrong: '#9d2c2c',
+            pathRight: '#306230',
+            character: '#0f2f8c',
+            text: '#e0f8d0',
+            junction: '#6b8c42',
+            highlight: '#f8d870'
+        };
+        
+        // Game state
+        let gameState = {
+            character: {
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+                speed: isMobile ? 1.5 : 2.5,
+                currentPath: 0,
+                atJunction: false
+            },
+            paths: [],
+            answers: [
+                { text: "Venus", correct: false },
+                { text: "Mars", correct: true },
+                { text: "Jupiter", correct: false },
+                { text: "Mercury", correct: false }
+            ],
+            gameOver: false,
+            selectedAnswer: null,
+            frameCount: 0
+        };
+        
+        // Create paths
+        function createPaths() {
+            const startX = canvas.width / 2;
+            const startY = canvas.height - 80;
+            const junctionY = canvas.height / 2;
+            
+            // Main path (stem)
+            gameState.paths.push({
+                id: 0,
+                points: [
+                    { x: startX, y: startY },
+                    { x: startX, y: junctionY }
+                ],
+                type: "main"
+            });
+            
+            // Create branch paths
+            const branchCount = gameState.answers.length;
+            const spacing = canvas.width / (branchCount + 1);
+            
+            for (let i = 0; i < branchCount; i++) {
+                const endX = spacing * (i + 1);
+                gameState.paths.push({
+                    id: i + 1,
+                    points: [
+                        { x: startX, y: junctionY },
+                        { x: endX, y: 100 }
+                    ],
+                    type: "branch",
+                    answer: gameState.answers[i]
+                });
+            }
+            
+            // Position character at start
+            gameState.character.x = startX - gameState.character.width / 2;
+            gameState.character.y = startY - gameState.character.height;
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 50);
+            
+            // Draw paths
+            gameState.paths.forEach(path => {
+                let pathColor = COLORS.path;
+                
+                if (gameState.gameOver && path.type === 'branch') {
+                    // Color paths differently after selection
+                    if (path.answer === gameState.selectedAnswer) {
+                        pathColor = path.answer.correct ? COLORS.pathRight : COLORS.pathWrong;
+                    } else if (path.answer.correct) {
+                        pathColor = COLORS.pathRight;
+                    }
+                }
+                
+                // Draw path
+                ctx.strokeStyle = pathColor;
+                ctx.lineWidth = 12;
+                ctx.beginPath();
+                ctx.moveTo(path.points[0].x, path.points[0].y);
+                ctx.lineTo(path.points[1].x, path.points[1].y);
+                ctx.stroke();
+                
+                // Draw junction point if it's a branch
+                if (path.type === "branch") {
+                    // Junction highlight animation
+                    const pulseSize = Math.sin(gameState.frameCount * 0.1) * 2;
+                    
+                    // Draw junction point
+                    ctx.fillStyle = COLORS.junction;
+                    ctx.beginPath();
+                    ctx.arc(path.points[0].x, path.points[0].y, 15 + (gameState.character.atJunction ? pulseSize : 0), 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Draw answer at end of branch
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = '16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(path.answer.text, path.points[1].x, path.points[1].y - 20);
+                }
+            });
+            
+            // Draw character
+            ctx.fillStyle = COLORS.character;
+            ctx.fillRect(
+                Math.floor(gameState.character.x), 
+                Math.floor(gameState.character.y), 
+                gameState.character.width, 
+                gameState.character.height
+            );
+            
+            // If at junction, show highlight
+            if (gameState.character.atJunction && !gameState.gameOver) {
+                const pulseSize = Math.sin(gameState.frameCount * 0.1) * 3;
+                ctx.strokeStyle = COLORS.highlight;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(
+                    gameState.paths[0].points[1].x, 
+                    gameState.paths[0].points[1].y, 
+                    25 + pulseSize, 0, Math.PI * 2
+                );
+                ctx.stroke();
+            }
+            
+            // Draw feedback message if game over
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.selectedAnswer.correct ? COLORS.pathRight : COLORS.pathWrong;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.selectedAnswer.correct ? "Correct!" : "Incorrect!", 
+                    canvas.width / 2, 
+                    canvas.height - 50
+                );
+            }
+        }
+        
+        // Update game state
+        function update() {
+            gameState.frameCount++;
+            
+            if (gameState.gameOver) return;
+            
+            const character = gameState.character;
+            const currentPath = gameState.paths[character.currentPath];
+            
+            // If at junction, stop and wait for input
+            if (character.atJunction) return;
+            
+            // Calculate movement along current path
+            const startPoint = currentPath.points[0];
+            const endPoint = currentPath.points[1];
+            
+            // Calculate direction vector
+            const dirX = endPoint.x - startPoint.x;
+            const dirY = endPoint.y - startPoint.y;
+            const length = Math.sqrt(dirX * dirX + dirY * dirY);
+            
+            if (length > 0) {
+                // Normalize and apply speed
+                const normX = dirX / length;
+                const normY = dirY / length;
+                
+                character.x += normX * character.speed;
+                character.y += normY * character.speed;
+                
+                // Check if reached endpoint
+                const distToEnd = Math.sqrt(
+                    Math.pow(character.x + character.width/2 - endPoint.x, 2) +
+                    Math.pow(character.y + character.height/2 - endPoint.y, 2)
+                );
+                
+                if (distToEnd < character.speed) {
+                    character.x = endPoint.x - character.width/2;
+                    character.y = endPoint.y - character.height;
+                    
+                    // If reached junction
+                    if (currentPath.type === "main") {
+                        character.atJunction = true;
+                        playSound(300, 0.1);
+                    }
+                    
+                    // If reached end of branch
+                    if (currentPath.type === "branch") {
+                        gameOver(currentPath.answer);
+                    }
+                }
+            }
+        }
+        
+        // Handle clicks/taps
+        function handleClick(e) {
+            if (gameState.gameOver) return;
+            
+            if (gameState.character.atJunction) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                // Check which branch was clicked
+                for (let i = 1; i < gameState.paths.length; i++) {
+                    const path = gameState.paths[i];
+                    const endPoint = path.points[1];
+                    
+                    // Simple distance check (could be improved for more precise hit detection)
+                    const dist = Math.sqrt(
+                        Math.pow(clickX - endPoint.x, 2) +
+                        Math.pow(clickY - endPoint.y, 2)
+                    );
+                    
+                    if (dist < 50) {
+                        // Choose this path
+                        gameState.character.currentPath = i;
+                        gameState.character.atJunction = false;
+                        playSound(400, 0.1);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Game over logic
+        function gameOver(answer) {
+            gameState.gameOver = true;
+            gameState.selectedAnswer = answer;
+            restartBtn.style.display = 'block';
+            
+            // Play sound based on correctness
+            if (answer.correct) {
+                playSound(523.25, 0.1); // C5
+                setTimeout(() => playSound(659.25, 0.2), 100); // E5
+                setTimeout(() => playSound(783.99, 0.3), 200); // G5
+            } else {
+                playSound(392.00, 0.1); // G4
+                setTimeout(() => playSound(349.23, 0.3), 150); // F4
+            }
+        }
+        
+        // Simple sound function
+        function playSound(frequency, duration) {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+                
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.log("Sound error:", e);
+            }
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameState = {
+                character: {
+                    x: 0,
+                    y: 0,
+                    width: 16,
+                    height: 16,
+                    speed: isMobile ? 1.5 : 2.5,
+                    currentPath: 0,
+                    atJunction: false
+                },
+                paths: [],
+                answers: [
+                    { text: "Venus", correct: false },
+                    { text: "Mars", correct: true },
+                    { text: "Jupiter", correct: false },
+                    { text: "Mercury", correct: false }
+                ],
+                gameOver: false,
+                selectedAnswer: null,
+                frameCount: 0
+            };
+            
+            createPaths();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        createPaths();
+        gameLoop();
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', resetGame);
+        
+        // Add mobile touch support
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleClick(touch);
+        });
+    </script>
+</body>
+</html>

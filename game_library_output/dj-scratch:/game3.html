@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DJ Scratch Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Game variables
+        let angle = 0;
+        let targetAngle = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let velocity = 0;
+        let gameOver = false;
+        let audioContext;
+        let needlePosition = 0;
+        let lastTouchTime = 0;
+        
+        // Color palette (16 colors)
+        const colors = {
+            background: '#121212',
+            recordBlack: '#222222',
+            recordGroove: '#333333',
+            turntableGray: '#555555',
+            turntableDark: '#444444',
+            turntableLight: '#666666',
+            needleRed: '#D53E33',
+            buttonRed: '#D53E33',
+            buttonRedDark: '#A22A22',
+            text: '#EEEEEE',
+            textShadow: '#000000',
+            correct: '#44BB55',
+            incorrect: '#BB4455',
+            marker: '#FFCC22',
+            gold: '#DDAA33',
+            purple: '#9955AA'
+        };
+
+        // Answers
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Create restart button
+        const restartBtn = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height - 80,
+            width: 120,
+            height: 40,
+            text: "RESTART",
+            visible: false
+        };
+
+        // Initialize audio context
+        function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.log('Web Audio API not supported');
+            }
+        }
+
+        // Play scratch sound
+        function playScratching() {
+            if (!audioContext) return;
+            
+            const currentTime = Date.now();
+            if (currentTime - lastTouchTime < 50) return; // Limit sound frequency
+            lastTouchTime = currentTime;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(100 + Math.random() * 50, audioContext.currentTime);
+            oscillator.frequency.linearRampToValueAtTime(50 + Math.random() * 30, audioContext.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+
+        // Play result sound
+        function playResult(correct) {
+            if (!audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            if (correct) {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(660, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.2);
+                oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.3);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.4);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.4);
+            } else {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.3);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        }
+
+        // Draw pixelated rectangle
+        function pixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            x = Math.floor(x);
+            y = Math.floor(y);
+            width = Math.floor(width);
+            height = Math.floor(height);
+            ctx.fillRect(x, y, width, height);
+        }
+
+        // Draw pixelated circle
+        function pixelCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            x = Math.floor(x);
+            y = Math.floor(y);
+            radius = Math.floor(radius);
+            
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (dx*dx + dy*dy <= radius*radius) {
+                        ctx.fillRect(x + dx, y + dy, 1, 1);
+                    }
+                }
+            }
+        }
+
+        // Draw pixelated text
+        function pixelText(text, x, y, size, color) {
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = colors.textShadow;
+            ctx.fillText(text, x+2, y+2);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+        }
+
+        // Draw turntable
+        function drawTurntable() {
+            // Turntable base
+            pixelRect(150, 100, 500, 350, colors.turntableDark);
+            pixelRect(160, 110, 480, 330, colors.turntableGray);
+            
+            // Turntable details
+            pixelRect(170, 430, 100, 10, colors.turntableLight);
+            pixelRect(290, 430, 100, 10, colors.turntableLight);
+            pixelRect(410, 430, 100, 10, colors.turntableLight);
+            
+            // Draw record
+            const centerX = 400;
+            const centerY = 250;
+            const radius = 150;
+            
+            // Record base
+            pixelCircle(centerX, centerY, radius, colors.recordBlack);
+            
+            // Record grooves
+            for (let r = 145; r > 30; r -= 8) {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+                ctx.strokeStyle = colors.recordGroove;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            
+            // Record label in center
+            pixelCircle(centerX, centerY, 30, colors.purple);
+            pixelCircle(centerX, centerY, 5, colors.recordBlack);
+            
+            // Draw answers on record
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(angle);
+            
+            const answerRadius = 90;
+            const answerBoxWidth = 100;
+            const answerBoxHeight = 40;
+            
+            // Draw answer sections
+            for (let i = 0; i < answers.length; i++) {
+                const answerAngle = i * (Math.PI / 2);
+                ctx.save();
+                ctx.rotate(answerAngle);
+                
+                // Answer background
+                ctx.fillStyle = i % 2 === 0 ? colors.turntableGray : colors.turntableDark;
+                ctx.fillRect(-answerBoxWidth/2, -answerRadius-answerBoxHeight/2, answerBoxWidth, answerBoxHeight);
+                
+                // Answer text
+                ctx.fillStyle = colors.text;
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(answers[i].text, 0, -answerRadius);
+                
+                ctx.restore();
+            }
+            
+            ctx.restore();
+            
+            // Draw needle arm
+            ctx.save();
+            ctx.translate(550, 150);
+            ctx.rotate(needlePosition);
+            pixelRect(-5, 0, 10, 120, colors.turntableGray);
+            pixelRect(-15, 110, 30, 20, colors.needleRed);
+            ctx.restore();
+            
+            // Draw marker
+            ctx.fillStyle = colors.marker;
+            ctx.beginPath();
+            ctx.moveTo(400, 70);
+            ctx.lineTo(410, 90);
+            ctx.lineTo(390, 90);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Draw submit button
+        function drawSubmitButton() {
+            // Button base
+            pixelRect(650, 330, 100, 60, colors.buttonRedDark);
+            pixelRect(650, 330, 100, 50, colors.buttonRed);
+            
+            // Button text
+            pixelText("SUBMIT", 700, 355, 20, colors.text);
+        }
+
+        // Draw restart button
+        function drawRestartButton() {
+            if (!restartBtn.visible) return;
+            
+            // Button
+            pixelRect(restartBtn.x, restartBtn.y, restartBtn.width, restartBtn.height, colors.turntableGray);
+            
+            // Text
+            pixelText(restartBtn.text, restartBtn.x + restartBtn.width/2, restartBtn.y + restartBtn.height/2, 16, colors.text);
+        }
+
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawTurntable();
+            drawSubmitButton();
+            
+            // Draw question
+            pixelText("What is the capital of France?", 400, 30, 24, colors.text);
+            
+            // Draw result if game over
+            if (gameOver) {
+                const selectedIndex = Math.floor(((angle % (Math.PI * 2)) + Math.PI/4) / (Math.PI/2)) % 4;
+                const isCorrect = answers[selectedIndex].correct;
+                
+                ctx.fillStyle = isCorrect ? colors.correct : colors.incorrect;
+                ctx.fillRect(200, 500, 400, 60);
+                
+                pixelText(
+                    isCorrect ? "CORRECT!" : "WRONG! The answer is Paris", 
+                    400, 530, 24, colors.text
+                );
+                
+                drawRestartButton();
+            }
+        }
+
+        // Update game state
+        function update() {
+            if (!gameOver) {
+                // Apply inertia
+                if (!isDragging) {
+                    velocity *= 0.95; // Friction
+                    angle += velocity;
+                    
+                    // Animate needle based on velocity
+                    needlePosition = 0.1 + Math.abs(velocity) * 5;
+                    if (needlePosition > 0.5) needlePosition = 0.5;
+                }
+            }
+        }
+
+        // Check if point is inside rectangle
+        function isPointInRect(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+
+        // Check if point is inside circle
+        function isPointInCircle(x, y, centerX, centerY, radius) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            return dx*dx + dy*dy <= radius*radius;
+        }
+
+        // Submit answer
+        function submitAnswer() {
+            if (gameOver) return;
+            
+            gameOver = true;
+            restartBtn.visible = true;
+            
+            // Calculate which answer is currently at the top (aligned with marker)
+            const selectedIndex = Math.floor(((angle % (Math.PI * 2)) + Math.PI/4) / (Math.PI/2)) % 4;
+            const isCorrect = answers[selectedIndex].correct;
+            
+            playResult(isCorrect);
+        }
+
+        // Restart game
+        function restartGame() {
+            gameOver = false;
+            restartBtn.visible = false;
+            angle = 0;
+            velocity = 0;
+            needlePosition = 0;
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousedown', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if mouse is on submit button
+            if (isPointInRect(mouseX, mouseY, {x:650, y:330, width:100, height:60})) {
+                submitAnswer();
+                return;
+            }
+            
+            // Check if mouse is on restart button
+            if (gameOver && isPointInRect(mouseX, mouseY, restartBtn)) {
+                restartGame();
+                return;
+            }
+            
+            // Check if mouse is on record
+            if (isPointInCircle(mouseX, mouseY, 400, 250, 150)) {
+                isDragging = true;
+                dragStartX = mouseX;
+                dragStartY = mouseY;
+                initAudio();
+            }
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (!isDragging || gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Calculate angle change
+            const centerX = 400;
+            const centerY = 250;
+            const prevAngle = Math.atan2(dragStartY - centerY, dragStartX - centerX);
+            const newAngle = Math.atan2(mouseY - centerY, mouseX - centerX);
+            const deltaAngle = newAngle - prevAngle;
+            
+            // Update angle
+            angle += deltaAngle;
+            velocity = deltaAngle * 0.8;
+            
+            // Update drag start
+            dragStartX = mouseX;
+            dragStartY = mouseY;
+            
+            // Play scratching sound
+            playScratching();
+            
+            // Animate needle
+            needlePosition = 0.2 + Math.abs(velocity) * 5;
+            if (needlePosition > 0.5) needlePosition = 0.5;
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            isDragging = false;
+        });
+
+        canvas.addEventListener('mouseleave', function() {
+            isDragging = false;
+        });
+
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            // Check if touch is on submit button
+            if (isPointInRect(touchX, touchY, {x:650, y:330, width:100, height:60})) {
+                submitAnswer();
+                return;
+            }
+            
+            // Check if touch is on restart button
+            if (gameOver && isPointInRect(touchX, touchY, restartBtn)) {
+                restartGame();
+                return;
+            }
+            
+            // Check if touch is on record
+            if (isPointInCircle(touchX, touchY, 400, 250, 150)) {
+                isDragging = true;
+                dragStartX = touchX;
+                dragStartY = touchY;
+                initAudio();
+            }
+        });
+
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            if (!isDragging || gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            // Calculate angle change
+            const centerX = 400;
+            const centerY = 250;
+            const prevAngle = Math.atan2(dragStartY - centerY, dragStartX - centerX);
+            const newAngle = Math.atan2(touchY - centerY, touchX - centerX);
+            const deltaAngle = newAngle - prevAngle;
+            
+            // Update angle
+            angle += deltaAngle;
+            velocity = deltaAngle * 0.8;
+            
+            // Update drag start
+            dragStartX = touchX;
+            dragStartY = touchY;
+            
+            // Play scratching sound
+            playScratching();
+            
+            // Animate needle
+            needlePosition = 0.2 + Math.abs(velocity) * 5;
+            if (needlePosition > 0.5) needlePosition = 0.5;
+        });
+
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            isDragging = false;
+        });
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        initAudio();
+        gameLoop();
+    </script>
+</body>
+</html>

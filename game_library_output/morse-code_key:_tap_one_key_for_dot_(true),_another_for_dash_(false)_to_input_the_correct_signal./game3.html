@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Morse Code True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set dimensions for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Check if mobile and resize if needed
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game colors (8-bit style palette)
+        const colors = {
+            background: '#111122',
+            text: '#EEEEEE',
+            dotKey: '#5588AA',
+            dashKey: '#AA5555',
+            dotKeyPressed: '#88CCFF',
+            dashKeyPressed: '#FF8888',
+            signalOn: '#FFDD44',
+            signalOff: '#443300',
+            correct: '#55AA55',
+            incorrect: '#AA5555',
+            keyBase: '#444444',
+            wood: '#8B4513',
+            metal: '#AAAAAA'
+        };
+        
+        // Game state
+        const game = {
+            question: "The Great Wall of China is visible from space.",
+            correctAnswer: false, // False is the correct answer
+            playerAnswer: null,
+            dotPressed: false,
+            dashPressed: false,
+            gameOver: false,
+            showingResult: false,
+            resultTimer: 0,
+            transmission: null,
+            telegraph: {
+                dotX: canvas.width * 0.3,
+                dashX: canvas.width * 0.7,
+                y: canvas.height * 0.6,
+                width: canvas.width * 0.15,
+                height: canvas.height * 0.15,
+                pressDepth: 10
+            },
+            signal: {
+                active: false,
+                intensity: 0,
+                particles: []
+            }
+        };
+        
+        // Audio context and sounds
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playDotSound() {
+            if (!audioCtx) initAudio();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+        
+        function playDashSound() {
+            if (!audioCtx) initAudio();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playResultSound(correct) {
+            if (!audioCtx) initAudio();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            if (correct) {
+                // Ascending tones for correct answer
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(550, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.2);
+            } else {
+                // Descending tones for incorrect answer
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.2);
+            }
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        // Drawing functions
+        function drawPixelatedRect(x, y, width, height, color, pixelSize = 3) {
+            ctx.fillStyle = color;
+            for (let px = 0; px < width; px += pixelSize) {
+                for (let py = 0; py < height; py += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x + px), 
+                        Math.floor(y + py), 
+                        pixelSize, pixelSize
+                    );
+                }
+            }
+        }
+        
+        function drawPixelatedCircle(x, y, radius, color, pixelSize = 3) {
+            ctx.fillStyle = color;
+            for (let px = -radius; px < radius; px += pixelSize) {
+                for (let py = -radius; py < radius; py += pixelSize) {
+                    if (px*px + py*py <= radius*radius) {
+                        ctx.fillRect(
+                            Math.floor(x + px), 
+                            Math.floor(y + py), 
+                            pixelSize, pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        function drawTelegraphKey(x, y, width, height, isPressed, color, pressedColor) {
+            // Base
+            drawPixelatedRect(x - width * 0.1, y + height * 0.8, width * 1.2, height * 0.3, colors.wood, 4);
+            
+            // Key part (lever)
+            const keyY = isPressed ? y + game.telegraph.pressDepth : y;
+            drawPixelatedRect(x, keyY, width, height * 0.8, isPressed ? pressedColor : color, 4);
+            
+            // Button/knob on top
+            drawPixelatedCircle(x + width / 2, keyY + height * 0.3, width * 0.2, colors.metal, 3);
+        }
+        
+        function drawSignalLamp(x, y, radius, isOn) {
+            // Lamp base
+            drawPixelatedRect(x - radius * 1.2, y + radius * 0.8, radius * 2.4, radius * 0.6, colors.wood, 3);
+            
+            // Lamp housing
+            drawPixelatedCircle(x, y, radius * 1.1, colors.metal, 3);
+            
+            // Lamp light
+            drawPixelatedCircle(x, y, radius, isOn ? colors.signalOn : colors.signalOff, 3);
+        }
+        
+        function createSignalParticles(isTrue) {
+            for (let i = 0; i < 10; i++) {
+                game.signal.particles.push({
+                    x: isTrue ? game.telegraph.dotX + game.telegraph.width / 2 : game.telegraph.dashX + game.telegraph.width / 2,
+                    y: game.telegraph.y + game.telegraph.height * 0.3,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: -2 - Math.random() * 3,
+                    size: 3 + Math.random() * 5,
+                    life: 30 + Math.random() * 20,
+                    color: isTrue ? colors.dotKeyPressed : colors.dashKeyPressed
+                });
+            }
+        }
+        
+        function updateSignalParticles() {
+            for (let i = game.signal.particles.length - 1; i >= 0; i--) {
+                const p = game.signal.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 1;
+                
+                if (p.life <= 0) {
+                    game.signal.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawSignalParticles() {
+            for (let i = 0; i < game.signal.particles.length; i++) {
+                const p = game.signal.particles[i];
+                const alpha = p.life / 50;
+                ctx.globalAlpha = alpha;
+                drawPixelatedRect(p.x, p.y, p.size, p.size, p.color, 2);
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Draw the question with word wrap
+            const maxWidth = canvas.width * 0.8;
+            const words = game.question.split(' ');
+            let line = '';
+            const lines = [];
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                const testWidth = metrics.width;
+                
+                if (testWidth > maxWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw each line
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(
+                    lines[i], 
+                    canvas.width / 2, 
+                    canvas.height * 0.15 + i * 35
+                );
+            }
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            
+            const dotX = game.telegraph.dotX + game.telegraph.width / 2;
+            const dashX = game.telegraph.dashX + game.telegraph.width / 2;
+            
+            ctx.fillText('DOT = TRUE', dotX, game.telegraph.y - 50);
+            ctx.fillText('DASH = FALSE', dashX, game.telegraph.y - 50);
+            
+            // Display instructions
+            ctx.font = '16px Arial';
+            ctx.fillText('Press [T] for DOT or [F] for DASH', canvas.width / 2, canvas.height * 0.4);
+        }
+        
+        function drawTransmission() {
+            if (game.transmission) {
+                ctx.fillStyle = colors.text;
+                ctx.font = '32px Arial';
+                ctx.textAlign = 'center';
+                
+                // Draw the transmission symbol (dot or dash)
+                const symbol = game.transmission === true ? '•' : '—';
+                ctx.fillText(
+                    symbol, 
+                    canvas.width / 2,
+                    canvas.height * 0.5
+                );
+            }
+        }
+        
+        function drawResult() {
+            if (!game.showingResult) return;
+            
+            const isCorrect = game.playerAnswer === game.correctAnswer;
+            const resultColor = isCorrect ? colors.correct : colors.incorrect;
+            
+            // Fill background with result color (pixelated)
+            for (let x = 0; x < canvas.width; x += 8) {
+                for (let y = 0; y < canvas.height; y += 8) {
+                    if (Math.random() < 0.7) { // Create pixelated effect
+                        ctx.fillStyle = resultColor;
+                        ctx.globalAlpha = 0.3;
+                        ctx.fillRect(x, y, 8, 8);
+                    }
+                }
+            }
+            ctx.globalAlpha = 1;
+            
+            // Draw result text
+            ctx.fillStyle = colors.text;
+            ctx.font = '36px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                isCorrect ? 'CORRECT!' : 'INCORRECT!',
+                canvas.width / 2,
+                canvas.height / 2 - 50
+            );
+            
+            // Draw the correct answer
+            ctx.font = '24px Arial';
+            ctx.fillText(
+                `The answer is: ${game.correctAnswer ? 'TRUE' : 'FALSE'}`,
+                canvas.width / 2,
+                canvas.height / 2
+            );
+            
+            // Draw restart button
+            if (game.resultTimer > 60) {
+                const btnWidth = 160;
+                const btnHeight = 50;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = canvas.height / 2 + 50;
+                
+                drawPixelatedRect(btnX, btnY, btnWidth, btnHeight, '#444', 3);
+                ctx.fillStyle = colors.text;
+                ctx.font = '24px Arial';
+                ctx.fillText('RESTART', canvas.width / 2, btnY + btnHeight / 2);
+            }
+        }
+        
+        function checkAnswer() {
+            game.showingResult = true;
+            playResultSound(game.playerAnswer === game.correctAnswer);
+        }
+        
+        function handleKeyDown(e) {
+            if (game.showingResult) return;
+            
+            if (e.key.toLowerCase() === 't') {
+                game.dotPressed = true;
+                game.playerAnswer = true;
+                game.transmission = true;
+                game.signal.active = true;
+                createSignalParticles(true);
+                playDotSound();
+                
+                // Short delay before checking answer
+                setTimeout(checkAnswer, 500);
+            } else if (e.key.toLowerCase() === 'f') {
+                game.dashPressed = true;
+                game.playerAnswer = false;
+                game.transmission = false;
+                game.signal.active = true;
+                createSignalParticles(false);
+                playDashSound();
+                
+                // Short delay before checking answer
+                setTimeout(checkAnswer, 500);
+            }
+        }
+        
+        function handleKeyUp(e) {
+            if (e.key.toLowerCase() === 't') {
+                game.dotPressed = false;
+            } else if (e.key.toLowerCase() === 'f') {
+                game.dashPressed = false;
+            }
+        }
+        
+        function handleClick(e) {
+            if (game.showingResult && game.resultTimer > 60) {
+                // Check if restart button was clicked
+                const btnWidth = 160;
+                const btnHeight = 50;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = canvas.height / 2 + 50;
+                
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                if (x >= btnX && x <= btnX + btnWidth && 
+                    y >= btnY && y <= btnY + btnHeight) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Check if telegraph keys were clicked
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const dotKeyX = game.telegraph.dotX;
+            const dotKeyY = game.telegraph.y;
+            const dotKeyWidth = game.telegraph.width;
+            const dotKeyHeight = game.telegraph.height;
+            
+            const dashKeyX = game.telegraph.dashX;
+            const dashKeyY = game.telegraph.y;
+            const dashKeyWidth = game.telegraph.width;
+            const dashKeyHeight = game.telegraph.height;
+            
+            // Dot (True) key clicked
+            if (x >= dotKeyX && x <= dotKeyX + dotKeyWidth &&
+                y >= dotKeyY && y <= dotKeyY + dotKeyHeight) {
+                game.dotPressed = true;
+                game.playerAnswer = true;
+                game.transmission = true;
+                game.signal.active = true;
+                createSignalParticles(true);
+                playDotSound();
+                
+                setTimeout(() => {
+                    game.dotPressed = false;
+                }, 200);
+                
+                // Short delay before checking answer
+                setTimeout(checkAnswer, 500);
+            }
+            
+            // Dash (False) key clicked
+            if (x >= dashKeyX && x <= dashKeyX + dashKeyWidth &&
+                y >= dashKeyY && y <= dashKeyY + dashKeyHeight) {
+                game.dashPressed = true;
+                game.playerAnswer = false;
+                game.transmission = false;
+                game.signal.active = true;
+                createSignalParticles(false);
+                playDashSound();
+                
+                setTimeout(() => {
+                    game.dashPressed = false;
+                }, 200);
+                
+                // Short delay before checking answer
+                setTimeout(checkAnswer, 500);
+            }
+        }
+        
+        function resetGame() {
+            game.playerAnswer = null;
+            game.dotPressed = false;
+            game.dashPressed = false;
+            game.gameOver = false;
+            game.showingResult = false;
+            game.resultTimer = 0;
+            game.transmission = null;
+            game.signal.active = false;
+            game.signal.intensity = 0;
+            game.signal.particles = [];
+        }
+        
+        function update() {
+            if (game.showingResult) {
+                game.resultTimer++;
+            }
+            
+            if (game.signal.active) {
+                game.signal.intensity = Math.sin(Date.now() / 100) * 0.5 + 0.5;
+            } else {
+                game.signal.intensity = 0;
+            }
+            
+            updateSignalParticles();
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            drawQuestion();
+            
+            // Draw telegraph keys
+            drawTelegraphKey(
+                game.telegraph.dotX,
+                game.telegraph.y,
+                game.telegraph.width,
+                game.telegraph.height,
+                game.dotPressed,
+                colors.dotKey,
+                colors.dotKeyPressed
+            );
+            
+            drawTelegraphKey(
+                game.telegraph.dashX,
+                game.telegraph.y,
+                game.telegraph.width,
+                game.telegraph.height,
+                game.dashPressed,
+                colors.dashKey,
+                colors.dashKeyPressed
+            );
+            
+            // Draw signal lamp
+            drawSignalLamp(
+                canvas.width / 2,
+                canvas.height * 0.3,
+                20,
+                game.signal.active
+            );
+            
+            // Draw instructions
+            drawInstructions();
+            
+            // Draw transmission
+            drawTransmission();
+            
+            // Draw signal particles
+            drawSignalParticles();
+            
+            // Draw result if showing
+            drawResult();
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        canvas.addEventListener('click', handleClick);
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

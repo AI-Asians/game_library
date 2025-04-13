@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mars Question Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #222;
+            color: #fff;
+            border: 3px solid #555;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const restartBtn = document.getElementById("restart");
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: "#000022",
+            stars: ["#FFFFFF", "#AAAAFF", "#5555FF"],
+            player: "#55AAFF",
+            playerDetails: "#2233AA",
+            correctAnswer: "#FF5555",
+            wrongAnswer: "#55FF55",
+            text: "#FFFFFF",
+            particles: ["#FF5555", "#FFAA55", "#FFFFFF"]
+        };
+
+        // Game variables
+        let gameOver = false;
+        let success = false;
+        let player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 80,
+            width: 40,
+            height: 40,
+            speed: 6
+        };
+        
+        let answers = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+        
+        // Shuffle the answers
+        answers.sort(() => Math.random() - 0.5);
+        
+        let fallingAnswers = answers.map((answer, index) => {
+            return {
+                text: answer.text,
+                correct: answer.correct,
+                x: 100 + index * (canvas.width - 200) / answers.length,
+                y: -50 - Math.random() * 150,
+                width: 60,
+                height: 60,
+                speed: 2 + Math.random() * 1.5
+            };
+        });
+        
+        // Background stars for space theme
+        let stars = [];
+        for (let i = 0; i < 50; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 3 + 1,
+                color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)],
+                speed: Math.random() * 0.5 + 0.1
+            });
+        }
+        
+        // Particles system
+        let particles = [];
+        
+        // Input handling
+        let keys = {};
+        window.addEventListener("keydown", e => keys[e.key] = true);
+        window.addEventListener("keyup", e => keys[e.key] = false);
+        
+        // Touch controls for mobile
+        let touchX = null;
+        canvas.addEventListener("touchstart", e => {
+            e.preventDefault();
+            touchX = e.touches[0].clientX;
+        });
+        
+        canvas.addEventListener("touchmove", e => {
+            e.preventDefault();
+            if (touchX !== null) {
+                const newX = e.touches[0].clientX;
+                player.x += (newX - touchX);
+                touchX = newX;
+                
+                // Keep player within bounds
+                if (player.x < 0) player.x = 0;
+                if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+            }
+        });
+        
+        canvas.addEventListener("touchend", e => {
+            touchX = null;
+        });
+        
+        // Sound effects
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                if (type === "correct") {
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                    oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                } else if (type === "wrong") {
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(349.23, audioContext.currentTime); // F4
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(277.18, audioContext.currentTime + 0.1); // C#4
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                } else if (type === "move") {
+                    oscillator.type = "sine";
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
+                    oscillator.start();
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                }
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        // Add particles
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4 - 2,
+                    size: Math.random() * 4 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPlayer() {
+            // Draw spaceship/astronaut
+            drawPixelRect(player.x, player.y, player.width, player.height, COLORS.player);
+            
+            // Helmet
+            drawPixelRect(player.x + 10, player.y + 5, 20, 15, COLORS.playerDetails);
+            
+            // Body details
+            drawPixelRect(player.x + 5, player.y + 25, 30, 15, COLORS.playerDetails);
+            
+            // Jets
+            drawPixelRect(player.x + 5, player.y + player.height, 10, 5, COLORS.correctAnswer);
+            drawPixelRect(player.x + player.width - 15, player.y + player.height, 10, 5, COLORS.correctAnswer);
+        }
+        
+        function drawFallingAnswer(answer) {
+            // Draw meteor/space object containing answer
+            const color = answer.correct ? COLORS.correctAnswer : COLORS.wrongAnswer;
+            
+            // Main body
+            drawPixelRect(answer.x, answer.y, answer.width, answer.height, color);
+            
+            // Details
+            drawPixelRect(answer.x + 5, answer.y + 5, 10, 10, "#000022");
+            drawPixelRect(answer.x + answer.width - 15, answer.y + 15, 10, 10, "#000022");
+            
+            // Text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "bold 14px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(answer.text, answer.x + answer.width / 2, answer.y + answer.height / 2 + 5);
+        }
+        
+        function drawStars() {
+            stars.forEach(star => {
+                drawPixelRect(star.x, star.y, star.size, star.size, star.color);
+            });
+        }
+        
+        function drawParticles() {
+            particles.forEach(p => {
+                drawPixelRect(p.x, p.y, p.size, p.size, p.color);
+            });
+        }
+        
+        // Game loop
+        function update() {
+            if (gameOver) return;
+            
+            // Update player movement
+            if (keys["ArrowLeft"] || keys["a"]) {
+                player.x -= player.speed;
+                playSound("move");
+            }
+            if (keys["ArrowRight"] || keys["d"]) {
+                player.x += player.speed;
+                playSound("move");
+            }
+            
+            // Keep player within bounds
+            if (player.x < 0) player.x = 0;
+            if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+            
+            // Update stars
+            stars.forEach(star => {
+                star.y += star.speed;
+                if (star.y > canvas.height) {
+                    star.y = 0;
+                    star.x = Math.random() * canvas.width;
+                }
+            });
+            
+            // Update falling answers
+            fallingAnswers.forEach(answer => {
+                answer.y += answer.speed;
+                
+                // Check collision with player
+                if (answer.y + answer.height > player.y && 
+                    answer.y < player.y + player.height && 
+                    answer.x + answer.width > player.x && 
+                    answer.x < player.x + player.width) {
+                    
+                    gameOver = true;
+                    success = answer.correct;
+                    
+                    if (success) {
+                        createParticles(answer.x + answer.width / 2, answer.y + answer.height / 2, COLORS.particles[0]);
+                        playSound("correct");
+                    } else {
+                        createParticles(answer.x + answer.width / 2, answer.y + answer.height / 2, COLORS.particles[1]);
+                        playSound("wrong");
+                    }
+                    
+                    restartBtn.style.display = "block";
+                }
+            });
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            drawStars();
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 40);
+            
+            // Draw falling answers
+            fallingAnswers.forEach(drawFallingAnswer);
+            
+            // Draw player
+            drawPlayer();
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = success ? "rgba(0, 255, 0, 0.3)" : "rgba(255, 0, 0, 0.3)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = "24px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(success ? "Correct!" : "Wrong!", canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Restart button
+        restartBtn.addEventListener("click", () => {
+            gameOver = false;
+            success = false;
+            
+            // Reset player
+            player.x = canvas.width / 2 - 20;
+            
+            // Reset answers
+            answers.sort(() => Math.random() - 0.5);
+            fallingAnswers = answers.map((answer, index) => {
+                return {
+                    text: answer.text,
+                    correct: answer.correct,
+                    x: 100 + index * (canvas.width - 200) / answers.length,
+                    y: -50 - Math.random() * 150,
+                    width: 60,
+                    height: 60,
+                    speed: 2 + Math.random() * 1.5
+                };
+            });
+            
+            // Clear particles
+            particles = [];
+            
+            restartBtn.style.display = "none";
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

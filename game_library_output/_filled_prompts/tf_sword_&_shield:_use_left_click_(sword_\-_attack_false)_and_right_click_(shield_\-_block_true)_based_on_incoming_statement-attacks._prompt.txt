@@ -1,0 +1,101 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type TF.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ Water boils at 100 degrees Celsius at sea level.
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Sword & Shield: Use Left click (Sword - attack False) and Right click (Shield - block True) based on incoming statement-attacks.**  
+ Description of mechanic: 
+
+- Player is presented with a statement (the question) at the top of the screen
+- Statements fly at the player character from the side/top of the screen
+- Player must decide if statement is TRUE (block with shield using right click) or FALSE (attack with sword using left click)
+- Visual impact effect should show if player action matches correctly with statement truth value
+- Player character should show sword slash animation on left click and shield block animation on right click
+- Incoming statements should have a threatening appearance (like fireballs or arrows)
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+- The player character should be a simple, pixelated knight or warrior
+- Sword should have a clear slash effect when used (pixelated swoosh)
+- Shield should have a visible blocking stance with a brief flash or glow when used
+- Incoming statement-attacks should pulse or glow as they approach
+- Use contrasting colors to distinguish between sword and shield actions
+- Background should evoke a simple battle arena or training ground
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+- Statement-attacks should approach at a moderate speed, giving player time to read and react
+- Include brief visual instructions at the start (e.g., "Left click = Sword (False), Right click = Shield (True)")
+- The player character should be stationary in the center or bottom of screen
+- Successful blocks or attacks should provide satisfying visual feedback
+- Failed attempts should show the character taking damage with appropriate animation
+- Include a brief cooldown between sword and shield actions to prevent button mashing
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

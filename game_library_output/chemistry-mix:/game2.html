@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chemistry-Mix: Planet Quiz</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden; 
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+            margin: 0 auto;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        const planets = [
+            { name: "Mercury", color: "#A9A9A9" },
+            { name: "Venus", color: "#E6E6A0" },
+            { name: "Mars", color: "#E27B58" }, // Correct answer
+            { name: "Jupiter", color: "#C88B3A" }
+        ];
+        
+        // Beaker positions and properties
+        const beakers = planets.map((planet, index) => {
+            return {
+                x: 120 + index * 200,
+                y: 320,
+                width: 100,
+                height: 120,
+                color: planet.color,
+                name: planet.name,
+                isDragging: false,
+                dragOffsetX: 0,
+                dragOffsetY: 0,
+                originalX: 120 + index * 200,
+                originalY: 320
+            };
+        });
+        
+        // Target mixing container
+        const mixingContainer = {
+            x: 350,
+            y: 440,
+            width: 120,
+            height: 140
+        };
+        
+        // Game state
+        let gameState = 'playing'; // 'playing', 'correct', 'incorrect'
+        let draggedBeaker = null;
+        let bubbles = [];
+        let particles = [];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Function to play a beep sound
+        function playBeep(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Play different sounds based on game state
+        function playSound(type) {
+            switch(type) {
+                case 'drag':
+                    playBeep(220, 0.1);
+                    break;
+                case 'drop':
+                    playBeep(180, 0.1);
+                    break;
+                case 'correct':
+                    playBeep(440, 0.1);
+                    setTimeout(() => playBeep(660, 0.2), 100);
+                    setTimeout(() => playBeep(880, 0.3), 300);
+                    break;
+                case 'incorrect':
+                    playBeep(220, 0.1);
+                    setTimeout(() => playBeep(180, 0.3), 100);
+                    break;
+                case 'restart':
+                    playBeep(330, 0.1);
+                    break;
+            }
+        }
+        
+        // Create a new particle
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x,
+                    y,
+                    size: 4 + Math.random() * 6,
+                    color,
+                    speedX: -3 + Math.random() * 6,
+                    speedY: -1 - Math.random() * 4,
+                    life: 40 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Create bubbles for the mixing effect
+        function createBubbles(x, y) {
+            bubbles.push({
+                x: x + 20 + Math.random() * 80,
+                y: y + 60 + Math.random() * 70,
+                radius: 4 + Math.random() * 8,
+                speed: 1 + Math.random() * 2,
+                alpha: 0.8
+            });
+        }
+        
+        // Restart the game
+        function restartGame() {
+            gameState = 'playing';
+            beakers.forEach(beaker => {
+                beaker.x = beaker.originalX;
+                beaker.y = beaker.originalY;
+                beaker.isDragging = false;
+            });
+            draggedBeaker = null;
+            bubbles = [];
+            particles = [];
+            playSound('restart');
+        }
+        
+        // Mouse event handlers
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            if (gameState === 'playing') {
+                // Check if a beaker was clicked
+                beakers.forEach(beaker => {
+                    if (mouseX > beaker.x && mouseX < beaker.x + beaker.width &&
+                        mouseY > beaker.y && mouseY < beaker.y + beaker.height) {
+                        beaker.isDragging = true;
+                        beaker.dragOffsetX = mouseX - beaker.x;
+                        beaker.dragOffsetY = mouseY - beaker.y;
+                        draggedBeaker = beaker;
+                        playSound('drag');
+                    }
+                });
+            } else {
+                // Check if restart button was clicked
+                if (mouseX > 350 && mouseX < 450 &&
+                    mouseY > 350 && mouseY < 380) {
+                    restartGame();
+                }
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Move the dragged beaker
+            if (draggedBeaker && draggedBeaker.isDragging) {
+                draggedBeaker.x = mouseX - draggedBeaker.dragOffsetX;
+                draggedBeaker.y = mouseY - draggedBeaker.dragOffsetY;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            if (draggedBeaker && draggedBeaker.isDragging) {
+                // Check if the beaker was dropped onto the mixing container
+                if (gameState === 'playing' && 
+                    draggedBeaker.x + draggedBeaker.width / 2 > mixingContainer.x && 
+                    draggedBeaker.x + draggedBeaker.width / 2 < mixingContainer.x + mixingContainer.width && 
+                    draggedBeaker.y + draggedBeaker.height / 2 > mixingContainer.y && 
+                    draggedBeaker.y + draggedBeaker.height / 2 < mixingContainer.y + mixingContainer.height) {
+                    
+                    playSound('drop');
+                    
+                    // Check if the correct answer was selected
+                    if (draggedBeaker.name === "Mars") {
+                        gameState = 'correct';
+                        playSound('correct');
+                        // Create particles for success effect
+                        createParticles(mixingContainer.x + mixingContainer.width / 2, 
+                                       mixingContainer.y + 50, "#E27B58", 30);
+                    } else {
+                        gameState = 'incorrect';
+                        playSound('incorrect');
+                        // Create smoke for failed reaction
+                        createParticles(mixingContainer.x + mixingContainer.width / 2, 
+                                       mixingContainer.y + 50, "#777", 20);
+                    }
+                } else {
+                    // Return beaker to its original position
+                    draggedBeaker.x = draggedBeaker.originalX;
+                    draggedBeaker.y = draggedBeaker.originalY;
+                }
+                
+                draggedBeaker.isDragging = false;
+                draggedBeaker = null;
+            }
+        });
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = '#333344';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw laboratory background
+            ctx.fillStyle = '#222233';
+            ctx.fillRect(50, 100, 700, 450);
+            
+            // Draw pixel borders for lab
+            ctx.strokeStyle = '#5555AA';
+            ctx.lineWidth = 8;
+            ctx.strokeRect(50, 100, 700, 450);
+            
+            // Draw mixing container
+            ctx.fillStyle = '#444';
+            ctx.fillRect(mixingContainer.x, mixingContainer.y, mixingContainer.width, mixingContainer.height);
+            
+            // Draw glass effect on mixing container
+            ctx.fillStyle = '#555';
+            ctx.fillRect(mixingContainer.x + 10, mixingContainer.y, 10, mixingContainer.height);
+            ctx.fillRect(mixingContainer.x + mixingContainer.width - 20, mixingContainer.y, 10, mixingContainer.height);
+            
+            // Draw liquid in mixing container if game is not playing
+            if (gameState !== 'playing') {
+                ctx.fillStyle = gameState === 'correct' ? '#E27B58' : '#777';
+                ctx.fillRect(mixingContainer.x + 5, mixingContainer.y + 30, mixingContainer.width - 10, mixingContainer.height - 30);
+            }
+            
+            // Update and draw bubbles
+            for (let i = 0; i < bubbles.length; i++) {
+                const bubble = bubbles[i];
+                bubble.y -= bubble.speed;
+                bubble.alpha -= 0.01;
+                
+                ctx.fillStyle = `rgba(255, 255, 255, ${bubble.alpha})`;
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                if (bubble.alpha <= 0 || bubble.y < mixingContainer.y) {
+                    bubbles.splice(i, 1);
+                    i--;
+                }
+            }
+            
+            // Add new bubbles if game state is not playing
+            if (gameState !== 'playing' && Math.random() < 0.2) {
+                createBubbles(mixingContainer.x, mixingContainer.y);
+            }
+            
+            // Update and draw particles
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.speedY += 0.1; // Gravity
+                p.life--;
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
+            
+            // Draw beakers (ingredient containers)
+            beakers.forEach(beaker => {
+                if (!beaker.isDragging) {
+                    // Draw beaker container
+                    ctx.fillStyle = '#CCC';
+                    ctx.fillRect(beaker.x, beaker.y, beaker.width, beaker.height);
+                    
+                    // Draw liquid in beaker
+                    ctx.fillStyle = beaker.color;
+                    ctx.fillRect(beaker.x + 10, beaker.y + 20, beaker.width - 20, beaker.height - 30);
+                    
+                    // Draw glass highlights
+                    ctx.fillStyle = '#EEEEEE';
+                    ctx.fillRect(beaker.x + 5, beaker.y + 15, 5, beaker.height - 25);
+                    
+                    // Draw planet name
+                    ctx.fillStyle = '#000';
+                    ctx.font = '16px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(beaker.name, beaker.x + beaker.width / 2, beaker.y + beaker.height + 20);
+                }
+            });
+            
+            // Draw dragged beaker on top
+            if (draggedBeaker && draggedBeaker.isDragging) {
+                // Draw beaker container
+                ctx.fillStyle = '#CCC';
+                ctx.fillRect(draggedBeaker.x, draggedBeaker.y, draggedBeaker.width, draggedBeaker.height);
+                
+                // Draw liquid in beaker
+                ctx.fillStyle = draggedBeaker.color;
+                ctx.fillRect(draggedBeaker.x + 10, draggedBeaker.y + 20, draggedBeaker.width - 20, draggedBeaker.height - 30);
+                
+                // Draw glass highlights
+                ctx.fillStyle = '#EEEEEE';
+                ctx.fillRect(draggedBeaker.x + 5, draggedBeaker.y + 15, 5, draggedBeaker.height - 25);
+            }
+            
+            // Draw the question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '26px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 150);
+            
+            // Draw instructions
+            ctx.font = '16px Arial';
+            ctx.fillText("Drag the correct planet into the mixing container", canvas.width / 2, 180);
+            
+            // Draw label on mixing container
+            ctx.fillStyle = '#DDD';
+            ctx.font = '14px Arial';
+            ctx.fillText("MIX HERE", mixingContainer.x + mixingContainer.width / 2, mixingContainer.y + 20);
+            
+            // Draw game over message and restart button
+            if (gameState !== 'playing') {
+                ctx.fillStyle = gameState === 'correct' ? '#55FF55' : '#FF5555';
+                ctx.font = '32px Arial';
+                ctx.fillText(gameState === 'correct' ? "CORRECT!" : "INCORRECT!", canvas.width / 2, 240);
+                
+                // Draw restart button
+                ctx.fillStyle = '#4444AA';
+                ctx.fillRect(350, 350, 100, 30);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '16px Arial';
+                ctx.fillText("Restart", 400, 370);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

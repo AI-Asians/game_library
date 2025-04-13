@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Sequencer Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 2px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (8-bit palette)
+        const COLORS = {
+            background: '#0f0f2d',
+            text: '#ffffff',
+            grid: '#222244',
+            track1: '#ff5555', // Mars/Red
+            track2: '#55ff55', // Earth/Green
+            track3: '#5555ff', // Neptune/Blue
+            track4: '#ffff55', // Venus/Yellow
+            highlight: '#ff9900',
+            ledOff: '#332233',
+            ledOn: '#ff77ff'
+        };
+        
+        // Game state
+        let gameState = {
+            tracks: [
+                { name: 'Mars', color: COLORS.track1, active: false, freq: 440, correct: true },
+                { name: 'Earth', color: COLORS.track2, active: false, freq: 329.63, correct: false },
+                { name: 'Neptune', color: COLORS.track3, active: false, freq: 261.63, correct: false },
+                { name: 'Venus', color: COLORS.track4, active: false, freq: 392, correct: false }
+            ],
+            beatCount: 0,
+            isPlaying: true,
+            tempo: 120,
+            beatIndicators: Array(16).fill(false),
+            currentBeat: 0,
+            gameOver: false,
+            correctAnswer: false,
+            showRestart: false
+        };
+        
+        // Audio context
+        let audioCtx = null;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.warn('Web Audio API not supported');
+        }
+        
+        // Play a note with the Web Audio API
+        function playNote(frequency, duration) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gain.gain.value = 0.2;
+            
+            oscillator.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            
+            setTimeout(() => {
+                oscillator.stop();
+                oscillator.disconnect();
+            }, duration * 1000);
+        }
+        
+        // Play success sound
+        function playSuccess() {
+            if (!audioCtx) return;
+            
+            [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
+                setTimeout(() => {
+                    playNote(freq, 0.2);
+                }, i * 100);
+            });
+        }
+        
+        // Play error sound
+        function playError() {
+            if (!audioCtx) return;
+            
+            [330, 277.18].forEach((freq, i) => {
+                setTimeout(() => {
+                    playNote(freq, 0.3);
+                }, i * 150);
+            });
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            update();
+            draw();
+            if (gameState.isPlaying) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (gameState.gameOver) return;
+            
+            // Update beat counter
+            gameState.beatCount++;
+            if (gameState.beatCount >= 30) {
+                gameState.beatCount = 0;
+                gameState.currentBeat = (gameState.currentBeat + 1) % 16;
+                
+                // Activate beat indicator
+                gameState.beatIndicators[gameState.currentBeat] = true;
+                
+                // Play active track sounds on beats
+                gameState.tracks.forEach(track => {
+                    if (track.active) {
+                        playNote(track.freq, 0.2);
+                    }
+                });
+            }
+            
+            // Fade out beat indicators
+            for (let i = 0; i < gameState.beatIndicators.length; i++) {
+                if (gameState.beatIndicators[i] && i !== gameState.currentBeat) {
+                    gameState.beatIndicators[i] = false;
+                }
+            }
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, isMobile ? 40 : 60);
+            
+            // Draw sequencer grid background
+            const gridTop = isMobile ? 80 : 100;
+            const gridHeight = isMobile ? 320 : 360;
+            const trackHeight = gridHeight / 4;
+            
+            ctx.fillStyle = COLORS.grid;
+            ctx.fillRect(20, gridTop, canvas.width - 40, gridHeight);
+            
+            // Draw beat indicators
+            const beatWidth = (canvas.width - 40) / 16;
+            for (let i = 0; i < 16; i++) {
+                for (let j = 0; j < 4; j++) {
+                    const x = 20 + i * beatWidth;
+                    const y = gridTop + j * trackHeight;
+                    
+                    // Draw LED
+                    ctx.fillStyle = gameState.beatIndicators[i] && gameState.currentBeat === i ? COLORS.ledOn : COLORS.ledOff;
+                    ctx.fillRect(x + beatWidth * 0.2, y + trackHeight * 0.3, beatWidth * 0.6, trackHeight * 0.4);
+                    
+                    // LED highlight
+                    if (gameState.beatIndicators[i] && gameState.currentBeat === i) {
+                        ctx.fillStyle = COLORS.highlight;
+                        ctx.fillRect(x + beatWidth * 0.3, y + trackHeight * 0.4, beatWidth * 0.4, trackHeight * 0.2);
+                    }
+                }
+            }
+            
+            // Draw tracks
+            gameState.tracks.forEach((track, index) => {
+                const y = gridTop + index * trackHeight;
+                
+                // Track background
+                ctx.fillStyle = track.active ? track.color : `${track.color}55`;
+                ctx.fillRect(20, y, canvas.width - 40, trackHeight);
+                
+                // Track name
+                ctx.fillStyle = COLORS.text;
+                ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(track.name, 30, y + trackHeight / 2 + 6);
+                
+                // Draw sound waves when track is active
+                if (track.active) {
+                    ctx.strokeStyle = COLORS.text;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    
+                    const waveWidth = canvas.width - 100;
+                    const waveHeight = trackHeight * 0.3;
+                    const startX = 80;
+                    const centerY = y + trackHeight / 2;
+                    
+                    for (let i = 0; i < waveWidth; i += 10) {
+                        const x = startX + i;
+                        const offset = Math.sin((i + gameState.beatCount) * 0.2) * waveHeight;
+                        
+                        if (i === 0) {
+                            ctx.moveTo(x, centerY + offset);
+                        } else {
+                            ctx.lineTo(x, centerY + offset);
+                        }
+                    }
+                    
+                    ctx.stroke();
+                    
+                    // Draw music notes occasionally
+                    if (gameState.beatCount % 10 === 0) {
+                        ctx.fillStyle = COLORS.text;
+                        const noteX = 80 + Math.random() * (canvas.width - 150);
+                        const noteY = y + Math.random() * trackHeight;
+                        
+                        // Simple 8-bit style note
+                        ctx.fillRect(noteX, noteY, 6, 2);
+                        ctx.fillRect(noteX + 6, noteY, 2, 12);
+                        ctx.fillRect(noteX + 8, noteY + 10, 6, 6);
+                    }
+                }
+            });
+            
+            // Draw current beat indicator
+            const indicatorX = 20 + gameState.currentBeat * beatWidth;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fillRect(indicatorX, gridTop, beatWidth, gridHeight);
+            
+            // Draw instructions
+            const instructionsY = gridTop + gridHeight + 40;
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '16px sans-serif' : '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Click on a track to activate it', canvas.width / 2, instructionsY);
+            ctx.fillText('Select the correct planet to complete the sequence', canvas.width / 2, instructionsY + 30);
+            
+            // Draw game over message
+            if (gameState.gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameState.correctAnswer ? '#88ff88' : '#ff8888';
+                ctx.font = '28px sans-serif';
+                ctx.textAlign = 'center';
+                
+                if (gameState.correctAnswer) {
+                    ctx.fillText('Correct! Mars is the Red Planet.', canvas.width / 2, canvas.height / 2 - 40);
+                } else {
+                    ctx.fillText('Incorrect!', canvas.width / 2, canvas.height / 2 - 40);
+                    ctx.fillText('Mars is the Red Planet.', canvas.width / 2, canvas.height / 2);
+                }
+                
+                // Restart button
+                if (gameState.showRestart) {
+                    const btnWidth = 150;
+                    const btnHeight = 50;
+                    const btnX = (canvas.width - btnWidth) / 2;
+                    const btnY = canvas.height / 2 + 40;
+                    
+                    ctx.fillStyle = COLORS.highlight;
+                    ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                    
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = '20px sans-serif';
+                    ctx.fillText('Restart', canvas.width / 2, btnY + 32);
+                }
+            }
+        }
+        
+        // Handle user input
+        function handleClick(e) {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameState.gameOver) {
+                const btnWidth = 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2 + 40;
+                
+                if (gameState.showRestart &&
+                    x >= btnX && x <= btnX + btnWidth &&
+                    y >= btnY && y <= btnY + btnHeight) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            const gridTop = isMobile ? 80 : 100;
+            const gridHeight = isMobile ? 320 : 360;
+            const trackHeight = gridHeight / 4;
+            
+            // Check if click is within sequencer grid
+            if (x >= 20 && x <= canvas.width - 20 &&
+                y >= gridTop && y <= gridTop + gridHeight) {
+                
+                const trackIndex = Math.floor((y - gridTop) / trackHeight);
+                
+                if (trackIndex >= 0 && trackIndex < gameState.tracks.length) {
+                    // Toggle track activation
+                    gameState.tracks[trackIndex].active = !gameState.tracks[trackIndex].active;
+                    
+                    // Play sound
+                    playNote(gameState.tracks[trackIndex].freq, 0.3);
+                    
+                    // Check if clicked track is correct answer
+                    if (gameState.tracks[trackIndex].active && gameState.tracks[trackIndex].correct) {
+                        gameState.gameOver = true;
+                        gameState.correctAnswer = true;
+                        playSuccess();
+                        setTimeout(() => {
+                            gameState.showRestart = true;
+                            draw();
+                        }, 1000);
+                    } else if (gameState.tracks[trackIndex].active && !gameState.tracks[trackIndex].correct) {
+                        gameState.gameOver = true;
+                        gameState.correctAnswer = false;
+                        playError();
+                        setTimeout(() => {
+                            gameState.showRestart = true;
+                            draw();
+                        }, 1000);
+                    }
+                }
+            }
+        }
+        
+        // Reset the game
+        function resetGame() {
+            gameState = {
+                tracks: [
+                    { name: 'Mars', color: COLORS.track1, active: false, freq: 440, correct: true },
+                    { name: 'Earth', color: COLORS.track2, active: false, freq: 329.63, correct: false },
+                    { name: 'Neptune', color: COLORS.track3, active: false, freq: 261.63, correct: false },
+                    { name: 'Venus', color: COLORS.track4, active: false, freq: 392, correct: false }
+                ],
+                beatCount: 0,
+                isPlaying: true,
+                tempo: 120,
+                beatIndicators: Array(16).fill(false),
+                currentBeat: 0,
+                gameOver: false,
+                correctAnswer: false,
+                showRestart: false
+            };
+            gameLoop();
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('click', handleClick);
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Jumper</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #jumpBtn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: #ff5555;
+            border: 4px solid #ffffff;
+            color: white;
+            font-size: 16px;
+            text-align: center;
+            line-height: 80px;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        @media (min-width: 600px) {
+            #jumpBtn {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="jumpBtn">JUMP</div>
+    
+    <script>
+        // Game canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        const gravity = 0.5;
+        const platformHeight = 20;
+        const question = "Which planet is known as the Red Planet?";
+        
+        // Answer options
+        const answers = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+        
+        // Colors - 8-bit style limited palette
+        const colors = {
+            background: "#000022",
+            stars: ["#FFFFFF", "#AAAAFF", "#5555FF"],
+            platforms: "#555577",
+            correctPlatform: "#55AA55",
+            incorrectPlatform: "#AA5555",
+            player: "#55AAFF",
+            helmet: "#FFFFFF",
+            text: "#FFFFFF",
+            particles: ["#FFAA55", "#FF5555", "#FFFF55"]
+        };
+        
+        // Generate stars for background
+        const starCount = 100;
+        const stars = [];
+        for (let i = 0; i < starCount; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                color: colors.stars[Math.floor(Math.random() * colors.stars.length)],
+                twinkle: Math.random() * 0.05
+            });
+        }
+        
+        // Player object
+        const player = {
+            x: canvas.width / 2 - 15,
+            y: canvas.height - 100,
+            width: 30,
+            height: 40,
+            velocityX: 0,
+            velocityY: 0,
+            speed: 5,
+            jumping: false,
+            facingRight: true
+        };
+        
+        // Platforms (with answers)
+        let platforms = [];
+        
+        // Generate platforms with shuffled answers
+        function setupPlatforms() {
+            platforms = [];
+            
+            // Base platform where player starts
+            platforms.push({
+                x: canvas.width / 2 - 100,
+                y: canvas.height - 50,
+                width: 200,
+                height: platformHeight,
+                isAnswer: false
+            });
+            
+            // Shuffle answers
+            const shuffledAnswers = [...answers];
+            for (let i = shuffledAnswers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledAnswers[i], shuffledAnswers[j]] = [shuffledAnswers[j], shuffledAnswers[i]];
+            }
+            
+            // Create platforms with answers
+            const platformWidth = isMobile ? 80 : 120;
+            const minHeight = canvas.height * 0.3;
+            const maxHeight = canvas.height * 0.7;
+            
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                let x = (i * (canvas.width / shuffledAnswers.length)) + 
+                         (canvas.width / shuffledAnswers.length - platformWidth) / 2;
+                let y = minHeight + Math.random() * (maxHeight - minHeight);
+                
+                platforms.push({
+                    x: x,
+                    y: y,
+                    width: platformWidth,
+                    height: platformHeight,
+                    isAnswer: true,
+                    text: shuffledAnswers[i].text,
+                    correct: shuffledAnswers[i].correct,
+                    // Give each platform a slight movement
+                    moveX: (Math.random() - 0.5) * 2,
+                    moveRange: 50 + Math.random() * 50,
+                    startX: x
+                });
+            }
+        }
+        
+        // Particles system
+        const particles = [];
+        
+        function createParticles(x, y, count, type) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    velocityX: (Math.random() - 0.5) * 5,
+                    velocityY: (Math.random() - 0.5) * 5 - 2,
+                    size: Math.random() * 6 + 2,
+                    color: colors.particles[Math.floor(Math.random() * colors.particles.length)],
+                    life: 30 + Math.random() * 20,
+                    type: type
+                });
+            }
+        }
+        
+        // Input handling
+        let leftPressed = false;
+        let rightPressed = false;
+        
+        document.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            
+            if (e.key === 'ArrowLeft' || e.key === 'a') leftPressed = true;
+            if (e.key === 'ArrowRight' || e.key === 'd') rightPressed = true;
+            if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') {
+                jump();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') leftPressed = false;
+            if (e.key === 'ArrowRight' || e.key === 'd') rightPressed = false;
+        });
+        
+        // Mobile jump button
+        document.getElementById('jumpBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            jump();
+        });
+        
+        // Touch controls for movement
+        let touchStartX = 0;
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameOver) return;
+            touchStartX = e.touches[0].clientX;
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameOver) return;
+            const touchX = e.touches[0].clientX;
+            
+            if (touchX < touchStartX - 10) {
+                leftPressed = true;
+                rightPressed = false;
+            } else if (touchX > touchStartX + 10) {
+                rightPressed = true;
+                leftPressed = false;
+            } else {
+                leftPressed = false;
+                rightPressed = false;
+            }
+        });
+        
+        canvas.addEventListener('touchend', () => {
+            leftPressed = false;
+            rightPressed = false;
+        });
+        
+        // Sound generation
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                if (type === 'jump') {
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(440, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                } else if (type === 'correct') {
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                } else if (type === 'incorrect') {
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                }
+            } catch (e) {
+                // Silently fail if audio context creation fails
+            }
+        }
+        
+        function jump() {
+            if (!player.jumping) {
+                player.velocityY = -12;
+                player.jumping = true;
+                playSound('jump');
+                createParticles(player.x + player.width/2, player.y + player.height, 8, 'jump');
+            }
+        }
+        
+        function checkCollision() {
+            let onPlatform = false;
+            let answerHit = null;
+            
+            for (let i = 0; i < platforms.length; i++) {
+                const p = platforms[i];
+                
+                // Check if player is on platform
+                if (player.y + player.height >= p.y && 
+                    player.y + player.height <= p.y + p.height + 5 &&
+                    player.x + player.width > p.x && 
+                    player.x < p.x + p.width && 
+                    player.velocityY >= 0) {
+                    
+                    player.y = p.y - player.height;
+                    player.velocityY = 0;
+                    player.jumping = false;
+                    onPlatform = true;
+                    
+                    // Create landing particles
+                    createParticles(player.x + player.width/2, player.y + player.height, 5, 'land');
+                    
+                    // If landed on answer platform
+                    if (p.isAnswer) {
+                        answerHit = p;
+                    }
+                }
+            }
+            
+            if (!onPlatform) {
+                player.jumping = true;
+            }
+            
+            return answerHit;
+        }
+        
+        function endGame(correct) {
+            gameOver = true;
+            
+            if (correct) {
+                playSound('correct');
+                // Victory particles
+                createParticles(player.x + player.width/2, player.y + player.height/2, 30, 'correct');
+            } else {
+                playSound('incorrect');
+                // Failure particles
+                createParticles(player.x + player.width/2, player.y + player.height/2, 15, 'incorrect');
+            }
+            
+            // Show restart button after short delay
+            setTimeout(() => {
+                // Create restart button
+                ctx.fillStyle = "#555577";
+                const buttonWidth = 150;
+                const buttonHeight = 50;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height / 2 + 50;
+                
+                ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                ctx.strokeStyle = "#FFFFFF";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "20px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("Restart", canvas.width / 2, buttonY + 32);
+                
+                // Add click listener for restart
+                canvas.addEventListener('click', handleRestart);
+                canvas.addEventListener('touchstart', handleRestart);
+            }, 700);
+        }
+        
+        function handleRestart(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX || e.touches[0].clientX) - rect.left;
+            const clickY = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            const buttonWidth = 150;
+            const buttonHeight = 50;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 50;
+            
+            if (clickX >= buttonX && clickX <= buttonX + buttonWidth &&
+                clickY >= buttonY && clickY <= buttonY + buttonHeight) {
+                resetGame();
+                canvas.removeEventListener('click', handleRestart);
+                canvas.removeEventListener('touchstart', handleRestart);
+            }
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            player.x = canvas.width / 2 - 15;
+            player.y = canvas.height - 100;
+            player.velocityX = 0;
+            player.velocityY = 0;
+            player.jumping = false;
+            particles.length = 0;
+            setupPlatforms();
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Movement
+                if (leftPressed) {
+                    player.velocityX = -player.speed;
+                    player.facingRight = false;
+                } else if (rightPressed) {
+                    player.velocityX = player.speed;
+                    player.facingRight = true;
+                } else {
+                    player.velocityX = 0;
+                }
+                
+                // Apply gravity
+                player.velocityY += gravity;
+                
+                // Apply velocity
+                player.x += player.velocityX;
+                player.y += player.velocityY;
+                
+                // Screen boundaries
+                if (player.x < 0) player.x = 0;
+                if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+                
+                // If player falls off screen
+                if (player.y > canvas.height) {
+                    player.y = canvas.height - 100;
+                    player.velocityY = 0;
+                }
+                
+                // Move platforms
+                platforms.forEach(p => {
+                    if (p.moveX) {
+                        p.x += p.moveX;
+                        if (Math.abs(p.x - p.startX) > p.moveRange) {
+                            p.moveX *= -1;
+                        }
+                    }
+                });
+                
+                // Check for collision with platforms and answers
+                const answerHit = checkCollision();
+                if (answerHit) {
+                    endGame(answerHit.correct);
+                }
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.velocityX;
+                p.y += p.velocityY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // Animate stars (twinkle)
+            stars.forEach(star => {
+                star.size += Math.sin(Date.now() * star.twinkle) * 0.1;
+            });
+        }
+        
+        function drawPlayer() {
+            // Main astronaut body
+            ctx.fillStyle = colors.player;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            
+            // Helmet
+            ctx.fillStyle = colors.helmet;
+            ctx.fillRect(player.x + 2, player.y, player.width - 4, player.height/3);
+            
+            // Visor
+            ctx.fillStyle = "#222244";
+            ctx.fillRect(player.x + 6, player.y + 5, player.width - 12, player.height/5);
+            
+            // Backpack
+            ctx.fillStyle = "#3388CC";
+            ctx.fillRect(player.facingRight ? player.x - 5 : player.x + player.width - 3, 
+                        player.y + 8, 8, player.height - 16);
+            
+            // Legs
+            ctx.fillStyle = "#3377AA";
+            ctx.fillRect(player.x + 5, player.y + player.height - 10, 8, 10);
+            ctx.fillRect(player.x + player.width - 13, player.y + player.height - 10, 8, 10);
+        }
+        
+        function draw() {
+            // Clear screen
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            stars.forEach(star => {
+                ctx.fillStyle = star.color;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+            
+            // Draw platforms
+            platforms.forEach(platform => {
+                if (platform.isAnswer) {
+                    // Draw answer platform with texture
+                    ctx.fillStyle = "#444466";
+                    ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                    
+                    // Platform texture (asteroid-like)
+                    for (let i = 0; i < 8; i++) {
+                        ctx.fillStyle = "#333355";
+                        ctx.fillRect(
+                            platform.x + Math.random() * platform.width, 
+                            platform.y + Math.random() * platform.height,
+                            4, 4
+                        );
+                    }
+                    
+                    // Answer text background
+                    ctx.fillStyle = platform.correct ? colors.correctPlatform : colors.incorrectPlatform;
+                    const padding = 5;
+                    const textWidth = ctx.measureText(platform.text).width + padding * 2;
+                    ctx.fillRect(
+                        platform.x + platform.width/2 - textWidth/2, 
+                        platform.y - 25,
+                        textWidth,
+                        20
+                    );
+                    
+                    // Answer text
+                    ctx.fillStyle = "#FFFFFF";
+                    ctx.font = "16px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(platform.text, platform.x + platform.width/2, platform.y - 10);
+                } else {
+                    // Draw regular platform
+                    ctx.fillStyle = colors.platforms;
+                    ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                    
+                    // Platform texture
+                    for (let i = 0; i < 12; i++) {
+                        ctx.fillStyle = "#444466";
+                        ctx.fillRect(
+                            platform.x + Math.random() * platform.width, 
+                            platform.y + Math.random() * platform.height,
+                            3, 3
+                        );
+                    }
+                }
+            });
+            
+            // Draw player
+            drawPlayer();
+            
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 40);
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = "24px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    "The correct answer is Mars!", 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 20
+                );
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        setupPlatforms();
+        gameLoop();
+    </script>
+</body>
+</html>

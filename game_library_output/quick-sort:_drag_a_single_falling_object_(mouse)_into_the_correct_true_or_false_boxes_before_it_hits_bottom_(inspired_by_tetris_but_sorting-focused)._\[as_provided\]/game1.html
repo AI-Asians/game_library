@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Truth Sorting Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background-color: #000;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game objects
+    let mouse = {
+      x: canvas.width / 2,
+      y: 60,
+      width: 40,
+      height: 30,
+      speed: 1.5,
+      isDragging: false,
+      color: '#AAA'
+    };
+    
+    const boxes = [
+      { x: canvas.width / 4 - 75, y: canvas.height - 100, width: 150, height: 80, label: 'TRUE', color: '#00AA55' },
+      { x: (canvas.width * 3) / 4 - 75, y: canvas.height - 100, width: 150, height: 80, label: 'FALSE', color: '#AA0000' }
+    ];
+
+    const question = "The Great Wall of China is visible from space.";
+    const correctAnswer = false; // The answer is FALSE
+    
+    let gameState = 'playing'; // 'playing', 'correct', 'incorrect', 'missed'
+    let restartButton = { x: canvas.width / 2 - 60, y: canvas.height / 2 + 40, width: 120, height: 40 };
+    
+    // Sound effects using AudioContext
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(freq, duration, type = 'square') {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      oscillator.start();
+      
+      setTimeout(() => {
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        setTimeout(() => oscillator.stop(), 100);
+      }, duration);
+    }
+    
+    // Draw mouse in 8-bit style
+    function drawMouse(x, y) {
+      // Mouse body
+      ctx.fillStyle = '#888';
+      ctx.fillRect(x, y, mouse.width, mouse.height);
+      
+      // Ears
+      ctx.fillStyle = '#666';
+      ctx.fillRect(x, y - 6, 10, 6);
+      ctx.fillRect(x + mouse.width - 10, y - 6, 10, 6);
+      
+      // Eyes
+      ctx.fillStyle = 'black';
+      ctx.fillRect(x + 8, y + 8, 6, 6);
+      ctx.fillRect(x + mouse.width - 14, y + 8, 6, 6);
+      
+      // Nose
+      ctx.fillStyle = '#FF9999';
+      ctx.fillRect(x + mouse.width/2 - 3, y + mouse.height - 8, 6, 4);
+      
+      // Tail
+      ctx.fillStyle = '#777';
+      ctx.fillRect(x + mouse.width/2, y + mouse.height, 2, 10);
+    }
+    
+    // Draw pixelated box
+    function drawBox(box) {
+      // Border
+      ctx.fillStyle = box.color;
+      ctx.fillRect(box.x, box.y, box.width, box.height);
+      
+      // Inner
+      ctx.fillStyle = '#222';
+      ctx.fillRect(box.x + 4, box.y + 4, box.width - 8, box.height - 8);
+      
+      // Label
+      ctx.fillStyle = box.color;
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(box.label, box.x + box.width / 2, box.y + box.height / 2 + 8);
+    }
+    
+    // Draw restart button
+    function drawRestartButton() {
+      ctx.fillStyle = '#444';
+      ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+      ctx.fillStyle = '#EEE';
+      ctx.fillRect(restartButton.x + 4, restartButton.y + 4, restartButton.width - 8, restartButton.height - 8);
+      ctx.fillStyle = '#222';
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Restart', restartButton.x + restartButton.width / 2, restartButton.y + restartButton.height / 2 + 6);
+    }
+    
+    // Draw question
+    function drawQuestion() {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, 30);
+    }
+    
+    // Draw game over message
+    function drawGameOver() {
+      ctx.textAlign = 'center';
+      ctx.font = '28px sans-serif';
+      
+      if (gameState === 'correct') {
+        ctx.fillStyle = '#55FF55';
+        ctx.fillText('CORRECT!', canvas.width / 2, canvas.height / 2);
+      } else if (gameState === 'incorrect') {
+        ctx.fillStyle = '#FF5555';
+        ctx.fillText('INCORRECT!', canvas.width / 2, canvas.height / 2);
+      } else if (gameState === 'missed') {
+        ctx.fillStyle = '#FF5555';
+        ctx.fillText('MISSED!', canvas.width / 2, canvas.height / 2);
+      }
+      
+      drawRestartButton();
+    }
+    
+    // Draw background with simple pixelated pattern
+    function drawBackground() {
+      ctx.fillStyle = '#000022';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw small stars
+      ctx.fillStyle = '#FFFFFF';
+      for (let i = 0; i < 50; i++) {
+        const x = Math.floor(i * (canvas.width/50) + Math.sin(i*5) * 20);
+        const y = Math.floor(i * (canvas.height/50) + Math.cos(i*7) * 20);
+        ctx.fillRect(x, y, 2, 2);
+      }
+    }
+    
+    // Main draw function
+    function draw() {
+      drawBackground();
+      drawQuestion();
+      
+      boxes.forEach(drawBox);
+      
+      if (gameState === 'playing') {
+        drawMouse(mouse.x - mouse.width / 2, mouse.y - mouse.height / 2);
+      } else {
+        drawGameOver();
+      }
+    }
+    
+    // Main update function
+    function update() {
+      if (gameState === 'playing') {
+        // Move mouse downward if not being dragged
+        if (!mouse.isDragging) {
+          mouse.y += mouse.speed;
+        }
+        
+        // Check if mouse hits ground
+        if (mouse.y > canvas.height - mouse.height / 2) {
+          gameState = 'missed';
+          playSound(200, 500);
+        }
+        
+        // Check for collision with boxes
+        boxes.forEach((box, index) => {
+          if (
+            mouse.x > box.x && 
+            mouse.x < box.x + box.width && 
+            mouse.y > box.y && 
+            mouse.y < box.y + box.height
+          ) {
+            const isTrue = index === 0;
+            if (isTrue === correctAnswer) {
+              gameState = 'correct';
+              playSound(440, 200);
+              playSound(660, 200, 'sine');
+            } else {
+              gameState = 'incorrect';
+              playSound(220, 400);
+            }
+          }
+        });
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Mouse/touch event handlers
+    function startDrag(e) {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      let mouseX, mouseY;
+      
+      if (e.type.includes('touch')) {
+        mouseX = (e.touches[0].clientX - rect.left) * scaleX;
+        mouseY = (e.touches[0].clientY - rect.top) * scaleY;
+      } else {
+        mouseX = (e.clientX - rect.left) * scaleX;
+        mouseY = (e.clientY - rect.top) * scaleY;
+      }
+      
+      // Check if click is on restart button
+      if (gameState !== 'playing') {
+        if (
+          mouseX > restartButton.x && 
+          mouseX < restartButton.x + restartButton.width && 
+          mouseY > restartButton.y && 
+          mouseY < restartButton.y + restartButton.height
+        ) {
+          resetGame();
+          return;
+        }
+      }
+      
+      // Check if mouse is being selected
+      if (
+        gameState === 'playing' &&
+        mouseX > mouse.x - mouse.width / 2 && 
+        mouseX < mouse.x + mouse.width / 2 && 
+        mouseY > mouse.y - mouse.height / 2 && 
+        mouseY < mouse.y + mouse.height / 2
+      ) {
+        mouse.isDragging = true;
+        playSound(330, 100, 'sine');
+      }
+    }
+    
+    function drag(e) {
+      e.preventDefault();
+      if (gameState === 'playing' && mouse.isDragging) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        if (e.type.includes('touch')) {
+          mouse.x = (e.touches[0].clientX - rect.left) * scaleX;
+          mouse.y = (e.touches[0].clientY - rect.top) * scaleY;
+        } else {
+          mouse.x = (e.clientX - rect.left) * scaleX;
+          mouse.y = (e.clientY - rect.top) * scaleY;
+        }
+      }
+    }
+    
+    function endDrag() {
+      mouse.isDragging = false;
+    }
+    
+    function resetGame() {
+      mouse.x = canvas.width / 2;
+      mouse.y = 60;
+      mouse.isDragging = false;
+      gameState = 'playing';
+      playSound(440, 100);
+    }
+    
+    // Event listeners
+    canvas.addEventListener('mousedown', startDrag);
+    canvas.addEventListener('touchstart', startDrag);
+    canvas.addEventListener('mousemove', drag);
+    canvas.addEventListener('touchmove', drag);
+    canvas.addEventListener('mouseup', endDrag);
+    canvas.addEventListener('touchend', endDrag);
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

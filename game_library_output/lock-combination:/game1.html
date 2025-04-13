@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Combination Lock</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game colors - limited palette
+        const colors = {
+            background: '#0f380f',  // Dark green background
+            lockBase: '#8bac0f',    // Light green
+            lockShade: '#306230',   // Medium green
+            lockHighlight: '#9bbc0f',// Lighter green
+            lockDark: '#0f380f',    // Dark green
+            text: '#e0f8d0',        // Pale green
+            correct: '#9bbc0f',     // Light green
+            incorrect: '#e76e55',   // Red
+            button: '#8bac0f',      // Light green
+            buttonPressed: '#306230'// Medium green
+        };
+
+        // Game state
+        let gameState = {
+            question: "What is the capital of France?",
+            options: [
+                ["Rome", "Paris", "Madrid", "Berlin", "London"],
+                ["Tokyo", "Paris", "Moscow", "Cairo", "Lima"],
+                ["Paris", "Athens", "Dublin", "Oslo", "Vienna"]
+            ],
+            currentSelections: [1, 1, 0], // Starting positions
+            correctAnswer: [1, 1, 0],    // Paris is the correct answer
+            gameOver: false,
+            isCorrect: false,
+            checkingAnswer: false,
+            restartHover: false,
+            dialRotating: [-1, -1, -1],  // Animation state for each dial
+            rotationAngles: [0, 0, 0],   // Current rotation angle for each dial
+            targetAngles: [0, 0, 0],     // Target rotation angle for each dial
+            lockShaking: 0,              // Lock shaking effect
+            unlockAnimation: 0,          // Unlock animation progress
+        };
+
+        // Audio context
+        let audioCtx;
+        
+        // Initialize audio
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Play click sound
+        function playClickSound() {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+        
+        // Play success sound
+        function playSuccessSound() {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        // Play error sound
+        function playErrorSound() {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.2);
+        }
+
+        // Draw a pixel art circle
+        function drawPixelCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            
+            // Draw a blocky circle using rectangles
+            for (let i = -radius; i <= radius; i++) {
+                for (let j = -radius; j <= radius; j++) {
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillRect(Math.floor(x + i), Math.floor(y + j), 1, 1);
+                    }
+                }
+            }
+        }
+        
+        // Draw combination lock dial
+        function drawDial(x, y, radius, selection, dialIndex) {
+            const options = gameState.options[dialIndex];
+            const rotationOffset = gameState.rotationAngles[dialIndex];
+            const totalOptions = options.length;
+            
+            // Draw dial base
+            ctx.fillStyle = colors.lockBase;
+            drawPixelCircle(x, y, radius, colors.lockBase);
+            
+            // Draw outer ring with notches
+            ctx.fillStyle = colors.lockShade;
+            drawPixelCircle(x, y, radius - 5, colors.lockShade);
+            
+            // Draw inner circle
+            ctx.fillStyle = colors.lockBase;
+            drawPixelCircle(x, y, radius - 15, colors.lockBase);
+            
+            // Draw notches
+            const notchCount = 20;
+            for (let i = 0; i < notchCount; i++) {
+                const angle = (i * 2 * Math.PI / notchCount) + rotationOffset;
+                const notchX = x + (radius - 10) * Math.cos(angle);
+                const notchY = y + (radius - 10) * Math.sin(angle);
+                
+                drawPixelCircle(notchX, notchY, 2, colors.lockDark);
+            }
+            
+            // Display current selection
+            ctx.fillStyle = colors.text;
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            // Calculate which options to show based on current rotation
+            const angle = rotationOffset % (2 * Math.PI);
+            const normalizedAngle = angle < 0 ? angle + 2 * Math.PI : angle;
+            const optionIndex = Math.floor(normalizedAngle / (2 * Math.PI / totalOptions)) % totalOptions;
+            
+            ctx.fillText(options[optionIndex], x, y);
+        }
+        
+        // Draw lock icon
+        function drawLockIcon(x, y, size, unlocked) {
+            const shakeOffset = gameState.lockShaking ? Math.sin(gameState.lockShaking * 30) * 3 : 0;
+            
+            x += shakeOffset;
+            
+            // Draw lock body
+            ctx.fillStyle = unlocked ? colors.correct : colors.lockBase;
+            ctx.fillRect(x - size/3, y, size*2/3, size);
+            
+            // Draw lock notch
+            ctx.fillStyle = colors.lockDark;
+            ctx.fillRect(x - size/5, y + size/3, size*2/5, size/5);
+
+            // Draw lock shackle
+            ctx.lineWidth = size/5;
+            ctx.strokeStyle = unlocked ? colors.correct : colors.lockBase;
+            
+            if (unlocked) {
+                // Draw open shackle for unlocked state
+                const openAmount = Math.min(1, gameState.unlockAnimation / 10);
+                ctx.beginPath();
+                ctx.arc(x, y, size/2, Math.PI, 0);
+                ctx.lineTo(x + size/2, y - size/2 + openAmount * size);
+                ctx.stroke();
+            } else {
+                // Draw closed shackle for locked state
+                ctx.beginPath();
+                ctx.arc(x, y, size/2, Math.PI, 0);
+                ctx.lineTo(x + size/2, y);
+                ctx.lineTo(x - size/2, y);
+                ctx.stroke();
+            }
+        }
+
+        // Draw check button
+        function drawCheckButton(x, y, width, height) {
+            const isPressed = gameState.checkingAnswer;
+            
+            // Button base
+            ctx.fillStyle = isPressed ? colors.buttonPressed : colors.button;
+            ctx.fillRect(x, y, width, height);
+            
+            // Button border
+            ctx.strokeStyle = colors.lockDark;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Button text
+            ctx.fillStyle = colors.text;
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("CHECK", x + width/2, y + height/2);
+        }
+        
+        // Draw restart button
+        function drawRestartButton(x, y, width, height) {
+            const isHovered = gameState.restartHover;
+            
+            // Button base
+            ctx.fillStyle = isHovered ? colors.buttonPressed : colors.button;
+            ctx.fillRect(x, y, width, height);
+            
+            // Button border
+            ctx.strokeStyle = colors.lockDark;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Button text
+            ctx.fillStyle = colors.text;
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("RESTART", x + width/2, y + height/2);
+        }
+        
+        // Check if the answer is correct
+        function checkAnswer() {
+            for (let i = 0; i < gameState.currentSelections.length; i++) {
+                const optionIndex = Math.floor(gameState.rotationAngles[i] / (2 * Math.PI / gameState.options[i].length)) % gameState.options[i].length;
+                if (optionIndex !== gameState.correctAnswer[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        // Handle check button click
+        function handleCheckAnswer() {
+            gameState.checkingAnswer = true;
+            setTimeout(() => {
+                gameState.checkingAnswer = false;
+                
+                // Check if answer is correct
+                const isCorrect = checkAnswer();
+                
+                if (isCorrect) {
+                    gameState.isCorrect = true;
+                    gameState.unlockAnimation = 1;
+                    playSuccessSound();
+                    setTimeout(() => {
+                        gameState.gameOver = true;
+                    }, 1500);
+                } else {
+                    gameState.lockShaking = 1;
+                    playErrorSound();
+                }
+            }, 200);
+        }
+        
+        // Rotate a dial
+        function rotateDial(dialIndex) {
+            if (gameState.gameOver) return;
+            
+            const totalOptions = gameState.options[dialIndex].length;
+            const stepAngle = 2 * Math.PI / totalOptions;
+            
+            // Set the target rotation angle
+            gameState.targetAngles[dialIndex] = gameState.rotationAngles[dialIndex] + stepAngle;
+            gameState.dialRotating[dialIndex] = 10; // Animation frames
+            
+            playClickSound();
+        }
+        
+        // Update game state
+        function update() {
+            // Update dial rotation animations
+            for (let i = 0; i < gameState.dialRotating.length; i++) {
+                if (gameState.dialRotating[i] > 0) {
+                    const animProgress = 1 - gameState.dialRotating[i] / 10;
+                    const stepAngle = gameState.targetAngles[i] - gameState.rotationAngles[i];
+                    
+                    gameState.rotationAngles[i] += stepAngle * 0.2;
+                    
+                    gameState.dialRotating[i]--;
+                    
+                    if (gameState.dialRotating[i] === 0) {
+                        gameState.rotationAngles[i] = gameState.targetAngles[i];
+                    }
+                }
+            }
+            
+            // Update lock shaking effect
+            if (gameState.lockShaking > 0) {
+                gameState.lockShaking -= 0.05;
+                if (gameState.lockShaking < 0) {
+                    gameState.lockShaking = 0;
+                }
+            }
+            
+            // Update unlock animation
+            if (gameState.unlockAnimation > 0 && gameState.unlockAnimation < 20) {
+                gameState.unlockAnimation += 0.5;
+            }
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = "28px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(gameState.question, canvas.width / 2, 80);
+            
+            // Draw dials
+            const dialRadius = 70;
+            const dialSpacing = 180;
+            const centerY = canvas.height / 2;
+            
+            for (let i = 0; i < gameState.currentSelections.length; i++) {
+                const dialX = canvas.width/2 + (i - 1) * dialSpacing;
+                drawDial(dialX, centerY, dialRadius, gameState.currentSelections[i], i);
+            }
+            
+            // Draw lock icon
+            drawLockIcon(canvas.width/2, canvas.height - 150, 40, gameState.isCorrect);
+            
+            // Draw check button if game is not over
+            if (!gameState.gameOver) {
+                drawCheckButton(canvas.width/2 - 60, canvas.height - 80, 120, 40);
+            }
+            
+            // Draw restart button if game is over
+            if (gameState.gameOver) {
+                // Draw result message
+                ctx.fillStyle = gameState.isCorrect ? colors.correct : colors.incorrect;
+                ctx.font = "32px Arial";
+                ctx.fillText(
+                    gameState.isCorrect ? "Correct! The lock is open!" : "Incorrect. Try again!",
+                    canvas.width/2, 
+                    canvas.height - 150
+                );
+                
+                drawRestartButton(canvas.width/2 - 60, canvas.height - 80, 120, 40);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch click
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            const dialRadius = 70;
+            const dialSpacing = 180;
+            const centerY = canvas.height / 2;
+            
+            // Check if a dial was clicked
+            for (let i = 0; i < gameState.currentSelections.length; i++) {
+                const dialX = canvas.width/2 + (i - 1) * dialSpacing;
+                const dx = x - dialX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                
+                if (distance < dialRadius && !gameState.gameOver) {
+                    rotateDial(i);
+                    return;
+                }
+            }
+            
+            // Check if check button was clicked
+            if (!gameState.gameOver) {
+                const checkButtonX = canvas.width/2 - 60;
+                const checkButtonY = canvas.height - 80;
+                const checkButtonWidth = 120;
+                const checkButtonHeight = 40;
+                
+                if (x >= checkButtonX && x <= checkButtonX + checkButtonWidth &&
+                    y >= checkButtonY && y <= checkButtonY + checkButtonHeight) {
+                    handleCheckAnswer();
+                    return;
+                }
+            }
+            
+            // Check if restart button was clicked
+            if (gameState.gameOver) {
+                const restartButtonX = canvas.width/2 - 60;
+                const restartButtonY = canvas.height - 80;
+                const restartButtonWidth = 120;
+                const restartButtonHeight = 40;
+                
+                if (x >= restartButtonX && x <= restartButtonX + restartButtonWidth &&
+                    y >= restartButtonY && y <= restartButtonY + restartButtonHeight) {
+                    resetGame();
+                    return;
+                }
+            }
+        }
+        
+        // Handle mouse movement
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            // Check if mouse is over restart button
+            if (gameState.gameOver) {
+                const restartButtonX = canvas.width/2 - 60;
+                const restartButtonY = canvas.height - 80;
+                const restartButtonWidth = 120;
+                const restartButtonHeight = 40;
+                
+                gameState.restartHover = (
+                    x >= restartButtonX && x <= restartButtonX + restartButtonWidth &&
+                    y >= restartButtonY && y <= restartButtonY + restartButtonHeight
+                );
+            }
+        }
+        
+        // Reset game state
+        function resetGame() {
+            gameState = {
+                question: "What is the capital of France?",
+                options: [
+                    ["Rome", "Paris", "Madrid", "Berlin", "London"],
+                    ["Tokyo", "Paris", "Moscow", "Cairo", "Lima"],
+                    ["Paris", "Athens", "Dublin", "Oslo", "Vienna"]
+                ],
+                currentSelections: [1, 1, 0],
+                correctAnswer: [1, 1, 0],
+                gameOver: false,
+                isCorrect: false,
+                checkingAnswer: false,
+                restartHover: false,
+                dialRotating: [-1, -1, -1],
+                rotationAngles: [0, 0, 0],
+                targetAngles: [0, 0, 0],
+                lockShaking: 0,
+                unlockAnimation: 0,
+            };
+        }
+        
+        // Handle mobile touch
+        function handleTouch(e) {
+            e.preventDefault();
+            const touch = e.touches[0] || e.changedTouches[0];
+            const mouseEvent = new MouseEvent('click', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            handleClick(mouseEvent);
+        }
+        
+        // Initialize game
+        function init() {
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('touchstart', handleTouch);
+            
+            gameLoop();
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

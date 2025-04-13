@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Time Travel Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if device is mobile
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors - limited palette
+        const COLORS = {
+            black: '#181818',
+            darkGray: '#5A5A5A', 
+            lightGray: '#B9B9B9',
+            white: '#FCFCFC',
+            red: '#880000',
+            brightRed: '#FF2222',
+            green: '#008800',
+            brightGreen: '#22FF22',
+            blue: '#0000AA',
+            brightBlue: '#2222FF',
+            yellow: '#FFFF00',
+            purple: '#800080',
+            orange: '#FFA500',
+            brown: '#8B4513'
+        };
+        
+        // Game state
+        let gameState = {
+            player: {
+                x: canvas.width / 2,
+                y: canvas.height - 100,
+                width: 40,
+                height: 40,
+                speed: 5,
+                frameX: 0,
+                frameCount: 4,
+                animSpeed: 6
+            },
+            question: "What is the capital of France?",
+            options: [
+                { text: "Berlin", x: canvas.width * 0.2, y: canvas.height * 0.2, width: 120, height: 40, era: "Ancient", correct: false },
+                { text: "Paris", x: canvas.width * 0.7, y: canvas.height * 0.45, width: 120, height: 40, era: "Medieval", correct: true },
+                { text: "London", x: canvas.width * 0.15, y: canvas.height * 0.6, width: 120, height: 40, era: "Modern", correct: false },
+                { text: "Tokyo", x: canvas.width * 0.6, y: canvas.height * 0.15, width: 120, height: 40, era: "Future", correct: false }
+            ],
+            timeZones: [
+                { name: "Ancient", y: canvas.height * 0.1, height: canvas.height * 0.2, color: COLORS.brown },
+                { name: "Medieval", y: canvas.height * 0.3, height: canvas.height * 0.2, color: COLORS.blue },
+                { name: "Modern", y: canvas.height * 0.5, height: canvas.height * 0.2, color: COLORS.green },
+                { name: "Future", y: canvas.height * 0.7, height: canvas.height * 0.2, color: COLORS.purple }
+            ],
+            timeLeft: 100, // 10 seconds (100 frames at 60fps ÷ 6)
+            gameOver: false,
+            result: null,
+            frameCount: 0,
+            portalEffects: [],
+            restartButton: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 50,
+                width: 120,
+                height: 40
+            },
+            hint: "Hint: Look for medieval times"
+        };
+        
+        // Input handling
+        const keys = {};
+        
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            // Select option on Enter or Space
+            if ((e.key === 'Enter' || e.key === ' ') && !gameState.gameOver) {
+                checkAnswer();
+            }
+            
+            // Restart game on Enter or Space when game over
+            if ((e.key === 'Enter' || e.key === ' ') && gameState.gameOver) {
+                restartGame();
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        // Touch controls for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            // Scale coordinates if canvas is displayed at a different size
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const canvasX = touchX * scaleX;
+            const canvasY = touchY * scaleY;
+            
+            if (gameState.gameOver) {
+                // Check if restart button was pressed
+                if (canvasX > gameState.restartButton.x && 
+                    canvasX < gameState.restartButton.x + gameState.restartButton.width &&
+                    canvasY > gameState.restartButton.y && 
+                    canvasY < gameState.restartButton.y + gameState.restartButton.height) {
+                    restartGame();
+                }
+            } else {
+                // Set player position to touch position
+                gameState.player.x = canvasX - gameState.player.width / 2;
+                gameState.player.y = canvasY - gameState.player.height / 2;
+                
+                // Check if an option was pressed
+                checkAnswer();
+            }
+        }, { passive: false });
+        
+        function checkAnswer() {
+            for (const option of gameState.options) {
+                if (collision(gameState.player, option)) {
+                    gameState.gameOver = true;
+                    gameState.result = option.correct;
+                    
+                    // Play appropriate sound
+                    if (option.correct) {
+                        playSound(880, 0.3);
+                    } else {
+                        playSound(220, 0.3);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        function collision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+        
+        function restartGame() {
+            gameState.gameOver = false;
+            gameState.result = null;
+            gameState.timeLeft = 100;
+            gameState.player.x = canvas.width / 2;
+            gameState.player.y = canvas.height - 100;
+            gameState.portalEffects = [];
+            gameState.frameCount = 0;
+        }
+        
+        // Simple sound generator
+        function playSound(frequency, duration) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = frequency;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
+                    setTimeout(() => {
+                        oscillator.stop();
+                    }, 100);
+                }, duration * 1000);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        // Create a portal effect
+        function createPortalEffect(x, y) {
+            gameState.portalEffects.push({
+                x: x,
+                y: y,
+                radius: 5,
+                maxRadius: 20,
+                growing: true,
+                alpha: 1
+            });
+            
+            // Portal sound
+            playSound(440, 0.1);
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function update() {
+            gameState.frameCount++;
+            
+            if (!gameState.gameOver) {
+                // Update player animation
+                if (gameState.frameCount % gameState.player.animSpeed === 0) {
+                    gameState.player.frameX = (gameState.player.frameX + 1) % gameState.player.frameCount;
+                }
+                
+                // Player movement
+                if (keys['ArrowLeft'] || keys['a']) {
+                    gameState.player.x -= gameState.player.speed;
+                }
+                if (keys['ArrowRight'] || keys['d']) {
+                    gameState.player.x += gameState.player.speed;
+                }
+                if (keys['ArrowUp'] || keys['w']) {
+                    gameState.player.y -= gameState.player.speed;
+                }
+                if (keys['ArrowDown'] || keys['s']) {
+                    gameState.player.y += gameState.player.speed;
+                }
+                
+                // Keep player within canvas bounds
+                gameState.player.x = Math.max(0, Math.min(canvas.width - gameState.player.width, gameState.player.x));
+                gameState.player.y = Math.max(0, Math.min(canvas.height - gameState.player.height, gameState.player.y));
+                
+                // Create random portal effects
+                if (Math.random() < 0.05) {
+                    createPortalEffect(
+                        Math.random() * canvas.width,
+                        Math.random() * canvas.height
+                    );
+                }
+                
+                // Update portal effects
+                for (let i = gameState.portalEffects.length - 1; i >= 0; i--) {
+                    const portal = gameState.portalEffects[i];
+                    
+                    if (portal.growing) {
+                        portal.radius += 1;
+                        if (portal.radius >= portal.maxRadius) {
+                            portal.growing = false;
+                        }
+                    } else {
+                        portal.radius -= 1;
+                        portal.alpha -= 0.05;
+                    }
+                    
+                    if (portal.radius <= 0 || portal.alpha <= 0) {
+                        gameState.portalEffects.splice(i, 1);
+                    }
+                }
+                
+                // Update time left
+                if (gameState.frameCount % 6 === 0) { // Decrease every 6 frames (roughly 10 per second)
+                    gameState.timeLeft--;
+                    if (gameState.timeLeft <= 0) {
+                        gameState.timeLeft = 0;
+                        gameState.gameOver = true;
+                        gameState.result = false;
+                        playSound(220, 0.3);
+                    }
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.black;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw time zones
+            for (const zone of gameState.timeZones) {
+                ctx.fillStyle = zone.color;
+                ctx.globalAlpha = 0.3;
+                ctx.fillRect(0, zone.y, canvas.width, zone.height);
+                ctx.globalAlpha = 1;
+                
+                // Draw time zone name
+                ctx.fillStyle = COLORS.white;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(zone.name, 10, zone.y + 20);
+                
+                // Draw era-specific decorations
+                drawEraDecorations(zone);
+            }
+            
+            // Draw portal effects
+            for (const portal of gameState.portalEffects) {
+                ctx.beginPath();
+                ctx.arc(portal.x, portal.y, portal.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(0, 255, 255, ${portal.alpha})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(portal.x, portal.y, portal.radius * 0.7, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 0, 255, ${portal.alpha})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.yellow;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 30);
+            
+            // Draw hint
+            if (!gameState.gameOver && gameState.timeLeft > 50) {
+                ctx.fillStyle = COLORS.yellow;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState.hint, canvas.width / 2, 60);
+            }
+            
+            // Draw options
+            for (const option of gameState.options) {
+                drawPixelRect(option.x, option.y, option.width, option.height, COLORS.lightGray, COLORS.darkGray);
+                
+                ctx.fillStyle = COLORS.black;
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, option.x + option.width / 2, option.y + option.height / 2 + 6);
+            }
+            
+            // Draw time bar
+            const timeBarWidth = canvas.width - 40;
+            const currentTimeWidth = (timeBarWidth * gameState.timeLeft) / 100;
+            
+            ctx.fillStyle = COLORS.darkGray;
+            ctx.fillRect(20, canvas.height - 20, timeBarWidth, 10);
+            
+            ctx.fillStyle = gameState.timeLeft > 30 ? COLORS.green : COLORS.red;
+            ctx.fillRect(20, canvas.height - 20, currentTimeWidth, 10);
+            
+            // Draw player (time machine)
+            drawTimeMachine(gameState.player.x, gameState.player.y, gameState.player.frameX);
+            
+            // If game over, show result and restart button
+            if (gameState.gameOver) {
+                // Semi-transparent overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameState.result ? COLORS.green : COLORS.red;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.result ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 20
+                );
+                
+                // Draw restart button
+                drawPixelRect(
+                    gameState.restartButton.x,
+                    gameState.restartButton.y,
+                    gameState.restartButton.width,
+                    gameState.restartButton.height,
+                    COLORS.blue,
+                    COLORS.lightGray
+                );
+                
+                ctx.fillStyle = COLORS.white;
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    'Restart', 
+                    gameState.restartButton.x + gameState.restartButton.width / 2, 
+                    gameState.restartButton.y + gameState.restartButton.height / 2 + 6
+                );
+            }
+        }
+        
+        function drawEraDecorations(zone) {
+            switch(zone.name) {
+                case "Ancient":
+                    // Draw cave paintings
+                    ctx.fillStyle = COLORS.brown;
+                    ctx.fillRect(100, zone.y + 30, 30, 20);
+                    ctx.fillRect(200, zone.y + 40, 40, 15);
+                    
+                    // Simple stick figures
+                    ctx.strokeStyle = COLORS.orange;
+                    ctx.beginPath();
+                    ctx.moveTo(120, zone.y + 60);
+                    ctx.lineTo(120, zone.y + 80);
+                    ctx.lineTo(110, zone.y + 100);
+                    ctx.moveTo(120, zone.y + 80);
+                    ctx.lineTo(130, zone.y + 100);
+                    ctx.moveTo(110, zone.y + 70);
+                    ctx.lineTo(130, zone.y + 70);
+                    ctx.stroke();
+                    break;
+                    
+                case "Medieval":
+                    // Draw castle
+                    ctx.fillStyle = COLORS.darkGray;
+                    // Castle base
+                    ctx.fillRect(canvas.width - 150, zone.y + 20, 100, 60);
+                    // Towers
+                    ctx.fillRect(canvas.width - 160, zone.y + 10, 20, 80);
+                    ctx.fillRect(canvas.width - 60, zone.y + 10, 20, 80);
+                    // Battlements
+                    for (let i = 0; i < 5; i++) {
+                        ctx.fillRect(canvas.width - 150 + i*20, zone.y + 10, 10, 10);
+                    }
+                    break;
+                    
+                case "Modern":
+                    // Draw buildings
+                    ctx.fillStyle = COLORS.blue;
+                    ctx.fillRect(50, zone.y + 20, 30, 80);
+                    ctx.fillRect(90, zone.y + 40, 40, 60);
+                    ctx.fillRect(140, zone.y + 30, 35, 70);
+                    
+                    // Windows
+                    ctx.fillStyle = COLORS.yellow;
+                    for (let i = 0; i < 3; i++) {
+                        for (let j = 0; j < 5; j++) {
+                            ctx.fillRect(55 + i*40, zone.y + 30 + j*15, 5, 5);
+                        }
+                    }
+                    break;
+                    
+                case "Future":
+                    // Draw futuristic skyline
+                    ctx.fillStyle = COLORS.purple;
+                    ctx.fillRect(canvas.width - 200, zone.y + 10, 20, 80);
+                    ctx.fillRect(canvas.width - 160, zone.y + 30, 30, 60);
+                    ctx.fillRect(canvas.width - 110, zone.y + 20, 15, 70);
+                    ctx.fillRect(canvas.width - 80, zone.y + 40, 50, 50);
+                    
+                    // Holographic lights
+                    ctx.fillStyle = COLORS.brightBlue;
+                    for (let i = 0; i < 10; i++) {
+                        const x = canvas.width - 220 + i*20;
+                        const height = 5 + Math.sin(gameState.frameCount/10 + i) * 5;
+                        ctx.fillRect(x, zone.y + 20, 2, height);
+                    }
+                    break;
+            }
+        }
+        
+        function drawPixelRect(x, y, width, height, fillColor, borderColor) {
+            // Draw the filled rectangle
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x, y, width, height);
+            
+            // Draw the dark border (right and bottom)
+            ctx.fillStyle = borderColor;
+            ctx.fillRect(x + width - 4, y, 4, height);
+            ctx.fillRect(x, y + height - 4, width, 4);
+            
+            // Draw the light border (left and top)
+            ctx.fillStyle = COLORS.white;
+            ctx.fillRect(x, y, 4, height - 4);
+            ctx.fillRect(x + 4, y, width - 8, 4);
+        }
+        
+        function drawTimeMachine(x, y, frameX) {
+            // Base of time machine
+            ctx.fillStyle = COLORS.blue;
+            ctx.fillRect(x, y, 40, 20);
+            
+            // Cockpit dome
+            ctx.fillStyle = COLORS.lightGray;
+            ctx.beginPath();
+            ctx.arc(x + 20, y + 5, 15, Math.PI, 0);
+            ctx.fill();
+            
+            // Lights that blink (animation)
+            if (frameX % 2 === 0) {
+                ctx.fillStyle = COLORS.red;
+            } else {
+                ctx.fillStyle = COLORS.yellow;
+            }
+            ctx.fillRect(x + 5, y + 15, 5, 5);
+            ctx.fillRect(x + 30, y + 15, 5, 5);
+            
+            // Time displacement effect (varies with frame)
+            ctx.strokeStyle = COLORS.brightBlue;
+            ctx.beginPath();
+            for (let i = 0; i < 4; i++) {
+                const offset = (frameX + i) % 4 * 5;
+                ctx.moveTo(x - offset, y + 10 + i*5);
+                ctx.lineTo(x - offset - 10, y + 10 + i*5);
+            }
+            ctx.stroke();
+            
+            // Character inside
+            ctx.fillStyle = COLORS.black;
+            ctx.fillRect(x + 15, y, 10, 10);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>8-Bit Gate-Tap Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: #111;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        @media (max-width: 767px) {
+            #gameCanvas {
+                width: 360px;
+                height: 640px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 767;
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Colors - 8-bit palette
+        const COLORS = {
+            bg: '#0f380f',
+            text: '#8bac0f',
+            gate: '#306230',
+            gateHighlight: '#9bbc0f',
+            true: '#0f8000',
+            false: '#800000',
+            trueBorder: '#0fac00',
+            falseBorder: '#ac0000',
+            restart: '#306230',
+            restartHover: '#8bac0f'
+        };
+        
+        // Game state
+        let gameState = {
+            question: "Water boils at 100 degrees Celsius at sea level.",
+            correctAnswer: true,
+            gatePosition: 0,
+            gateDirection: 1,
+            gateSpeed: 4,
+            gameOver: false,
+            userAnswer: null,
+            lastTimestamp: 0,
+            gateFlashTimer: 0,
+            particles: [],
+            restartBtn: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 60,
+                width: 120,
+                height: 40,
+                hover: false
+            }
+        };
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'move':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.05);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(523, audioContext.currentTime + 0.2);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(196, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(147, audioContext.currentTime + 0.1);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, fillColor, borderColor = null) {
+            // Fill
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x, y, width, height);
+            
+            // Border
+            if (borderColor) {
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(x, y, width, height);
+                
+                // Pixelated corners
+                ctx.fillStyle = borderColor;
+                ctx.fillRect(x - 2, y - 2, 4, 4);
+                ctx.fillRect(x + width - 2, y - 2, 4, 4);
+                ctx.fillRect(x - 2, y + height - 2, 4, 4);
+                ctx.fillRect(x + width - 2, y + height - 2, 4, 4);
+            }
+        }
+        
+        // Draw answer zones
+        function drawAnswerZones() {
+            const zoneWidth = canvas.width * 0.4;
+            const zoneHeight = canvas.height * 0.15;
+            const zoneSpacing = canvas.width * 0.1;
+            const zoneY = canvas.height * 0.5;
+            
+            // True zone
+            const trueX = (canvas.width / 2) - zoneWidth - (zoneSpacing / 2);
+            drawPixelRect(
+                trueX, 
+                zoneY, 
+                zoneWidth, 
+                zoneHeight, 
+                COLORS.true, 
+                COLORS.trueBorder
+            );
+            
+            // False zone
+            const falseX = (canvas.width / 2) + (zoneSpacing / 2);
+            drawPixelRect(
+                falseX, 
+                zoneY, 
+                zoneWidth, 
+                zoneHeight, 
+                COLORS.false, 
+                COLORS.falseBorder
+            );
+            
+            // Text
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffffff';
+            
+            ctx.fillText('TRUE', trueX + zoneWidth / 2, zoneY + zoneHeight / 2);
+            ctx.fillText('FALSE', falseX + zoneWidth / 2, zoneY + zoneHeight / 2);
+            
+            return { trueX, falseX, zoneWidth, zoneY, zoneHeight };
+        }
+        
+        // Draw the moving gate
+        function drawGate(zones) {
+            const { trueX, falseX, zoneWidth, zoneY, zoneHeight } = zones;
+            const gateWidth = zoneWidth + 20;
+            const gateHeight = zoneHeight + 20;
+            
+            // Calculate gate position
+            const totalWidth = falseX + zoneWidth - trueX;
+            const normalizedPos = gameState.gatePosition % 1;
+            const gateX = trueX - 10 + (normalizedPos * totalWidth);
+            
+            // Determine if gate is flashing
+            const isFlashing = Math.sin(gameState.gateFlashTimer * 15) > 0;
+            const gateColor = isFlashing ? COLORS.gateHighlight : COLORS.gate;
+            
+            // Draw gate
+            ctx.lineWidth = 6;
+            ctx.strokeStyle = gateColor;
+            ctx.strokeRect(gateX, zoneY - 10, gateWidth, gateHeight);
+            
+            // Add pixelated corners and details
+            ctx.fillStyle = gateColor;
+            const cornerSize = 8;
+            ctx.fillRect(gateX - cornerSize/2, zoneY - 10 - cornerSize/2, cornerSize, cornerSize);
+            ctx.fillRect(gateX + gateWidth - cornerSize/2, zoneY - 10 - cornerSize/2, cornerSize, cornerSize);
+            ctx.fillRect(gateX - cornerSize/2, zoneY + gateHeight - 10 - cornerSize/2, cornerSize, cornerSize);
+            ctx.fillRect(gateX + gateWidth - cornerSize/2, zoneY + gateHeight - 10 - cornerSize/2, cornerSize, cornerSize);
+            
+            // Draw a few pixel lines for decoration
+            const lineHeight = 5;
+            const numLines = 6;
+            const lineSpacing = gateHeight / (numLines + 1);
+            
+            for (let i = 1; i <= numLines; i++) {
+                const lineY = zoneY - 10 + (i * lineSpacing) - lineHeight/2;
+                
+                // Left side
+                ctx.fillRect(gateX, lineY, 15, lineHeight);
+                
+                // Right side
+                ctx.fillRect(gateX + gateWidth - 15, lineY, 15, lineHeight);
+            }
+            
+            // Generate particles when passing over zones
+            if (Math.abs(gateX - trueX) < 5 || Math.abs(gateX - falseX) < 5) {
+                playSound('move');
+                createParticles(gateX + gateWidth/2, zoneY + zoneHeight/2);
+            }
+            
+            return { gateX, gateWidth };
+        }
+        
+        // Create particles
+        function createParticles(x, y) {
+            for (let i = 0; i < 10; i++) {
+                gameState.particles.push({
+                    x,
+                    y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    size: Math.random() * 6 + 2,
+                    color: COLORS.gateHighlight,
+                    life: 1
+                });
+            }
+        }
+        
+        // Update and draw particles
+        function updateParticles(deltaTime) {
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= deltaTime * 2;
+                
+                if (p.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                    continue;
+                }
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            }
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.font = '22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText(gameState.question, canvas.width / 2, canvas.height * 0.3);
+        }
+        
+        // Draw result
+        function drawResult() {
+            const resultY = canvas.height * 0.75;
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            
+            if (gameState.userAnswer === gameState.correctAnswer) {
+                ctx.fillStyle = COLORS.true;
+                ctx.fillText('CORRECT!', canvas.width / 2, resultY);
+            } else {
+                ctx.fillStyle = COLORS.false;
+                ctx.fillText('INCORRECT!', canvas.width / 2, resultY);
+            }
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            const btn = gameState.restartBtn;
+            const btnColor = btn.hover ? COLORS.restartHover : COLORS.restart;
+            
+            drawPixelRect(btn.x, btn.y, btn.width, btn.height, btnColor, '#ffffff');
+            
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('RESTART', btn.x + btn.width / 2, btn.y + btn.height / 2);
+        }
+        
+        // Check if player selected an answer
+        function checkAnswer(mouseX, mouseY, zones) {
+            const { trueX, falseX, zoneWidth, zoneY, zoneHeight, gateX, gateWidth } = zones;
+            
+            // Only register if the gate is currently over one of the options
+            const gateCenter = gateX + gateWidth / 2;
+            
+            if (gateCenter >= trueX && gateCenter <= trueX + zoneWidth) {
+                gameState.userAnswer = true;
+                gameState.gameOver = true;
+                playSound(gameState.userAnswer === gameState.correctAnswer ? 'correct' : 'wrong');
+            } 
+            else if (gateCenter >= falseX && gateCenter <= falseX + zoneWidth) {
+                gameState.userAnswer = false;
+                gameState.gameOver = true;
+                playSound(gameState.userAnswer === gameState.correctAnswer ? 'correct' : 'wrong');
+            }
+        }
+        
+        // Check if restart button is clicked
+        function checkRestartButtonClick(mouseX, mouseY) {
+            const btn = gameState.restartBtn;
+            
+            if (mouseX >= btn.x && mouseX <= btn.x + btn.width &&
+                mouseY >= btn.y && mouseY <= btn.y + btn.height) {
+                resetGame();
+            }
+        }
+        
+        // Check if mouse is over restart button
+        function checkRestartButtonHover(mouseX, mouseY) {
+            const btn = gameState.restartBtn;
+            
+            btn.hover = (mouseX >= btn.x && mouseX <= btn.x + btn.width &&
+                mouseY >= btn.y && mouseY <= btn.y + btn.height);
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameState.gatePosition = 0;
+            gameState.gateDirection = 1;
+            gameState.gateSpeed = 4;
+            gameState.gameOver = false;
+            gameState.userAnswer = null;
+            gameState.particles = [];
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            // Calculate delta time
+            if (!gameState.lastTimestamp) gameState.lastTimestamp = timestamp;
+            const deltaTime = (timestamp - gameState.lastTimestamp) / 1000;
+            gameState.lastTimestamp = timestamp;
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw answer zones
+            const zones = drawAnswerZones();
+            
+            // Update gate position if game is not over
+            if (!gameState.gameOver) {
+                // Move gate
+                gameState.gatePosition += gameState.gateDirection * gameState.gateSpeed * deltaTime * 0.2;
+                
+                // Flash gate
+                gameState.gateFlashTimer += deltaTime;
+                
+                // Gradually increase speed
+                gameState.gateSpeed += deltaTime * 0.1;
+            }
+            
+            // Draw gate and get its position
+            const gateInfo = drawGate(zones);
+            const gateZones = { ...zones, ...gateInfo };
+            
+            // Update and draw particles
+            updateParticles(deltaTime);
+            
+            // If game is over, show result and restart button
+            if (gameState.gameOver) {
+                drawResult();
+                drawRestartButton();
+            }
+            
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/tap
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameState.gameOver) {
+                checkRestartButtonClick(mouseX, mouseY);
+            } else {
+                const zones = drawAnswerZones();
+                const gateInfo = {
+                    gateX: 0,
+                    gateWidth: 0
+                };
+                
+                // Calculate current gate position
+                const totalWidth = zones.falseX + zones.zoneWidth - zones.trueX;
+                const normalizedPos = gameState.gatePosition % 1;
+                gateInfo.gateX = zones.trueX - 10 + (normalizedPos * totalWidth);
+                gateInfo.gateWidth = zones.zoneWidth + 20;
+                
+                checkAnswer(mouseX, mouseY, { ...zones, ...gateInfo });
+            }
+        });
+        
+        // Handle mousemove for button hover
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameState.gameOver) {
+                checkRestartButtonHover(mouseX, mouseY);
+            }
+        });
+        
+        // Start game
+        resetGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

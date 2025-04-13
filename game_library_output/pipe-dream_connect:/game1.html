@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipe-Dream Connect</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #333;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #666;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #555;
+            color: white;
+            border: none;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game constants
+        const GRID_SIZE = isMobile ? 4 : 5;
+        const CELL_SIZE = Math.min(canvas.width, canvas.height) / (GRID_SIZE + 1);
+        const GRID_OFFSET_X = (canvas.width - CELL_SIZE * GRID_SIZE) / 2;
+        const GRID_OFFSET_Y = (canvas.height - CELL_SIZE * GRID_SIZE) / 2;
+        
+        // Colors
+        const COLORS = {
+            background: '#222222',
+            grid: '#444444',
+            pipe: '#888888',
+            activePipe: '#4488ff',
+            text: '#ffffff',
+            timer: '#ff4444',
+            correct: '#44ff44',
+            incorrect: '#ff4444'
+        };
+        
+        // Pipe types
+        const PIPE_TYPES = {
+            STRAIGHT: 0,
+            CORNER: 1,
+            CROSS: 2,
+            START: 3,
+            END: 4
+        };
+        
+        // Pipe orientations
+        const ORIENTATIONS = {
+            UP: 0,
+            RIGHT: 1,
+            DOWN: 2,
+            LEFT: 3
+        };
+        
+        // Connection directions (up, right, down, left)
+        const CONNECTIONS = {
+            [PIPE_TYPES.STRAIGHT]: [[true, false, true, false], [false, true, false, true]],
+            [PIPE_TYPES.CORNER]: [[true, true, false, false], [false, true, true, false], [false, false, true, true], [true, false, false, true]],
+            [PIPE_TYPES.CROSS]: [[true, true, true, true]],
+            [PIPE_TYPES.START]: [[false, true, false, false], [false, false, true, false], [false, false, false, true], [true, false, false, false]],
+            [PIPE_TYPES.END]: [[true, false, false, false], [false, true, false, false], [false, false, true, false], [false, false, false, true]]
+        };
+        
+        // Answer options
+        const ANSWERS = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Game state
+        let grid = [];
+        let startCell = { x: 0, y: 0 };
+        let endCells = [];
+        let gameOver = false;
+        let timeLeft = 10;
+        let timerId = null;
+        let flowPath = [];
+        let flowProgress = 0;
+        let gameWon = false;
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        function playRotateSound() {
+            playSound(220, 50);
+        }
+        
+        function playSuccessSound() {
+            playSound(440, 100);
+            setTimeout(() => playSound(660, 200), 100);
+            setTimeout(() => playSound(880, 300), 300);
+        }
+        
+        function playFailSound() {
+            playSound(220, 100);
+            setTimeout(() => playSound(196, 200), 100);
+            setTimeout(() => playSound(175, 300), 300);
+        }
+        
+        function playFlowSound() {
+            playSound(330, 50, 'sine');
+        }
+        
+        function initGame() {
+            // Reset game state
+            grid = [];
+            endCells = [];
+            gameOver = false;
+            timeLeft = 10;
+            flowPath = [];
+            flowProgress = 0;
+            gameWon = false;
+            
+            // Clear any existing timer
+            if (timerId) clearInterval(timerId);
+            
+            // Create empty grid
+            for (let x = 0; x < GRID_SIZE; x++) {
+                grid[x] = [];
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    grid[x][y] = { 
+                        type: null, 
+                        orientation: 0, 
+                        active: false,
+                        x, 
+                        y 
+                    };
+                }
+            }
+            
+            // Shuffle answers
+            const shuffledAnswers = [...ANSWERS].sort(() => Math.random() - 0.5);
+            
+            // Place start point at a random edge
+            const edges = [
+                { x: 0, y: Math.floor(Math.random() * GRID_SIZE) },
+                { x: GRID_SIZE - 1, y: Math.floor(Math.random() * GRID_SIZE) },
+                { x: Math.floor(Math.random() * GRID_SIZE), y: 0 },
+                { x: Math.floor(Math.random() * GRID_SIZE), y: GRID_SIZE - 1 }
+            ];
+            startCell = edges[Math.floor(Math.random() * edges.length)];
+            
+            // Determine start orientation
+            let startOrientation;
+            if (startCell.x === 0) startOrientation = ORIENTATIONS.RIGHT;
+            else if (startCell.x === GRID_SIZE - 1) startOrientation = ORIENTATIONS.LEFT;
+            else if (startCell.y === 0) startOrientation = ORIENTATIONS.DOWN;
+            else startOrientation = ORIENTATIONS.UP;
+            
+            grid[startCell.x][startCell.y] = {
+                type: PIPE_TYPES.START,
+                orientation: startOrientation,
+                active: false,
+                x: startCell.x,
+                y: startCell.y
+            };
+            
+            // Find positions for end cells (answers)
+            const endPositions = [];
+            let correctEndCell = null;
+            
+            // Find available edge cells for answers
+            for (let i = 0; i < GRID_SIZE; i++) {
+                if (i !== startCell.x) {
+                    if (startCell.y !== 0) endPositions.push({ x: i, y: 0 });
+                    if (startCell.y !== GRID_SIZE - 1) endPositions.push({ x: i, y: GRID_SIZE - 1 });
+                }
+            }
+            
+            for (let i = 0; i < GRID_SIZE; i++) {
+                if (i !== startCell.y) {
+                    if (startCell.x !== 0) endPositions.push({ x: 0, y: i });
+                    if (startCell.x !== GRID_SIZE - 1) endPositions.push({ x: GRID_SIZE - 1, y: i });
+                }
+            }
+            
+            // Shuffle end positions
+            endPositions.sort(() => Math.random() - 0.5);
+            
+            // Place end points (answers)
+            for (let i = 0; i < Math.min(shuffledAnswers.length, endPositions.length); i++) {
+                const pos = endPositions[i];
+                let orientation;
+                
+                if (pos.x === 0) orientation = ORIENTATIONS.RIGHT;
+                else if (pos.x === GRID_SIZE - 1) orientation = ORIENTATIONS.LEFT;
+                else if (pos.y === 0) orientation = ORIENTATIONS.DOWN;
+                else orientation = ORIENTATIONS.UP;
+                
+                grid[pos.x][pos.y] = {
+                    type: PIPE_TYPES.END,
+                    orientation: orientation,
+                    answer: shuffledAnswers[i],
+                    active: false,
+                    x: pos.x,
+                    y: pos.y
+                };
+                
+                endCells.push(grid[pos.x][pos.y]);
+                
+                if (shuffledAnswers[i].correct) {
+                    correctEndCell = grid[pos.x][pos.y];
+                }
+            }
+            
+            // Fill rest of grid with random pipes
+            for (let x = 0; x < GRID_SIZE; x++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    if (grid[x][y].type === null) {
+                        const randomType = Math.floor(Math.random() * 3); // STRAIGHT, CORNER, or CROSS
+                        const randomOrientation = Math.floor(Math.random() * CONNECTIONS[randomType].length);
+                        
+                        grid[x][y] = {
+                            type: randomType,
+                            orientation: randomOrientation,
+                            active: false,
+                            x, 
+                            y
+                        };
+                    }
+                }
+            }
+            
+            // Start timer
+            timerId = setInterval(() => {
+                timeLeft -= 0.1;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    endGame(false);
+                }
+            }, 100);
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+        }
+        
+        function drawPipe(cell, x, y, size) {
+            const { type, orientation, active, answer } = cell;
+            const connections = CONNECTIONS[type][orientation];
+            const pipeWidth = size * 0.3;
+            const centerX = x + size / 2;
+            const centerY = y + size / 2;
+            
+            // Draw pipe background
+            ctx.fillStyle = active ? COLORS.activePipe : COLORS.pipe;
+            
+            // Draw connection paths based on type and orientation
+            ctx.lineWidth = pipeWidth;
+            ctx.lineCap = 'square';
+            ctx.strokeStyle = active ? COLORS.activePipe : COLORS.pipe;
+            
+            ctx.beginPath();
+            
+            if (type === PIPE_TYPES.START) {
+                // Draw start pipe with arrow
+                if (orientation === ORIENTATIONS.UP) {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(centerX, y);
+                } else if (orientation === ORIENTATIONS.RIGHT) {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(x + size, centerY);
+                } else if (orientation === ORIENTATIONS.DOWN) {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(centerX, y + size);
+                } else {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(x, centerY);
+                }
+                
+                // Draw start indicator
+                ctx.stroke();
+                ctx.fillStyle = "#4488ff";
+                ctx.fillRect(centerX - size/4, centerY - size/4, size/2, size/2);
+                
+            } else if (type === PIPE_TYPES.END) {
+                // Draw end pipe
+                if (orientation === ORIENTATIONS.UP) {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(centerX, y);
+                } else if (orientation === ORIENTATIONS.RIGHT) {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(x + size, centerY);
+                } else if (orientation === ORIENTATIONS.DOWN) {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(centerX, y + size);
+                } else {
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(x, centerY);
+                }
+                
+                ctx.stroke();
+                
+                // Draw answer text
+                ctx.font = `${size/5}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Draw answer background
+                const padding = size * 0.1;
+                const textWidth = ctx.measureText(answer.text).width;
+                const bgWidth = textWidth + padding * 2;
+                const bgHeight = size * 0.2 + padding * 2;
+                
+                ctx.fillStyle = active ? (answer.correct ? COLORS.correct : COLORS.incorrect) : '#666';
+                ctx.fillRect(centerX - bgWidth/2, centerY - bgHeight/2, bgWidth, bgHeight);
+                
+                ctx.fillStyle = '#fff';
+                ctx.fillText(answer.text, centerX, centerY);
+                
+            } else if (type === PIPE_TYPES.STRAIGHT) {
+                if (orientation % 2 === 0) { // Vertical
+                    ctx.moveTo(centerX, y);
+                    ctx.lineTo(centerX, y + size);
+                } else { // Horizontal
+                    ctx.moveTo(x, centerY);
+                    ctx.lineTo(x + size, centerY);
+                }
+                ctx.stroke();
+                
+            } else if (type === PIPE_TYPES.CORNER) {
+                if (orientation === 0) { // Up-Right
+                    ctx.moveTo(centerX, y);
+                    ctx.lineTo(centerX, centerY);
+                    ctx.lineTo(x + size, centerY);
+                } else if (orientation === 1) { // Right-Down
+                    ctx.moveTo(x + size, centerY);
+                    ctx.lineTo(centerX, centerY);
+                    ctx.lineTo(centerX, y + size);
+                } else if (orientation === 2) { // Down-Left
+                    ctx.moveTo(centerX, y + size);
+                    ctx.lineTo(centerX, centerY);
+                    ctx.lineTo(x, centerY);
+                } else { // Left-Up
+                    ctx.moveTo(x, centerY);
+                    ctx.lineTo(centerX, centerY);
+                    ctx.lineTo(centerX, y);
+                }
+                ctx.stroke();
+                
+            } else if (type === PIPE_TYPES.CROSS) {
+                // Draw cross pipe
+                ctx.moveTo(centerX, y);
+                ctx.lineTo(centerX, y + size);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(x, centerY);
+                ctx.lineTo(x + size, centerY);
+                ctx.stroke();
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${Math.floor(canvas.width * 0.04)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 20);
+            
+            // Draw time
+            const timerWidth = canvas.width * 0.8;
+            const timerHeight = 10;
+            const timerX = (canvas.width - timerWidth) / 2;
+            const timerY = 60;
+            
+            ctx.fillStyle = '#444';
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            const timeRatio = Math.max(0, timeLeft / 10);
+            ctx.fillStyle = timeRatio > 0.5 ? COLORS.correct : 
+                           timeRatio > 0.25 ? '#FFAA44' : COLORS.timer;
+            ctx.fillRect(timerX, timerY, timerWidth * timeRatio, timerHeight);
+            
+            // Draw grid background
+            ctx.fillStyle = COLORS.grid;
+            ctx.fillRect(
+                GRID_OFFSET_X - CELL_SIZE * 0.05, 
+                GRID_OFFSET_Y - CELL_SIZE * 0.05,
+                CELL_SIZE * GRID_SIZE * 1.1,
+                CELL_SIZE * GRID_SIZE * 1.1
+            );
+            
+            // Draw pipes
+            for (let x = 0; x < GRID_SIZE; x++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    const cell = grid[x][y];
+                    const drawX = GRID_OFFSET_X + x * CELL_SIZE;
+                    const drawY = GRID_OFFSET_Y + y * CELL_SIZE;
+                    
+                    drawPipe(cell, drawX, drawY, CELL_SIZE);
+                }
+            }
+            
+            // Animate flow if we have a successful path
+            if (flowPath.length > 0 && flowProgress < flowPath.length) {
+                if (flowProgress > 0) {
+                    playFlowSound();
+                }
+                
+                // Activate path up to current progress
+                for (let i = 0; i <= Math.floor(flowProgress); i++) {
+                    if (i < flowPath.length) {
+                        flowPath[i].active = true;
+                    }
+                }
+                
+                flowProgress += 0.2;
+                
+                // If flow complete, end the game
+                if (flowProgress >= flowPath.length) {
+                    setTimeout(() => {
+                        const lastCell = flowPath[flowPath.length - 1];
+                        if (lastCell.answer && lastCell.answer.correct) {
+                            gameWon = true;
+                            playSuccessSound();
+                        } else {
+                            playFailSound();
+                        }
+                        endGame(lastCell.answer && lastCell.answer.correct);
+                    }, 500);
+                }
+            }
+            
+            // Game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.font = `${Math.floor(canvas.width * 0.06)}px sans-serif`;
+                ctx.fillStyle = gameWon ? COLORS.correct : COLORS.incorrect;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                const message = gameWon ? "Correct! Paris is the capital." : "Time's up!";
+                ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+                
+                // Show restart button
+                restartBtn.style.display = 'block';
+            }
+            
+            requestAnimationFrame(draw);
+        }
+        
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get mouse position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let x = (e.clientX - rect.left) * scaleX;
+            let y = (e.clientY - rect.top) * scaleY;
+            
+            // Touch support
+            if (e.touches && e.touches[0]) {
+                x = (e.touches[0].clientX - rect.left) * scaleX;
+                y = (e.touches[0].clientY - rect.top) * scaleY;
+            }
+            
+            // Convert to grid coordinates
+            const gridX = Math.floor((x - GRID_OFFSET_X) / CELL_SIZE);
+            const gridY = Math.floor((y - GRID_OFFSET_Y) / CELL_SIZE);
+            
+            // Check if click is within grid
+            if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
+                const cell = grid[gridX][gridY];
+                
+                // Don't rotate start or end cells
+                if (cell.type !== PIPE_TYPES.START && cell.type !== PIPE_TYPES.END) {
+                    // Rotate the pipe
+                    cell.orientation = (cell.orientation + 1) % CONNECTIONS[cell.type].length;
+                    playRotateSound();
+                    
+                    // Check if we have a valid path
+                    checkPath();
+                }
+            }
+        }
+        
+        function getConnectedCell(cell, direction) {
+            const connections = CONNECTIONS[cell.type][cell.orientation];
+            
+            // Check if cell connects in the given direction
+            if (!connections[direction]) return null;
+            
+            // Calculate coordinates of connected cell
+            let newX = cell.x;
+            let newY = cell.y;
+            
+            if (direction === ORIENTATIONS.UP) newY--;
+            else if (direction === ORIENTATIONS.RIGHT) newX++;
+            else if (direction === ORIENTATIONS.DOWN) newY++;
+            else if (direction === ORIENTATIONS.LEFT) newX--;
+            
+            // Check if connected cell is within grid
+            if (newX < 0 || newX >= GRID_SIZE || newY < 0 || newY >= GRID_SIZE) return null;
+            
+            // Get the connected cell
+            const nextCell = grid[newX][newY];
+            
+            // Check if connected cell connects back to this cell
+            const oppositeDirection = (direction + 2) % 4;
+            const nextCellConnections = CONNECTIONS[nextCell.type][nextCell.orientation];
+            
+            if (!nextCellConnections[oppositeDirection]) return null;
+            
+            return nextCell;
+        }
+        
+        function checkPath() {
+            // Reset all cells to inactive
+            for (let x = 0; x < GRID_SIZE; x++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    grid[x][y].active = false;
+                }
+            }
+            
+            // Start from the start cell
+            const startConnections = CONNECTIONS[startCell.type][startCell.orientation];
+            let startDir = -1;
+            
+            for (let i = 0; i < 4; i++) {
+                if (startConnections[i]) {
+                    startDir = i;
+                    break;
+                }
+            }
+            
+            if (startDir === -1) return; // No valid direction from start
+            
+            const path = [grid[startCell.x][startCell.y]];
+            let currentCell = grid[startCell.x][startCell.y];
+            let currentDir = startDir;
+            let visited = new Set();
+            visited.add(`${startCell.x},${startCell.y}`);
+            
+            // Follow the path
+            while (true) {
+                const nextCell = getConnectedCell(currentCell, currentDir);
+                
+                if (!nextCell) break;
+                
+                const key = `${nextCell.x},${nextCell.y}`;
+                if (visited.has(key)) break; // Avoid loops
+                
+                path.push(nextCell);
+                visited.add(key);
+                
+                // If we reached an end cell, start the flow animation
+                if (nextCell.type === PIPE_TYPES.END) {
+                    flowPath = path;
+                    flowProgress = 0;
+                    break;
+                }
+                
+                // Determine next direction
+                const nextConnections = CONNECTIONS[nextCell.type][nextCell.orientation];
+                const oppositeDir = (currentDir + 2) % 4;
+                
+                let nextDir = -1;
+                for (let i = 0; i < 4; i++) {
+                    if (i !== oppositeDir && nextConnections[i]) {
+                        nextDir = i;
+                        break;
+                    }
+                }
+                
+                if (nextDir === -1) break; // No valid direction to continue
+                
+                currentCell = nextCell;
+                currentDir = nextDir;
+            }
+        }
+        
+        function endGame(won) {
+            gameOver = true;
+            gameWon = won;
+            
+            if (timerId) {
+                clearInterval(timerId);
+                timerId = null;
+            }
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        // Initialize event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', handleClick);
+        
+        restartBtn.addEventListener('click', () => {
+            initGame();
+        });
+        
+        // Start the game
+        initGame();
+        draw();
+    </script>
+</body>
+</html>

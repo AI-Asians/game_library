@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Planet Defense</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background: #333;
+            color: white;
+            border: 3px solid #555;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#0A0A2A',
+            tower: '#44AA44',
+            defenseZone: '#33AAFF',
+            text: '#FFFFFF',
+            enemyColors: ['#FF5555', '#FFAA44', '#AAFF44', '#AA44FF']
+        };
+        
+        let gameOver = false;
+        let gameWon = false;
+        let enemies = [];
+        const answers = ['Mars', 'Venus', 'Jupiter', 'Mercury'];
+        const correctAnswer = 'Mars';
+        
+        // Simple sound synthesis
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'hit') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+        }
+        
+        // Create tower
+        const tower = {
+            x: canvas.width / 2,
+            y: canvas.height - 80,
+            width: isMobile ? 80 : 120,
+            height: isMobile ? 40 : 60,
+            draw() {
+                // Draw tower base
+                ctx.fillStyle = colors.tower;
+                ctx.fillRect(this.x - this.width / 2, this.y, this.width, this.height);
+                
+                // Draw tower details (pixelated style)
+                ctx.fillStyle = '#225522';
+                for (let i = 0; i < 5; i++) {
+                    ctx.fillRect(
+                        this.x - this.width / 2 + i * (this.width / 5) + 5, 
+                        this.y + 10, 
+                        this.width / 8, 
+                        this.height - 20
+                    );
+                }
+                
+                // Draw defense zone
+                ctx.fillStyle = colors.defenseZone + '44'; // Semi-transparent
+                ctx.fillRect(0, this.y - 40, canvas.width, 6);
+                
+                // Draw pixelated defense zone border
+                ctx.fillStyle = colors.defenseZone;
+                for (let x = 0; x < canvas.width; x += 16) {
+                    ctx.fillRect(x, this.y - 40, 12, 6);
+                }
+            }
+        };
+        
+        // Enemy class
+        class Enemy {
+            constructor(answer, speed) {
+                this.answer = answer;
+                this.correct = answer === correctAnswer;
+                this.x = Math.random() * (canvas.width - 80) + 40;
+                this.y = -50;
+                this.width = 64;
+                this.height = 64;
+                this.speed = speed;
+                this.colorIndex = Math.floor(Math.random() * colors.enemyColors.length);
+                this.selected = false;
+                this.particles = [];
+            }
+            
+            update() {
+                if (!this.selected) {
+                    this.y += this.speed;
+                }
+                
+                // Update particles
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.size -= 0.2;
+                    if (p.size <= 0) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+                
+                // Check for defense zone collision
+                if (this.y > tower.y - 40 && !this.selected) {
+                    if (this.correct) {
+                        gameWon = true;
+                        playSound('correct');
+                        this.explode();
+                    } else {
+                        gameOver = true;
+                        playSound('wrong');
+                    }
+                }
+            }
+            
+            draw() {
+                if (!this.selected) {
+                    // Draw enemy body
+                    ctx.fillStyle = colors.enemyColors[this.colorIndex];
+                    ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
+                    
+                    // Draw pixelated details
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(this.x - 15, this.y - 10, 10, 10); // Eye
+                    ctx.fillRect(this.x + 5, this.y - 10, 10, 10);  // Eye
+                    ctx.fillRect(this.x - 15, this.y + 10, 30, 8);  // Mouth
+                    
+                    // Draw answer text
+                    ctx.fillStyle = colors.text;
+                    ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.answer, this.x, this.y + 40);
+                }
+                
+                // Draw particles
+                for (const p of this.particles) {
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                }
+            }
+            
+            checkClick(mouseX, mouseY) {
+                if (
+                    mouseX > this.x - this.width / 2 &&
+                    mouseX < this.x + this.width / 2 &&
+                    mouseY > this.y - this.height / 2 &&
+                    mouseY < this.y + this.height / 2
+                ) {
+                    this.selected = true;
+                    if (this.correct) {
+                        gameWon = true;
+                        playSound('correct');
+                    } else {
+                        playSound('hit');
+                    }
+                    this.explode();
+                    return true;
+                }
+                return false;
+            }
+            
+            explode() {
+                // Create explosion particles
+                for (let i = 0; i < 20; i++) {
+                    this.particles.push({
+                        x: this.x,
+                        y: this.y,
+                        vx: (Math.random() - 0.5) * 5,
+                        vy: (Math.random() - 0.5) * 5,
+                        size: Math.random() * 8 + 4,
+                        color: colors.enemyColors[this.colorIndex]
+                    });
+                }
+            }
+        }
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            gameWon = false;
+            enemies = [];
+            restartBtn.style.display = 'none';
+            
+            // Shuffle answers and create enemies with different speeds
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            // Spawn enemies at different times and speeds
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                setTimeout(() => {
+                    // Speed varies between 1.5 and 3.5
+                    const speed = 1.5 + Math.random() * 2;
+                    enemies.push(new Enemy(shuffledAnswers[i], speed));
+                }, i * 800); // Stagger spawn times
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw tower and defense line
+            tower.draw();
+            
+            // Update and draw enemies
+            for (const enemy of enemies) {
+                enemy.update();
+                enemy.draw();
+            }
+            
+            // Draw question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 40);
+            
+            if (gameOver || gameWon) {
+                // Draw game result
+                ctx.fillStyle = gameWon ? '#44FF44' : '#FF4444';
+                ctx.font = isMobile ? '22px sans-serif' : '32px sans-serif';
+                ctx.fillText(gameWon ? 'Correct!' : 'Wrong!', canvas.width / 2, canvas.height / 2 - 50);
+                
+                if (gameOver) {
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+                    ctx.fillText(`The correct answer is ${correctAnswer}`, canvas.width / 2, canvas.height / 2);
+                }
+                
+                restartBtn.style.display = 'block';
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks/taps
+        canvas.addEventListener('click', (e) => {
+            if (gameOver || gameWon) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            for (const enemy of enemies) {
+                if (enemy.checkClick(mouseX, mouseY)) {
+                    break;
+                }
+            }
+        });
+        
+        // Handle restart button
+        restartBtn.addEventListener('click', init);
+        
+        // Start game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Game</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        const colors = {
+            background: '#000000',
+            text: '#FFFFFF',
+            option: '#555555',
+            optionBorder: '#888888',
+            highlight: '#FF5555',
+            correct: '#55FF55',
+            incorrect: '#FF0000',
+            glow: '#FFAA00'
+        };
+        
+        const options = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+        
+        let currentLitOption = -1;
+        let cycleTimer = 0;
+        let cycleDuration = 800; // ms per option
+        let gameEnded = false;
+        let result = null;
+        
+        // Sound functions
+        function createBeepSound(frequency, duration, type = 'square') {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = frequency;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration / 1000);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration);
+                
+                return oscillator;
+            } catch(e) {
+                console.error("Audio error:", e);
+                return null;
+            }
+        }
+        
+        function playLightupSound() {
+            createBeepSound(300 + currentLitOption * 100, 200);
+        }
+        
+        function playCorrectSound() {
+            createBeepSound(440, 100, 'square');
+            setTimeout(() => createBeepSound(660, 200, 'square'), 100);
+        }
+        
+        function playIncorrectSound() {
+            createBeepSound(200, 300, 'sawtooth');
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color, borderColor = null) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            if (borderColor) {
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(x, y, width, height);
+            }
+        }
+        
+        function drawOption(option, index, highlighted) {
+            const x = 200;
+            const y = 200 + index * 90;
+            const width = 400;
+            const height = 70;
+            
+            let color = colors.option;
+            let borderColor = colors.optionBorder;
+            
+            if (highlighted) {
+                // Draw glow effect (pixelated)
+                const glowSize = 10 + Math.sin(Date.now() / 100) * 3;
+                drawPixelRect(x - glowSize, y - glowSize, 
+                              width + glowSize * 2, height + glowSize * 2, 
+                              colors.glow);
+                
+                color = colors.highlight;
+                borderColor = colors.glow;
+            }
+            
+            drawPixelRect(x, y, width, height, color, borderColor);
+            
+            // Draw timer if highlighted
+            if (highlighted) {
+                const timerWidth = (cycleDuration - cycleTimer % cycleDuration) / cycleDuration * width;
+                drawPixelRect(x, y + height - 8, timerWidth, 8, '#FFFFFF44');
+            }
+            
+            // Draw text
+            ctx.fillStyle = colors.text;
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(option.text, x + width / 2, y + height / 2);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 100);
+        }
+        
+        function drawRestartButton() {
+            const x = canvas.width / 2 - 75;
+            const y = 500;
+            const width = 150;
+            const height = 50;
+            
+            drawPixelRect(x, y, width, height, '#444444', '#666666');
+            
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("Restart", x + width / 2, y + height / 2);
+            
+            return { x, y, width, height };
+        }
+        
+        function isPointInRect(px, py, rect) {
+            return px >= rect.x && px <= rect.x + rect.width && 
+                   py >= rect.y && py <= rect.y + rect.height;
+        }
+        
+        // Game loop
+        function update(deltaTime) {
+            if (gameEnded) return;
+            
+            cycleTimer += deltaTime;
+            
+            // Update current lit option
+            const previousLit = currentLitOption;
+            currentLitOption = Math.floor((cycleTimer % (cycleDuration * options.length)) / cycleDuration);
+            
+            // Play sound when a new option lights up
+            if (previousLit !== currentLitOption) {
+                playLightupSound();
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw options
+            options.forEach((option, index) => {
+                let highlighted = index === currentLitOption && !gameEnded;
+                
+                // Override highlighting if game has ended
+                if (gameEnded && result !== null) {
+                    if ((result && option.correct) || 
+                        (!result && index === currentLitOption)) {
+                        highlighted = true;
+                    }
+                }
+                
+                drawOption(option, index, highlighted);
+            });
+            
+            // Draw restart button if game ended
+            if (gameEnded) {
+                restartButtonRect = drawRestartButton();
+            }
+        }
+        
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            render();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Click handler
+        let restartButtonRect = null;
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (gameEnded) {
+                // Check if restart button is clicked
+                if (restartButtonRect && isPointInRect(x, y, restartButtonRect)) {
+                    resetGame();
+                }
+            } else {
+                // Check if any option is clicked when lit
+                options.forEach((option, index) => {
+                    const optionRect = {
+                        x: 200,
+                        y: 200 + index * 90,
+                        width: 400,
+                        height: 70
+                    };
+                    
+                    if (isPointInRect(x, y, optionRect)) {
+                        if (index === currentLitOption) {
+                            // Clicked the lit option
+                            gameEnded = true;
+                            result = option.correct;
+                            
+                            if (option.correct) {
+                                playCorrectSound();
+                            } else {
+                                playIncorrectSound();
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Start game
+        function resetGame() {
+            currentLitOption = -1;
+            cycleTimer = 0;
+            gameEnded = false;
+            result = null;
+        }
+        
+        // Start the game
+        resetGame();
+        requestAnimationFrame(gameLoop);
+        
+        // Make canvas responsive
+        function resizeCanvas() {
+            const container = document.body;
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            
+            const canvasRatio = canvas.width / canvas.height;
+            const containerRatio = containerWidth / containerHeight;
+            
+            let newWidth, newHeight;
+            
+            if (containerRatio > canvasRatio) {
+                newHeight = containerHeight;
+                newWidth = newHeight * canvasRatio;
+            } else {
+                newWidth = containerWidth;
+                newHeight = newWidth / canvasRatio;
+            }
+            
+            canvas.style.width = newWidth + 'px';
+            canvas.style.height = newHeight + 'px';
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>

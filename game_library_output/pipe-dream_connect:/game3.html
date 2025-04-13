@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pipe Dream Connect</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#0f380f',
+            grid: '#306230',
+            gridBorder: '#8bac0f',
+            text: '#e0f8d0',
+            highlight: '#9bbc0f',
+            straight: '#306230',
+            curve: '#0f380f',
+            tJunction: '#8bac0f',
+            flowingWater: '#0000ff',
+            start: '#ff0000',
+            end: '#00ff00',
+            correct: '#00ff00',
+            incorrect: '#ff0000',
+            button: '#8bac0f',
+            buttonText: '#0f380f'
+        };
+        
+        // Game state
+        let gameState = 'playing'; // playing, correct, incorrect
+        let pipeGrid = [];
+        let gridSize = 4;
+        let tileSize = 80;
+        let gridOffsetX = (canvas.width - gridSize * tileSize) / 2;
+        let gridOffsetY = 200;
+        let selectedPipe = null;
+        let startPos = { x: 0, y: 1 };
+        let endPos = { x: 3, y: 2 };
+        let flowProgress = 0;
+        let flowPath = [];
+        let correctAnswer = "Paris";
+        let answers = ["London", "Berlin", "Paris", "Madrid"];
+        
+        // Pipe types
+        const PIPE_TYPES = [
+            { name: 'straight-h', connections: ['left', 'right'], color: COLORS.straight },
+            { name: 'straight-v', connections: ['up', 'down'], color: COLORS.straight },
+            { name: 'curve-ul', connections: ['up', 'left'], color: COLORS.curve },
+            { name: 'curve-ur', connections: ['up', 'right'], color: COLORS.curve },
+            { name: 'curve-dl', connections: ['down', 'left'], color: COLORS.curve },
+            { name: 'curve-dr', connections: ['down', 'right'], color: COLORS.curve }
+        ];
+        
+        // Initialize game
+        function initGame() {
+            gameState = 'playing';
+            flowProgress = 0;
+            flowPath = [];
+            
+            // Create empty grid
+            pipeGrid = [];
+            for (let y = 0; y < gridSize; y++) {
+                pipeGrid[y] = [];
+                for (let x = 0; x < gridSize; x++) {
+                    pipeGrid[y][x] = null;
+                }
+            }
+            
+            // Create selectable pipes
+            selectedPipe = null;
+        }
+        
+        // Draw a pipe
+        function drawPipe(x, y, pipe, flowing = false) {
+            if (!pipe) return;
+            
+            const centerX = x + tileSize / 2;
+            const centerY = y + tileSize / 2;
+            const radius = tileSize * 0.3;
+            const pipeWidth = tileSize * 0.25;
+            
+            ctx.fillStyle = flowing ? COLORS.flowingWater : pipe.color;
+            
+            // Draw based on pipe type
+            if (pipe.connections.includes('left') && pipe.connections.includes('right')) {
+                ctx.fillRect(x, centerY - pipeWidth/2, tileSize, pipeWidth);
+            } else if (pipe.connections.includes('up') && pipe.connections.includes('down')) {
+                ctx.fillRect(centerX - pipeWidth/2, y, pipeWidth, tileSize);
+            } else {
+                // Draw curved pipes
+                ctx.beginPath();
+                
+                if (pipe.connections.includes('up')) {
+                    ctx.fillRect(centerX - pipeWidth/2, y, pipeWidth, radius + pipeWidth/2);
+                }
+                if (pipe.connections.includes('down')) {
+                    ctx.fillRect(centerX - pipeWidth/2, centerY, pipeWidth, radius + pipeWidth/2);
+                }
+                if (pipe.connections.includes('left')) {
+                    ctx.fillRect(x, centerY - pipeWidth/2, radius + pipeWidth/2, pipeWidth);
+                }
+                if (pipe.connections.includes('right')) {
+                    ctx.fillRect(centerX, centerY - pipeWidth/2, radius + pipeWidth/2, pipeWidth);
+                }
+                
+                // Curved corner
+                if (pipe.name.includes('curve')) {
+                    ctx.beginPath();
+                    let startAngle = 0, endAngle = 0;
+                    
+                    if (pipe.name === 'curve-ul') {
+                        startAngle = Math.PI;
+                        endAngle = Math.PI * 1.5;
+                    } else if (pipe.name === 'curve-ur') {
+                        startAngle = Math.PI * 1.5;
+                        endAngle = Math.PI * 2;
+                    } else if (pipe.name === 'curve-dl') {
+                        startAngle = Math.PI * 0.5;
+                        endAngle = Math.PI;
+                    } else if (pipe.name === 'curve-dr') {
+                        startAngle = 0;
+                        endAngle = Math.PI * 0.5;
+                    }
+                    
+                    ctx.arc(
+                        pipe.name.includes('r') ? centerX : centerX - pipeWidth/2,
+                        pipe.name.includes('d') ? centerY : centerY - pipeWidth/2,
+                        radius,
+                        startAngle,
+                        endAngle
+                    );
+                    ctx.fill();
+                }
+            }
+        }
+        
+        // Draw the grid
+        function drawGrid() {
+            // Draw background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 80);
+            
+            // Draw instructions
+            ctx.font = '16px sans-serif';
+            ctx.fillText("Connect the pipes from start to end to reveal the answer", canvas.width / 2, 120);
+            
+            // Draw grid background
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    const gridX = gridOffsetX + x * tileSize;
+                    const gridY = gridOffsetY + y * tileSize;
+                    
+                    // Draw tile background
+                    ctx.fillStyle = COLORS.grid;
+                    ctx.fillRect(gridX, gridY, tileSize, tileSize);
+                    
+                    // Draw tile border
+                    ctx.strokeStyle = COLORS.gridBorder;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(gridX, gridY, tileSize, tileSize);
+                }
+            }
+            
+            // Draw start and end points
+            const startX = gridOffsetX + startPos.x * tileSize;
+            const startY = gridOffsetY + startPos.y * tileSize;
+            const endX = gridOffsetX + endPos.x * tileSize;
+            const endY = gridOffsetY + endPos.y * tileSize;
+            
+            ctx.fillStyle = COLORS.start;
+            ctx.beginPath();
+            ctx.arc(startX + tileSize/2, startY + tileSize/2, tileSize * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = COLORS.end;
+            ctx.beginPath();
+            ctx.arc(endX + tileSize/2, endY + tileSize/2, tileSize * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw pipes
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    if (pipeGrid[y][x]) {
+                        const gridX = gridOffsetX + x * tileSize;
+                        const gridY = gridOffsetY + y * tileSize;
+                        const isFlowing = flowPath.some(pos => pos.x === x && pos.y === y);
+                        drawPipe(gridX, gridY, pipeGrid[y][x], isFlowing);
+                    }
+                }
+            }
+            
+            // Draw selectable pipes
+            const pipeSelectY = gridOffsetY + gridSize * tileSize + 30;
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Select a pipe type:", canvas.width / 2, pipeSelectY - 10);
+            
+            for (let i = 0; i < PIPE_TYPES.length; i++) {
+                const pipe = PIPE_TYPES[i];
+                const pipeX = gridOffsetX + i * (tileSize + 10);
+                const pipeY = pipeSelectY;
+                
+                // Draw selection background
+                ctx.fillStyle = selectedPipe === i ? COLORS.highlight : COLORS.grid;
+                ctx.fillRect(pipeX, pipeY, tileSize, tileSize);
+                
+                // Draw pipe
+                drawPipe(pipeX, pipeY, pipe);
+                
+                // Draw selection border
+                ctx.strokeStyle = COLORS.gridBorder;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(pipeX, pipeY, tileSize, tileSize);
+            }
+            
+            // Draw game over screen if needed
+            if (gameState !== 'playing') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameState === 'correct' ? COLORS.correct : COLORS.incorrect;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState === 'correct' ? 
+                    `Correct! The capital of France is ${correctAnswer}.` : 
+                    `Incorrect! The capital of France is not ${answers[endPos.y]}.`,
+                    canvas.width / 2, canvas.height / 2 - 50
+                );
+                
+                // Draw restart button
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height / 2 + 20;
+                
+                ctx.fillStyle = COLORS.button;
+                ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                
+                ctx.fillStyle = COLORS.buttonText;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', buttonX + buttonWidth / 2, buttonY + buttonHeight * 0.65);
+            }
+        }
+        
+        // Check if pipes connect
+        function pipeConnects(pipe1, pipe2, direction) {
+            if (!pipe1 || !pipe2) return false;
+            
+            if (direction === 'right') {
+                return pipe1.connections.includes('right') && pipe2.connections.includes('left');
+            } else if (direction === 'left') {
+                return pipe1.connections.includes('left') && pipe2.connections.includes('right');
+            } else if (direction === 'up') {
+                return pipe1.connections.includes('up') && pipe2.connections.includes('down');
+            } else if (direction === 'down') {
+                return pipe1.connections.includes('down') && pipe2.connections.includes('up');
+            }
+            
+            return false;
+        }
+        
+        // Calculate flow path
+        function calculateFlowPath() {
+            let path = [];
+            let currentPos = { x: startPos.x, y: startPos.y };
+            let previousPos = null;
+            let maxSteps = gridSize * gridSize; // Avoid infinite loops
+            let steps = 0;
+            
+            while (steps < maxSteps) {
+                path.push({...currentPos});
+                
+                // Check if we've reached the end
+                if (currentPos.x === endPos.x && currentPos.y === endPos.y) {
+                    return path;
+                }
+                
+                let nextPos = null;
+                const pipe = pipeGrid[currentPos.y][currentPos.x];
+                
+                if (!pipe) break;
+                
+                // Try all four directions
+                const directions = [
+                    { dir: 'right', dx: 1, dy: 0 },
+                    { dir: 'left', dx: -1, dy: 0 },
+                    { dir: 'down', dx: 0, dy: 1 },
+                    { dir: 'up', dx: 0, dy: -1 }
+                ];
+                
+                for (const direction of directions) {
+                    const newX = currentPos.x + direction.dx;
+                    const newY = currentPos.y + direction.dy;
+                    
+                    // Skip if out of bounds or same as previous position
+                    if (newX < 0 || newX >= gridSize || newY < 0 || newY >= gridSize ||
+                        (previousPos && previousPos.x === newX && previousPos.y === newY)) {
+                        continue;
+                    }
+                    
+                    const nextPipe = pipeGrid[newY][newX];
+                    
+                    if (pipeConnects(pipe, nextPipe, direction.dir)) {
+                        nextPos = { x: newX, y: newY };
+                        break;
+                    }
+                }
+                
+                if (!nextPos) break;
+                
+                previousPos = {...currentPos};
+                currentPos = nextPos;
+                steps++;
+            }
+            
+            return path;
+        }
+        
+        // Update flow animation
+        function updateFlow() {
+            if (gameState !== 'playing') return;
+            
+            // Update flow path if needed
+            if (flowPath.length === 0) {
+                flowPath = calculateFlowPath();
+            }
+            
+            // If we have a complete path
+            if (flowPath.length > 0 && flowPath[flowPath.length-1].x === endPos.x && 
+                flowPath[flowPath.length-1].y === endPos.y) {
+                flowProgress += 0.05;
+                
+                // If flow reaches the end
+                if (flowProgress >= 1) {
+                    // Check if the answer is correct
+                    gameState = endPos.y === 2 ? 'correct' : 'incorrect';
+                    playSound(gameState === 'correct' ? 'win' : 'lose');
+                }
+            }
+        }
+        
+        // Handle mouse clicks
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (gameState !== 'playing') {
+                // Check if restart button was clicked
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height / 2 + 20;
+                
+                if (x > buttonX && x < buttonX + buttonWidth && 
+                    y > buttonY && y < buttonY + buttonHeight) {
+                    initGame();
+                    return;
+                }
+            }
+            
+            // Check if clicking on selectable pipes
+            const pipeSelectY = gridOffsetY + gridSize * tileSize + 30;
+            
+            if (y >= pipeSelectY && y < pipeSelectY + tileSize) {
+                for (let i = 0; i < PIPE_TYPES.length; i++) {
+                    const pipeX = gridOffsetX + i * (tileSize + 10);
+                    
+                    if (x >= pipeX && x < pipeX + tileSize) {
+                        selectedPipe = i;
+                        playSound('select');
+                        return;
+                    }
+                }
+            }
+            
+            // Check if clicking on grid
+            if (x >= gridOffsetX && x < gridOffsetX + gridSize * tileSize &&
+                y >= gridOffsetY && y < gridOffsetY + gridSize * tileSize &&
+                selectedPipe !== null) {
+                
+                const gridX = Math.floor((x - gridOffsetX) / tileSize);
+                const gridY = Math.floor((y - gridOffsetY) / tileSize);
+                
+                // Don't place on start or end
+                if ((gridX === startPos.x && gridY === startPos.y) ||
+                    (gridX === endPos.x && gridY === endPos.y)) {
+                    return;
+                }
+                
+                pipeGrid[gridY][gridX] = PIPE_TYPES[selectedPipe];
+                flowPath = calculateFlowPath();
+                flowProgress = 0;
+                playSound('place');
+            }
+        }
+        
+        // Simple sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'select':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'place':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'win':
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(1100, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'lose':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            updateFlow();
+            drawGrid();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        canvas.addEventListener('click', handleClick);
+        initGame();
+        gameLoop();
+
+        // Handle window resize for mobile
+        function handleResize() {
+            const isMobile = window.innerWidth <= 800;
+            if (isMobile) {
+                canvas.width = 360;
+                canvas.height = 640;
+                tileSize = 60;
+                gridOffsetX = (canvas.width - gridSize * tileSize) / 2;
+                gridOffsetY = 200;
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+                tileSize = 80;
+                gridOffsetX = (canvas.width - gridSize * tileSize) / 2;
+                gridOffsetY = 200;
+            }
+        }
+
+        window.addEventListener('resize', handleResize);
+        handleResize();
+    </script>
+</body>
+</html>

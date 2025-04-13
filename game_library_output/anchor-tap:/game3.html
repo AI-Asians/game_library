@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Anchor-Tap True or False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        const colors = {
+            sky: '#4AADED',
+            deepWater: '#0A5CA3',
+            water: '#1E8AEF',
+            waterHighlight: '#5AADF7',
+            sand: '#F7D07A',
+            true: '#42B45E',
+            false: '#E74C3C',
+            anchor: '#D9D9D9',
+            rope: '#B89D7A',
+            text: '#FFFFFF'
+        };
+        
+        let gameState = {
+            question: "The Great Wall of China is visible from space.",
+            correctAnswer: false,
+            countdown: 3,
+            countdownTimer: 60,
+            gameOver: false,
+            restart: false,
+            isCorrect: null,
+            anchorAngle: 0,
+            anchorSpeed: 0.02,
+            anchorDirection: 1,
+            anchorMaxAngle: Math.PI / 3,
+            anchorLength: 300,
+            anchorX: canvas.width / 2,
+            anchorY: 160,
+            tapPosition: null,
+            scanlineOpacity: 0.1
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'countdown':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(660, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'click':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Draw pixelated rectangle function
+        function drawPixelRect(x, y, width, height, color, pixelSize = 4) {
+            ctx.fillStyle = color;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x + i), 
+                        Math.floor(y + j), 
+                        pixelSize, 
+                        pixelSize
+                    );
+                }
+            }
+        }
+        
+        // Draw water waves
+        function drawWaves() {
+            // Draw deep water
+            drawPixelRect(0, canvas.height - 220, canvas.width, 220, colors.deepWater);
+            
+            // Draw medium water
+            drawPixelRect(0, canvas.height - 240, canvas.width, 40, colors.water);
+            
+            // Draw wave details
+            for (let i = 0; i < canvas.width; i += 24) {
+                const waveHeight = 6 + Math.sin(Date.now() / 500 + i / 30) * 4;
+                drawPixelRect(i, canvas.height - 240 - waveHeight, 12, waveHeight, colors.waterHighlight);
+            }
+            
+            // Draw beach
+            drawPixelRect(0, canvas.height - 70, canvas.width, 70, colors.sand);
+        }
+        
+        // Draw target zones
+        function drawTargetZones() {
+            const zoneWidth = 130;
+            const zoneHeight = 180;
+            
+            // True Zone (left)
+            drawPixelRect(canvas.width / 4 - zoneWidth / 2, canvas.height - 200, zoneWidth, zoneHeight, colors.true);
+            
+            // False Zone (right)
+            drawPixelRect(canvas.width * 3/4 - zoneWidth / 2, canvas.height - 200, zoneWidth, zoneHeight, colors.false);
+            
+            // Zone labels
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            
+            // TRUE label
+            ctx.fillText("TRUE", canvas.width / 4, canvas.height - 140);
+            
+            // FALSE label
+            ctx.fillText("FALSE", canvas.width * 3/4, canvas.height - 140);
+        }
+        
+        // Draw pendulum anchor
+        function drawAnchor() {
+            // Calculate anchor position based on angle
+            const anchorEndX = gameState.anchorX + Math.sin(gameState.anchorAngle) * gameState.anchorLength;
+            const anchorEndY = gameState.anchorY + Math.cos(gameState.anchorAngle) * gameState.anchorLength;
+            
+            // Draw rope
+            ctx.strokeStyle = colors.rope;
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(gameState.anchorX, gameState.anchorY);
+            ctx.lineTo(anchorEndX, anchorEndY);
+            ctx.stroke();
+            
+            // Draw anchor (pixelated)
+            const anchorSize = 40;
+            
+            // Draw anchor body
+            drawPixelRect(anchorEndX - anchorSize/2, anchorEndY - anchorSize/2, anchorSize, anchorSize, colors.anchor);
+            
+            // Draw anchor hook
+            drawPixelRect(anchorEndX - anchorSize/2 - 10, anchorEndY - 12, 10, 24, colors.anchor);
+            drawPixelRect(anchorEndX + anchorSize/2, anchorEndY - 12, 10, 24, colors.anchor);
+            
+            // Store the actual anchor position for collision detection
+            gameState.currentAnchorX = anchorEndX;
+            gameState.currentAnchorY = anchorEndY;
+        }
+        
+        // Draw tap indicator
+        function drawTapIndicator() {
+            if (gameState.tapPosition) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(gameState.tapPosition.x, gameState.tapPosition.y, 20, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Fade out
+                gameState.tapPosition.opacity -= 0.05;
+                if (gameState.tapPosition.opacity <= 0) {
+                    gameState.tapPosition = null;
+                }
+            }
+        }
+        
+        // Draw scanlines
+        function drawScanlines() {
+            ctx.fillStyle = `rgba(0, 0, 0, ${gameState.scanlineOpacity})`;
+            for (let i = 0; i < canvas.height; i += 4) {
+                ctx.fillRect(0, i, canvas.width, 2);
+            }
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 80);
+        }
+        
+        // Draw countdown
+        function drawCountdown() {
+            if (gameState.countdown > 0) {
+                ctx.fillStyle = colors.text;
+                ctx.font = '64px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState.countdown.toString(), canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        // Draw result and restart button
+        function drawResult() {
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.isCorrect ? colors.true : colors.false;
+                ctx.font = '32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.isCorrect ? "CORRECT!" : "WRONG!", 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 40
+                );
+                
+                // Draw restart button
+                ctx.fillStyle = '#444';
+                drawPixelRect(canvas.width / 2 - 80, canvas.height / 2 + 20, 160, 50, '#444');
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = '24px Arial';
+                ctx.fillText("PLAY AGAIN", canvas.width / 2, canvas.height / 2 + 53);
+            }
+        }
+        
+        // Update anchor position
+        function updateAnchor() {
+            if (gameState.countdown > 0 || gameState.gameOver) return;
+            
+            // Update anchor angle
+            gameState.anchorAngle += gameState.anchorSpeed * gameState.anchorDirection;
+            
+            // Reverse direction at max angles
+            if (Math.abs(gameState.anchorAngle) > gameState.anchorMaxAngle) {
+                gameState.anchorDirection *= -1;
+                gameState.anchorAngle = Math.sign(gameState.anchorAngle) * gameState.anchorMaxAngle;
+            }
+        }
+        
+        // Check if anchor is in true or false zone
+        function checkZone() {
+            const anchorX = gameState.currentAnchorX;
+            const anchorY = gameState.currentAnchorY;
+            const zoneWidth = 130;
+            const zoneHeight = 180;
+            
+            // True zone boundaries
+            const trueZoneLeft = canvas.width / 4 - zoneWidth / 2;
+            const trueZoneRight = trueZoneLeft + zoneWidth;
+            const trueZoneTop = canvas.height - 200;
+            const trueZoneBottom = trueZoneTop + zoneHeight;
+            
+            // False zone boundaries
+            const falseZoneLeft = canvas.width * 3/4 - zoneWidth / 2;
+            const falseZoneRight = falseZoneLeft + zoneWidth;
+            const falseZoneTop = canvas.height - 200;
+            const falseZoneBottom = falseZoneTop + zoneHeight;
+            
+            // Check true zone
+            if (anchorX >= trueZoneLeft && anchorX <= trueZoneRight && 
+                anchorY >= trueZoneTop && anchorY <= trueZoneBottom) {
+                gameState.gameOver = true;
+                gameState.isCorrect = (true === gameState.correctAnswer);
+                playSound(gameState.isCorrect ? 'correct' : 'wrong');
+                return;
+            }
+            
+            // Check false zone
+            if (anchorX >= falseZoneLeft && anchorX <= falseZoneRight && 
+                anchorY >= falseZoneTop && anchorY <= falseZoneBottom) {
+                gameState.gameOver = true;
+                gameState.isCorrect = (false === gameState.correctAnswer);
+                playSound(gameState.isCorrect ? 'correct' : 'wrong');
+                return;
+            }
+            
+            // If not in any zone, just play a click sound
+            playSound('click');
+        }
+        
+        // Handle countdown
+        function updateCountdown() {
+            if (gameState.countdown > 0) {
+                gameState.countdownTimer--;
+                if (gameState.countdownTimer <= 0) {
+                    gameState.countdown--;
+                    gameState.countdownTimer = 60;
+                    if (gameState.countdown > 0) {
+                        playSound('countdown');
+                    }
+                }
+            }
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawWaves();
+            drawTargetZones();
+            drawQuestion();
+            drawAnchor();
+            drawTapIndicator();
+            drawScanlines();
+            
+            // Update game logic
+            updateCountdown();
+            updateAnchor();
+            
+            // Draw countdown or result
+            if (gameState.countdown > 0) {
+                drawCountdown();
+            } else if (gameState.gameOver) {
+                drawResult();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        playSound('countdown');
+        gameLoop();
+        
+        // Handle input
+        canvas.addEventListener('click', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Show tap position
+            gameState.tapPosition = {
+                x: x,
+                y: y,
+                opacity: 1
+            };
+            
+            // Handle restart button
+            if (gameState.gameOver) {
+                const restartBtnX = canvas.width / 2 - 80;
+                const restartBtnY = canvas.height / 2 + 20;
+                const restartBtnWidth = 160;
+                const restartBtnHeight = 50;
+                
+                if (x >= restartBtnX && x <= restartBtnX + restartBtnWidth &&
+                    y >= restartBtnY && y <= restartBtnY + restartBtnHeight) {
+                    // Reset game state
+                    gameState.gameOver = false;
+                    gameState.isCorrect = null;
+                    gameState.anchorAngle = 0;
+                    gameState.countdown = 3;
+                    gameState.countdownTimer = 60;
+                    playSound('countdown');
+                }
+                return;
+            }
+            
+            // Skip if in countdown
+            if (gameState.countdown > 0) return;
+            
+            // Check if the anchor is in a zone
+            checkZone();
+        });
+        
+        // Mobile touch support
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Show tap position
+            gameState.tapPosition = {
+                x: x,
+                y: y,
+                opacity: 1
+            };
+            
+            // Handle restart button
+            if (gameState.gameOver) {
+                const restartBtnX = canvas.width / 2 - 80;
+                const restartBtnY = canvas.height / 2 + 20;
+                const restartBtnWidth = 160;
+                const restartBtnHeight = 50;
+                
+                if (x >= restartBtnX && x <= restartBtnX + restartBtnWidth &&
+                    y >= restartBtnY && y <= restartBtnY + restartBtnHeight) {
+                    // Reset game state
+                    gameState.gameOver = false;
+                    gameState.isCorrect = null;
+                    gameState.anchorAngle = 0;
+                    gameState.countdown = 3;
+                    gameState.countdownTimer = 60;
+                    playSound('countdown');
+                }
+                return;
+            }
+            
+            // Skip if in countdown
+            if (gameState.countdown > 0) return;
+            
+            // Check if the anchor is in a zone
+            checkZone();
+        }, { passive: false });
+        
+        // Responsive canvas
+        function resizeCanvas() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            if (width / height > canvas.width / canvas.height) {
+                // Window is wider than canvas aspect ratio
+                canvas.style.width = 'auto';
+                canvas.style.height = '90vh';
+            } else {
+                // Window is taller than canvas aspect ratio
+                canvas.style.width = '90vw';
+                canvas.style.height = 'auto';
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>

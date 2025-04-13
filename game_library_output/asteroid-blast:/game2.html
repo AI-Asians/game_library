@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asteroid-Blast Learning Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            font-family: sans-serif;
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const restartBtn = document.getElementById("restart");
+        
+        // Set canvas size based on device detection
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: "#000420",
+            stars: ["#FFFFFF", "#8888FF", "#AAAAAA"],
+            ship: "#22DD88",
+            shipDetail: "#00AA55",
+            laser: "#FF5588",
+            asteroid1: "#AA5533",
+            asteroid2: "#884422",
+            text: "#FFFFFF",
+            correct: "#44FF44",
+            incorrect: "#FF4444",
+            explosion: ["#FF8800", "#FFAA00", "#FF0000", "#FFFF00"]
+        };
+        
+        // Game state
+        let gameState = {
+            running: true,
+            question: "Which planet is known as the Red Planet?",
+            answers: [
+                { text: "Mars", correct: true },
+                { text: "Venus", correct: false },
+                { text: "Jupiter", correct: false },
+                { text: "Mercury", correct: false }
+            ],
+            ship: {
+                x: canvas.width / 2,
+                y: canvas.height - 50,
+                width: 32,
+                height: 32,
+                speed: 5,
+                canShoot: true,
+                cooldown: 20,
+                cooldownCounter: 0
+            },
+            laser: {
+                active: false,
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 16,
+                speed: 10
+            },
+            asteroids: [],
+            stars: [],
+            explosions: [],
+            keys: {
+                left: false,
+                right: false,
+                space: false
+            }
+        };
+        
+        // Create stars for background
+        for (let i = 0; i < 50; i++) {
+            gameState.stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)]
+            });
+        }
+        
+        // Shuffle answers for randomization
+        gameState.answers.sort(() => Math.random() - 0.5);
+        
+        // Create asteroids with answers
+        for (let i = 0; i < gameState.answers.length; i++) {
+            gameState.asteroids.push({
+                x: Math.random() * (canvas.width - 80) + 40,
+                y: -100 - (i * 150),
+                width: 80,
+                height: 80,
+                speedX: (Math.random() - 0.5) * 2,
+                speedY: Math.random() * 1 + 1,
+                text: gameState.answers[i].text,
+                correct: gameState.answers[i].correct,
+                rotation: 0,
+                rotationSpeed: (Math.random() - 0.5) * 0.05
+            });
+        }
+        
+        // Audio context for sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects functions
+        function playLaserSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.2);
+        }
+        
+        function playExplosionSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(100, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.3);
+            
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.4);
+        }
+        
+        function playSuccessSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.4);
+        }
+        
+        // Draw functions
+        function drawShip() {
+            const ship = gameState.ship;
+            
+            // Main body
+            ctx.fillStyle = COLORS.ship;
+            ctx.fillRect(ship.x - ship.width / 2, ship.y - ship.height / 2, ship.width, ship.height);
+            
+            // Cockpit
+            ctx.fillStyle = COLORS.shipDetail;
+            ctx.fillRect(ship.x - 6, ship.y - 10, 12, 8);
+            
+            // Wings
+            ctx.fillStyle = COLORS.shipDetail;
+            ctx.fillRect(ship.x - ship.width / 2 - 8, ship.y + 5, 8, 10);
+            ctx.fillRect(ship.x + ship.width / 2, ship.y + 5, 8, 10);
+            
+            // Engine flames (pixelated)
+            ctx.fillStyle = Math.random() > 0.5 ? "#FF6600" : "#FFAA00";
+            ctx.fillRect(ship.x - 8, ship.y + ship.height / 2, 4, 8);
+            ctx.fillRect(ship.x + 4, ship.y + ship.height / 2, 4, 8);
+        }
+        
+        function drawLaser() {
+            if (gameState.laser.active) {
+                ctx.fillStyle = COLORS.laser;
+                ctx.fillRect(
+                    gameState.laser.x - gameState.laser.width / 2, 
+                    gameState.laser.y - gameState.laser.height / 2, 
+                    gameState.laser.width, 
+                    gameState.laser.height
+                );
+            }
+        }
+        
+        function drawAsteroid(asteroid) {
+            // Save the current context state
+            ctx.save();
+            
+            // Translate to asteroid center, rotate, and translate back
+            ctx.translate(asteroid.x, asteroid.y);
+            ctx.rotate(asteroid.rotation);
+            
+            // Draw the asteroid
+            ctx.fillStyle = COLORS.asteroid1;
+            ctx.fillRect(-asteroid.width / 2, -asteroid.height / 2, asteroid.width, asteroid.height);
+            
+            // Draw details on the asteroid
+            ctx.fillStyle = COLORS.asteroid2;
+            ctx.fillRect(-asteroid.width / 3, -asteroid.height / 4, 20, 15);
+            ctx.fillRect(asteroid.width / 5, asteroid.height / 6, 18, 12);
+            ctx.fillRect(-asteroid.width / 4, asteroid.height / 5, 16, 10);
+            
+            // Draw the text (answer)
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(asteroid.text, 0, 0);
+            
+            // Restore the context state
+            ctx.restore();
+        }
+        
+        function drawExplosions() {
+            gameState.explosions.forEach((explosion, index) => {
+                ctx.fillStyle = explosion.color;
+                for (let i = 0; i < explosion.particles.length; i++) {
+                    let particle = explosion.particles[i];
+                    ctx.fillRect(
+                        particle.x, 
+                        particle.y, 
+                        particle.size, 
+                        particle.size
+                    );
+                    
+                    // Update particle position
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.size *= 0.95;
+                }
+                
+                // Age the explosion
+                explosion.life--;
+                if (explosion.life <= 0) {
+                    gameState.explosions.splice(index, 1);
+                }
+            });
+        }
+        
+        function drawStars() {
+            gameState.stars.forEach(star => {
+                ctx.fillStyle = star.color;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+                
+                // Move stars slowly down for parallax effect
+                star.y += 0.3;
+                if (star.y > canvas.height) {
+                    star.y = 0;
+                    star.x = Math.random() * canvas.width;
+                }
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(gameState.question, canvas.width / 2, 30);
+        }
+        
+        function drawOutcome(outcome) {
+            ctx.fillStyle = outcome ? COLORS.correct : COLORS.incorrect;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(
+                outcome ? "Correct!" : "Try Again!",
+                canvas.width / 2,
+                canvas.height / 2
+            );
+        }
+        
+        // Game logic functions
+        function createExplosion(x, y, isCorrect) {
+            const particleCount = isCorrect ? 40 : 20;
+            const particles = [];
+            
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 4 + 2,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6
+                });
+            }
+            
+            gameState.explosions.push({
+                particles: particles,
+                life: 30,
+                color: isCorrect ? COLORS.correct : COLORS.explosion[Math.floor(Math.random() * COLORS.explosion.length)]
+            });
+        }
+        
+        function checkCollision(laser, asteroid) {
+            return (
+                laser.x < asteroid.x + asteroid.width / 2 &&
+                laser.x > asteroid.x - asteroid.width / 2 &&
+                laser.y < asteroid.y + asteroid.height / 2 &&
+                laser.y > asteroid.y - asteroid.height / 2
+            );
+        }
+        
+        function updateGame() {
+            // Move ship based on keypress
+            if (gameState.keys.left && gameState.ship.x > gameState.ship.width / 2) {
+                gameState.ship.x -= gameState.ship.speed;
+            }
+            if (gameState.keys.right && gameState.ship.x < canvas.width - gameState.ship.width / 2) {
+                gameState.ship.x += gameState.ship.speed;
+            }
+            
+            // Handle shooting
+            if (gameState.keys.space && gameState.ship.canShoot) {
+                gameState.laser.active = true;
+                gameState.laser.x = gameState.ship.x;
+                gameState.laser.y = gameState.ship.y - gameState.ship.height / 2;
+                gameState.ship.canShoot = false;
+                playLaserSound();
+            }
+            
+            // Update cooldown
+            if (!gameState.ship.canShoot) {
+                gameState.ship.cooldownCounter++;
+                if (gameState.ship.cooldownCounter >= gameState.ship.cooldown) {
+                    gameState.ship.canShoot = true;
+                    gameState.ship.cooldownCounter = 0;
+                }
+            }
+            
+            // Update laser position
+            if (gameState.laser.active) {
+                gameState.laser.y -= gameState.laser.speed;
+                
+                // Check if laser is off-screen
+                if (gameState.laser.y < 0) {
+                    gameState.laser.active = false;
+                }
+                
+                // Check for collision with asteroids
+                gameState.asteroids.forEach((asteroid, index) => {
+                    if (gameState.laser.active && checkCollision(gameState.laser, asteroid)) {
+                        gameState.laser.active = false;
+                        
+                        createExplosion(asteroid.x, asteroid.y, asteroid.correct);
+                        if (asteroid.correct) {
+                            playSuccessSound();
+                            gameState.running = false;
+                            restartBtn.style.display = "block";
+                        } else {
+                            playExplosionSound();
+                            gameState.asteroids.splice(index, 1);
+                        }
+                    }
+                });
+            }
+            
+            // Update asteroid positions
+            gameState.asteroids.forEach(asteroid => {
+                asteroid.x += asteroid.speedX;
+                asteroid.y += asteroid.speedY;
+                asteroid.rotation += asteroid.rotationSpeed;
+                
+                // Bounce off walls
+                if (asteroid.x < asteroid.width / 2 || asteroid.x > canvas.width - asteroid.width / 2) {
+                    asteroid.speedX *= -1;
+                }
+                
+                // Reset if off bottom of screen
+                if (asteroid.y > canvas.height + asteroid.height) {
+                    asteroid.y = -asteroid.height;
+                    asteroid.x = Math.random() * (canvas.width - asteroid.width) + asteroid.width / 2;
+                }
+            });
+        }
+        
+        function gameLoop() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            drawStars();
+            
+            // Draw the question
+            drawQuestion();
+            
+            // Update game logic if game is running
+            if (gameState.running) {
+                updateGame();
+            }
+            
+            // Draw game elements
+            gameState.asteroids.forEach(drawAsteroid);
+            drawLaser();
+            drawShip();
+            drawExplosions();
+            
+            // Draw outcome if game is over
+            if (!gameState.running) {
+                drawOutcome(true);
+            }
+            
+            // Continue the game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "ArrowLeft") gameState.keys.left = true;
+            if (e.key === "ArrowRight") gameState.keys.right = true;
+            if (e.key === " ") gameState.keys.space = true;
+        });
+        
+        window.addEventListener("keyup", (e) => {
+            if (e.key === "ArrowLeft") gameState.keys.left = false;
+            if (e.key === "ArrowRight") gameState.keys.right = false;
+            if (e.key === " ") gameState.keys.space = false;
+        });
+        
+        // Mobile touch controls
+        canvas.addEventListener("touchmove", (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const touchX = touch.clientX - rect.left;
+            
+            // Move ship to touch position
+            gameState.ship.x = touchX;
+        });
+        
+        canvas.addEventListener("touchstart", (e) => {
+            e.preventDefault();
+            // Shoot on touch
+            if (gameState.ship.canShoot) {
+                gameState.laser.active = true;
+                gameState.laser.x = gameState.ship.x;
+                gameState.laser.y = gameState.ship.y - gameState.ship.height / 2;
+                gameState.ship.canShoot = false;
+                playLaserSound();
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener("click", () => {
+            location.reload();
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

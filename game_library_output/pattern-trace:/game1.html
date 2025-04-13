@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pattern Trace Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #55aaff;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background-color: #ff5555;
+            color: white;
+            border: 3px solid #ffffff;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let success = false;
+        let patternPoints = [];
+        let playerProgress = 0;
+        let isTracing = false;
+        let lastPosition = { x: 0, y: 0 };
+        let tracePositions = [];
+        let showAnswer = false;
+        
+        // Colors
+        const colors = {
+            background: '#0a0a2a',
+            pattern: '#55ff55',
+            glow: '#88ff88',
+            playerTrace: '#ffff44',
+            text: '#ffffff',
+            hintMarker: '#ff5555',
+            answerHighlight: '#ffaa00',
+            wrong: '#ff0000'
+        };
+        
+        // Generate pattern points (Eiffel Tower-like shape)
+        function generatePattern() {
+            const centerX = canvas.width / 2;
+            const startY = canvas.height - 100;
+            const height = canvas.height * 0.7;
+            
+            // Base points
+            patternPoints = [
+                { x: centerX - 80, y: startY },
+                { x: centerX - 60, y: startY - height * 0.3 },
+                { x: centerX - 40, y: startY - height * 0.5 },
+                { x: centerX - 20, y: startY - height * 0.65 },
+                { x: centerX, y: startY - height * 0.8 }, // Top of tower
+                { x: centerX + 20, y: startY - height * 0.65 },
+                { x: centerX + 40, y: startY - height * 0.5 },
+                { x: centerX + 60, y: startY - height * 0.3 },
+                { x: centerX + 80, y: startY }
+            ];
+            
+            // Add more detail points
+            const detailedPoints = [];
+            for (let i = 0; i < patternPoints.length - 1; i++) {
+                detailedPoints.push(patternPoints[i]);
+                
+                // Add points in between
+                const p1 = patternPoints[i];
+                const p2 = patternPoints[i+1];
+                for (let j = 1; j < 5; j++) {
+                    const ratio = j / 5;
+                    detailedPoints.push({
+                        x: p1.x + (p2.x - p1.x) * ratio,
+                        y: p1.y + (p2.y - p1.y) * ratio
+                    });
+                }
+            }
+            detailedPoints.push(patternPoints[patternPoints.length - 1]);
+            patternPoints = detailedPoints;
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'trace':
+                    oscillator.type = 'square';
+                    oscillator.frequency.value = 220 + playerProgress * 2;
+                    gainNode.gain.value = 0.1;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 50);
+                    break;
+                case 'success':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.value = 0.2;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 300);
+                    break;
+                case 'failure':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(110, audioContext.currentTime + 0.2);
+                    gainNode.gain.value = 0.2;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 300);
+                    break;
+            }
+        }
+        
+        // Draw functions
+        function drawPattern() {
+            // Draw the glowing path
+            ctx.lineWidth = 10;
+            ctx.strokeStyle = colors.glow;
+            ctx.shadowColor = colors.glow;
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            
+            for (let i = 0; i < patternPoints.length; i++) {
+                const progress = playerProgress / patternPoints.length;
+                if (i === 0) {
+                    ctx.moveTo(patternPoints[i].x, patternPoints[i].y);
+                } else if (i <= playerProgress || gameOver) {
+                    ctx.lineTo(patternPoints[i].x, patternPoints[i].y);
+                }
+            }
+            ctx.stroke();
+            
+            // Draw main pattern
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = 5;
+            ctx.strokeStyle = colors.pattern;
+            ctx.beginPath();
+            
+            for (let i = 0; i < patternPoints.length; i++) {
+                const progress = playerProgress / patternPoints.length;
+                if (i === 0) {
+                    ctx.moveTo(patternPoints[i].x, patternPoints[i].y);
+                } else if (i <= playerProgress || gameOver) {
+                    ctx.lineTo(patternPoints[i].x, patternPoints[i].y);
+                }
+            }
+            ctx.stroke();
+            
+            // Draw hint markers every 5 points
+            for (let i = 0; i < patternPoints.length; i += 5) {
+                if (i <= playerProgress + 10 || gameOver) {
+                    ctx.fillStyle = colors.hintMarker;
+                    ctx.beginPath();
+                    ctx.arc(patternPoints[i].x, patternPoints[i].y, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            // Draw start point
+            ctx.fillStyle = '#ffaa00';
+            ctx.beginPath();
+            ctx.arc(patternPoints[0].x, patternPoints[0].y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw player's trace
+            if (tracePositions.length > 1) {
+                ctx.strokeStyle = colors.playerTrace;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(tracePositions[0].x, tracePositions[0].y);
+                for (let i = 1; i < tracePositions.length; i++) {
+                    ctx.lineTo(tracePositions[i].x, tracePositions[i].y);
+                }
+                ctx.stroke();
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 50);
+            
+            // Draw progress-based hint
+            if (playerProgress > patternPoints.length * 0.5 || gameOver) {
+                const alpha = Math.min(1, (playerProgress - patternPoints.length * 0.5) / (patternPoints.length * 0.3));
+                ctx.globalAlpha = gameOver ? 1 : alpha;
+                ctx.font = isMobile ? '22px sans-serif' : '30px sans-serif';
+                ctx.fillStyle = success ? colors.answerHighlight : colors.text;
+                ctx.fillText("PARIS", canvas.width / 2, canvas.height / 2);
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        function checkPathProximity(x, y) {
+            // Find closest path point
+            const tolerance = 25;
+            const nextPointIndex = Math.min(playerProgress + 5, patternPoints.length - 1);
+            
+            for (let i = playerProgress; i <= nextPointIndex; i++) {
+                const point = patternPoints[i];
+                const distance = Math.sqrt((x - point.x) ** 2 + (y - point.y) ** 2);
+                
+                if (distance < tolerance) {
+                    if (i > playerProgress) {
+                        for (let j = playerProgress + 1; j <= i; j++) {
+                            tracePositions.push({...patternPoints[j]});
+                        }
+                        playerProgress = i;
+                        playSound('trace');
+                        
+                        // Check if pattern completed
+                        if (playerProgress >= patternPoints.length - 1) {
+                            gameOver = true;
+                            success = true;
+                            showAnswer = true;
+                            playSound('success');
+                            restartBtn.style.display = 'block';
+                        }
+                    }
+                    return true;
+                }
+            }
+            
+            // If too far from path
+            if (isTracing) {
+                gameOver = true;
+                success = false;
+                playSound('failure');
+                restartBtn.style.display = 'block';
+            }
+            
+            return false;
+        }
+        
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawPattern();
+            drawQuestion();
+            
+            // Game over
+            if (gameOver) {
+                ctx.fillStyle = success ? 'rgba(0, 255, 0, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.font = isMobile ? '24px sans-serif' : '36px sans-serif';
+                ctx.fillStyle = colors.text;
+                ctx.textAlign = 'center';
+                
+                if (success) {
+                    ctx.fillText("Correct! The capital is PARIS", canvas.width / 2, canvas.height / 2 + 100);
+                } else {
+                    ctx.fillText("Try again!", canvas.width / 2, canvas.height / 2 + 100);
+                }
+            }
+            
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Event listeners
+        function handleStart(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            // Check if starting near the beginning of the path
+            const startPoint = patternPoints[0];
+            const distance = Math.sqrt((x - startPoint.x) ** 2 + (y - startPoint.y) ** 2);
+            
+            if (distance < 30) {
+                isTracing = true;
+                lastPosition = { x, y };
+                tracePositions = [{ x, y }];
+                playSound('trace');
+            }
+        }
+        
+        function handleMove(e) {
+            if (!isTracing || gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            tracePositions.push({ x, y });
+            checkPathProximity(x, y);
+            lastPosition = { x, y };
+        }
+        
+        function handleEnd() {
+            if (isTracing && !gameOver) {
+                // If they let go before finishing
+                if (playerProgress < patternPoints.length - 5) {
+                    gameOver = true;
+                    success = false;
+                    playSound('failure');
+                    restartBtn.style.display = 'block';
+                }
+            }
+            isTracing = false;
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            success = false;
+            playerProgress = 0;
+            isTracing = false;
+            tracePositions = [];
+            showAnswer = false;
+            restartBtn.style.display = 'none';
+            gameLoop();
+        }
+        
+        // Initialize
+        generatePattern();
+        
+        // Add event listeners
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchend', handleEnd);
+        restartBtn.addEventListener('click', resetGame);
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

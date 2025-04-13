@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Quiz - Grow-Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Determine if mobile based on screen size
+        const isMobile = window.innerWidth < 600;
+        
+        // Set canvas dimensions based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Color palette (limited to maintain 8-bit feel)
+        const COLORS = {
+            background: '#000022',
+            text: '#FFFFFF',
+            option1: '#FF5555',
+            option2: '#55FF55', 
+            option3: '#5555FF',
+            option4: '#FFFF55',
+            highlight: '#FF00FF',
+            correct: '#00FF00',
+            incorrect: '#FF0000',
+            outline: '#FFAA00'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let shakeTime = 0;
+        const shakeAmount = 5;
+        
+        // Question and options
+        const question = "Which planet is known as the Red Planet?";
+        const options = [
+            { text: "Venus", correct: false, color: COLORS.option1 },
+            { text: "Mars", correct: true, color: COLORS.option2 },
+            { text: "Jupiter", correct: false, color: COLORS.option3 },
+            { text: "Saturn", correct: false, color: COLORS.option4 }
+        ];
+        
+        // Initialize options with different growth rates and phases
+        options.forEach((option, index) => {
+            option.size = 0.5; // Start at half size
+            option.growthRate = 0.7 + (index * 0.1); // Different rates
+            option.phase = index * Math.PI / 2; // Different phases
+            option.maxSizeTime = 0; // Time spent at max size
+            option.particles = []; // Particles for max size effect
+        });
+        
+        // Sound synthesis functions
+        function playTone(freq, duration, type = 'square') {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = freq;
+                gainNode.gain.value = 0.3;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration * 1000);
+            } catch(e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function playSelectSound() {
+            playTone(330, 0.1);
+        }
+        
+        function playCorrectSound() {
+            playTone(523.25, 0.1, 'square');
+            setTimeout(() => playTone(659.25, 0.1, 'square'), 100);
+            setTimeout(() => playTone(783.99, 0.2, 'square'), 200);
+        }
+        
+        function playIncorrectSound() {
+            playTone(196, 0.2, 'sawtooth');
+            setTimeout(() => playTone(185, 0.3, 'sawtooth'), 150);
+        }
+        
+        function playMaxSizeSound() {
+            playTone(440, 0.05, 'sine');
+        }
+        
+        // Restart button
+        const restartButton = {
+            x: canvas.width / 2,
+            y: canvas.height - 50,
+            width: 160,
+            height: 40,
+            text: "RESTART",
+            active: false
+        };
+        
+        // Main game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            // Calculate delta time
+            const deltaTime = timestamp - lastTime || 0;
+            lastTime = timestamp;
+            
+            // Clear canvas with screen shake effect
+            if (shakeTime > 0) {
+                const shakeX = Math.random() * shakeAmount - shakeAmount/2;
+                const shakeY = Math.random() * shakeAmount - shakeAmount/2;
+                ctx.setTransform(1, 0, 0, 1, shakeX, shakeY);
+                shakeTime -= deltaTime;
+            } else {
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            }
+            
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated stars (8-bit style background)
+            ctx.fillStyle = '#FFFFFF';
+            for (let i = 0; i < 50; i++) {
+                const x = Math.floor(Math.random() * canvas.width / 4) * 4;
+                const y = Math.floor(Math.random() * canvas.height / 4) * 4;
+                const size = Math.floor(Math.random() * 2) * 2 + 2;
+                ctx.fillRect(x, y, size, size);
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, isMobile ? 100 : 120);
+            
+            // Update and draw options
+            if (!gameOver) {
+                options.forEach((option, index) => {
+                    // Calculate position
+                    const cols = 2;
+                    const rows = Math.ceil(options.length / cols);
+                    const col = index % cols;
+                    const row = Math.floor(index / cols);
+                    
+                    const baseSize = isMobile ? 70 : 100;
+                    const spacing = isMobile ? 100 : 160;
+                    const startY = isMobile ? 200 : 220;
+                    
+                    const centerX = (canvas.width / (cols + 1)) * (col + 1);
+                    const centerY = startY + spacing * row;
+                    
+                    // Update size based on sine wave for smooth grow/shrink
+                    option.phase += option.growthRate * deltaTime * 0.003;
+                    const sizeFactor = Math.sin(option.phase) * 0.5 + 0.5; // 0 to 1
+                    option.size = 0.5 + sizeFactor * 0.5; // 0.5 to 1.0
+                    
+                    // Check if at max size (within threshold)
+                    const atMaxSize = sizeFactor > 0.95;
+                    
+                    // Track time at max size
+                    if (atMaxSize) {
+                        option.maxSizeTime += deltaTime;
+                        // Add particles when at max size
+                        if (option.maxSizeTime % 100 < 10) {
+                            option.particles.push({
+                                x: centerX + (Math.random() * baseSize - baseSize/2) * option.size,
+                                y: centerY + (Math.random() * baseSize - baseSize/2) * option.size,
+                                size: 4,
+                                speed: Math.random() * 0.5 + 0.5,
+                                angle: Math.random() * Math.PI * 2,
+                                life: 500
+                            });
+                            
+                            // Play subtle sound when an option reaches max size
+                            // Only for options that just reached max size
+                            if (option.maxSizeTime < 20) {
+                                playMaxSizeSound();
+                            }
+                        }
+                    } else {
+                        option.maxSizeTime = 0;
+                    }
+                    
+                    // Draw growing outline to indicate optimal timing
+                    if (atMaxSize) {
+                        ctx.fillStyle = COLORS.outline;
+                        const outlineSize = baseSize * option.size + 8 + Math.sin(timestamp * 0.01) * 4;
+                        drawPixelRect(centerX - outlineSize/2, centerY - outlineSize/2, 
+                                    outlineSize, outlineSize, true);
+                    }
+                    
+                    // Draw option background
+                    const optionSize = baseSize * option.size;
+                    ctx.fillStyle = option.color;
+                    drawPixelRect(centerX - optionSize/2, centerY - optionSize/2, 
+                                optionSize, optionSize, true);
+                    
+                    // Draw option text
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = `${Math.floor(16 * option.size)}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(option.text, centerX, centerY);
+                    
+                    // Draw particles
+                    option.particles = option.particles.filter(p => {
+                        p.x += Math.cos(p.angle) * p.speed;
+                        p.y += Math.sin(p.angle) * p.speed;
+                        p.life -= deltaTime;
+                        
+                        if (p.life > 0) {
+                            ctx.fillStyle = option.color;
+                            ctx.fillRect(
+                                Math.floor(p.x / 2) * 2, 
+                                Math.floor(p.y / 2) * 2, 
+                                p.size, p.size
+                            );
+                            return true;
+                        }
+                        return false;
+                    });
+                });
+            } else {
+                // Draw restart button
+                drawRestartButton();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Helper function to draw pixelated rectangles (8-bit style)
+        function drawPixelRect(x, y, width, height, filled = false) {
+            // Ensure all values are integers to maintain pixel aesthetic
+            x = Math.floor(x);
+            y = Math.floor(y);
+            width = Math.floor(width);
+            height = Math.floor(height);
+            
+            if (filled) {
+                ctx.fillRect(x, y, width, height);
+            } else {
+                ctx.strokeRect(x, y, width, height);
+            }
+        }
+        
+        function drawRestartButton() {
+            const button = restartButton;
+            
+            // Draw button with 8-bit style
+            ctx.fillStyle = '#444444';
+            drawPixelRect(button.x - button.width/2 - 4, button.y - button.height/2 - 4, 
+                        button.width + 8, button.height + 8, true);
+            
+            ctx.fillStyle = '#222222';
+            drawPixelRect(button.x - button.width/2, button.y - button.height/2, 
+                        button.width, button.height, true);
+            
+            // Draw text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(button.text, button.x, button.y);
+            
+            button.active = true;
+        }
+        
+        // Handle option selection
+        function handleOptionClick(x, y) {
+            if (gameOver) {
+                // Check if restart button clicked
+                const button = restartButton;
+                if (button.active &&
+                    x >= button.x - button.width/2 && 
+                    x <= button.x + button.width/2 &&
+                    y >= button.y - button.height/2 && 
+                    y <= button.y + button.height/2) {
+                    restartGame();
+                    playSelectSound();
+                }
+                return;
+            }
+            
+            // Check which option was clicked
+            options.forEach((option, index) => {
+                const cols = 2;
+                const rows = Math.ceil(options.length / cols);
+                const col = index % cols;
+                const row = Math.floor(index / cols);
+                
+                const baseSize = isMobile ? 70 : 100;
+                const spacing = isMobile ? 100 : 160;
+                const startY = isMobile ? 200 : 220;
+                
+                const centerX = (canvas.width / (cols + 1)) * (col + 1);
+                const centerY = startY + spacing * row;
+                
+                const optionSize = baseSize * option.size;
+                const halfSize = optionSize / 2;
+                
+                if (x >= centerX - halfSize && 
+                    x <= centerX + halfSize && 
+                    y >= centerY - halfSize && 
+                    y <= centerY + halfSize) {
+                    
+                    // Check if at or near max size
+                    const atOptimalSize = option.size > 0.95;
+                    
+                    if (option.correct) {
+                        // Correct answer
+                        playCorrectSound();
+                        gameOver = true;
+                    } else {
+                        // Incorrect answer
+                        playIncorrectSound();
+                        shakeTime = 300; // Apply screen shake
+                        gameOver = true;
+                    }
+                }
+            });
+        }
+        
+        function restartGame() {
+            gameOver = false;
+            
+            // Reset options
+            options.forEach((option, index) => {
+                option.size = 0.5;
+                option.phase = index * Math.PI / 2;
+                option.maxSizeTime = 0;
+                option.particles = [];
+            });
+            
+            restartButton.active = false;
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            handleOptionClick(x, y);
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            handleOptionClick(x, y);
+        });
+        
+        // Start the game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Lock Puzzle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#0A0A2A',
+            lockBase: '#5A5A7A',
+            lockHighlight: '#7A7A9A',
+            lockShadow: '#3A3A5A',
+            dialBase: '#8A8A9A',
+            dialHighlight: '#AAAAAA',
+            dialShadow: '#6A6A7A',
+            textLight: '#EEEEEE',
+            textDark: '#222222',
+            correct: '#5AEE5A',
+            incorrect: '#EE5A5A',
+            buttonBase: '#5A7A5A',
+            buttonHighlight: '#7A9A7A',
+            buttonShadow: '#4A6A4A',
+            notch: '#CCCCCC'
+        };
+        
+        // Game state
+        const gameState = {
+            dials: [
+                { options: ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'], currentIndex: 0 },
+                { options: ['Red', 'Blue', 'Green', 'Yellow', 'Purple'], currentIndex: 0 },
+                { options: ['Planet', 'Moon', 'Star', 'Asteroid', 'Comet'], currentIndex: 0 }
+            ],
+            correctAnswer: [3, 0, 0], // Mars, Red, Planet
+            feedback: '',
+            feedbackTimer: 0,
+            isCorrect: false,
+            isGameOver: false,
+            lockAnimationTime: 0,
+            lockOpen: false,
+            restartButtonVisible: false
+        };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize audio context on first user interaction
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+        
+        // Sound effects
+        function playClickSound() {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+        
+        function playCorrectSound() {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playIncorrectSound() {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.4);
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        // Draw the lock dials
+        function drawDials() {
+            const dialWidth = 140;
+            const dialHeight = 180;
+            const spacing = 40;
+            const totalWidth = (dialWidth * gameState.dials.length) + (spacing * (gameState.dials.length - 1));
+            const startX = (canvas.width - totalWidth) / 2;
+            const startY = canvas.height / 2 - 20;
+            
+            // Draw lock base
+            drawPixelRect(startX - 30, startY - 50, totalWidth + 60, dialHeight + 100, COLORS.lockBase);
+            drawPixelRect(startX - 30, startY - 50, totalWidth + 60, 10, COLORS.lockHighlight);
+            drawPixelRect(startX - 30, startY + dialHeight + 40, totalWidth + 60, 10, COLORS.lockShadow);
+            
+            // Draw lock shackle if unlocked
+            if (gameState.lockOpen) {
+                const openDistance = Math.min(50, gameState.lockAnimationTime * 100);
+                drawPixelRect(startX + totalWidth / 2 - 40, startY - 100 - openDistance, 15, 60, COLORS.lockHighlight);
+                drawPixelRect(startX + totalWidth / 2 + 25, startY - 100 - openDistance, 15, 60, COLORS.lockHighlight);
+                drawPixelRect(startX + totalWidth / 2 - 40, startY - 100 - openDistance, 80, 15, COLORS.lockHighlight);
+            } else {
+                drawPixelRect(startX + totalWidth / 2 - 40, startY - 100, 15, 60, COLORS.lockHighlight);
+                drawPixelRect(startX + totalWidth / 2 + 25, startY - 100, 15, 60, COLORS.lockHighlight);
+                drawPixelRect(startX + totalWidth / 2 - 40, startY - 100, 80, 15, COLORS.lockHighlight);
+            }
+            
+            // Draw each dial
+            for (let i = 0; i < gameState.dials.length; i++) {
+                const dial = gameState.dials[i];
+                const x = startX + (i * (dialWidth + spacing));
+                const y = startY;
+                
+                // Dial background
+                drawPixelRect(x, y, dialWidth, dialHeight, COLORS.dialBase);
+                drawPixelRect(x, y, dialWidth, 10, COLORS.dialHighlight);
+                drawPixelRect(x, y + dialHeight - 10, dialWidth, 10, COLORS.dialShadow);
+                
+                // Notches
+                for (let j = 0; j < 12; j++) {
+                    const notchY = y + 10 + ((dialHeight - 20) / 12) * j;
+                    drawPixelRect(x + 5, notchY, 5, 3, COLORS.notch);
+                    drawPixelRect(x + dialWidth - 10, notchY, 5, 3, COLORS.notch);
+                }
+                
+                // Center indicator
+                drawPixelRect(x + dialWidth / 2 - 2, y - 5, 4, 10, COLORS.textDark);
+                
+                // Current value
+                ctx.fillStyle = COLORS.textDark;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(dial.options[dial.currentIndex], x + dialWidth / 2, y + dialHeight / 2);
+                
+                // Up button
+                drawPixelRect(x + 20, y + dialHeight + 20, dialWidth - 40, 30, COLORS.buttonBase);
+                drawPixelRect(x + 20, y + dialHeight + 20, dialWidth - 40, 5, COLORS.buttonHighlight);
+                drawPixelRect(x + 20, y + dialHeight + 45, dialWidth - 40, 5, COLORS.buttonShadow);
+                ctx.fillStyle = COLORS.textLight;
+                ctx.font = '18px sans-serif';
+                ctx.fillText('↑', x + dialWidth / 2, y + dialHeight + 35);
+                
+                // Down button
+                drawPixelRect(x + 20, y - 50, dialWidth - 40, 30, COLORS.buttonBase);
+                drawPixelRect(x + 20, y - 50, dialWidth - 40, 5, COLORS.buttonHighlight);
+                drawPixelRect(x + 20, y - 25, dialWidth - 40, 5, COLORS.buttonShadow);
+                ctx.fillStyle = COLORS.textLight;
+                ctx.fillText('↓', x + dialWidth / 2, y - 35);
+            }
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.textLight;
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 60);
+        }
+        
+        // Draw submit button
+        function drawSubmitButton() {
+            const buttonWidth = 150;
+            const buttonHeight = 50;
+            const x = (canvas.width - buttonWidth) / 2;
+            const y = canvas.height - 100;
+            
+            drawPixelRect(x, y, buttonWidth, buttonHeight, COLORS.buttonBase);
+            drawPixelRect(x, y, buttonWidth, 8, COLORS.buttonHighlight);
+            drawPixelRect(x, y + buttonHeight - 8, buttonWidth, 8, COLORS.buttonShadow);
+            
+            ctx.fillStyle = COLORS.textLight;
+            ctx.font = '22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('CHECK', x + buttonWidth / 2, y + buttonHeight / 2);
+            
+            return { x, y, width: buttonWidth, height: buttonHeight };
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            if (!gameState.restartButtonVisible) return null;
+            
+            const buttonWidth = 150;
+            const buttonHeight = 50;
+            const x = (canvas.width - buttonWidth) / 2;
+            const y = canvas.height - 100;
+            
+            drawPixelRect(x, y, buttonWidth, buttonHeight, COLORS.buttonBase);
+            drawPixelRect(x, y, buttonWidth, 8, COLORS.buttonHighlight);
+            drawPixelRect(x, y + buttonHeight - 8, buttonWidth, 8, COLORS.buttonShadow);
+            
+            ctx.fillStyle = COLORS.textLight;
+            ctx.font = '22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('RESTART', x + buttonWidth / 2, y + buttonHeight / 2);
+            
+            return { x, y, width: buttonWidth, height: buttonHeight };
+        }
+        
+        // Draw feedback
+        function drawFeedback() {
+            if (gameState.feedback !== '') {
+                ctx.fillStyle = gameState.isCorrect ? COLORS.correct : COLORS.incorrect;
+                ctx.font = '28px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(gameState.feedback, canvas.width / 2, 120);
+            }
+        }
+        
+        // Check if answer is correct
+        function checkAnswer() {
+            const currentIndices = gameState.dials.map(dial => dial.currentIndex);
+            const isCorrect = gameState.correctAnswer.every((val, idx) => val === currentIndices[idx]);
+            
+            if (isCorrect) {
+                gameState.feedback = 'Correct! Lock opened!';
+                gameState.isCorrect = true;
+                gameState.lockOpen = true;
+                gameState.restartButtonVisible = true;
+                playCorrectSound();
+            } else {
+                gameState.feedback = 'Incorrect! Try again.';
+                gameState.isCorrect = false;
+                playIncorrectSound();
+            }
+            
+            gameState.feedbackTimer = 3;
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameState.dials.forEach(dial => dial.currentIndex = 0);
+            gameState.feedback = '';
+            gameState.feedbackTimer = 0;
+            gameState.isCorrect = false;
+            gameState.isGameOver = false;
+            gameState.lockAnimationTime = 0;
+            gameState.lockOpen = false;
+            gameState.restartButtonVisible = false;
+        }
+        
+        // Update game state
+        function update(deltaTime) {
+            if (gameState.feedbackTimer > 0) {
+                gameState.feedbackTimer -= deltaTime;
+                if (gameState.feedbackTimer <= 0 && !gameState.isCorrect) {
+                    gameState.feedback = '';
+                }
+            }
+            
+            if (gameState.lockOpen) {
+                gameState.lockAnimationTime += deltaTime;
+                if (gameState.lockAnimationTime > 0.5) {
+                    gameState.isGameOver = true;
+                }
+            }
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawQuestion();
+            drawDials();
+            
+            if (!gameState.isGameOver) {
+                drawSubmitButton();
+            } else {
+                drawRestartButton();
+            }
+            
+            drawFeedback();
+        }
+        
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse click
+        function handleClick(e) {
+            initAudio();
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState.isGameOver) {
+                const restartButton = drawRestartButton();
+                if (restartButton && x >= restartButton.x && x <= restartButton.x + restartButton.width &&
+                    y >= restartButton.y && y <= restartButton.y + restartButton.height) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Check dial button clicks
+            const dialWidth = 140;
+            const dialHeight = 180;
+            const spacing = 40;
+            const totalWidth = (dialWidth * gameState.dials.length) + (spacing * (gameState.dials.length - 1));
+            const startX = (canvas.width - totalWidth) / 2;
+            const startY = canvas.height / 2 - 20;
+            
+            for (let i = 0; i < gameState.dials.length; i++) {
+                const dial = gameState.dials[i];
+                const dialX = startX + (i * (dialWidth + spacing));
+                
+                // Up button
+                if (x >= dialX + 20 && x <= dialX + dialWidth - 20 &&
+                    y >= startY + dialHeight + 20 && y <= startY + dialHeight + 50) {
+                    dial.currentIndex = (dial.currentIndex + 1) % dial.options.length;
+                    playClickSound();
+                }
+                
+                // Down button
+                if (x >= dialX + 20 && x <= dialX + dialWidth - 20 &&
+                    y >= startY - 50 && y <= startY - 20) {
+                    dial.currentIndex = (dial.currentIndex - 1 + dial.options.length) % dial.options.length;
+                    playClickSound();
+                }
+            }
+            
+            // Check submit button click
+            const submitButton = drawSubmitButton();
+            if (submitButton && x >= submitButton.x && x <= submitButton.x + submitButton.width &&
+                y >= submitButton.y && y <= submitButton.y + submitButton.height) {
+                checkAnswer();
+            }
+        }
+        
+        // Initialize game
+        function init() {
+            canvas.addEventListener('click', handleClick);
+            requestAnimationFrame(gameLoop);
+        }
+        
+        init();
+    </script>
+</body>
+</html>

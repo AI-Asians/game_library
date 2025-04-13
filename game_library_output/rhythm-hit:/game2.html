@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Rhythm</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background: #333;
+            color: #fff;
+            border: 3px solid #666;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const colors = {
+            background: '#111122',
+            question: '#EEEEEE',
+            hitZone: '#00AAFF',
+            hitZoneActive: '#55FFFF',
+            correct: '#33FF66',
+            incorrect: '#FF5533',
+            planet1: '#FF5533', // Mars (red)
+            planet2: '#33AAFF', // Neptune (blue)
+            planet3: '#DDDD33', // Venus (yellow)
+            planet4: '#33DDAA'  // Uranus (teal)
+        };
+        
+        // Audio context for simple sounds
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Game state
+        let gameActive = true;
+        let gameResult = null; // null, 'correct', or 'incorrect'
+        
+        // Hit zone
+        const hitZone = {
+            x: canvas.width / 2 - 40,
+            y: canvas.height - 150,
+            width: 80,
+            height: 80,
+            active: false,
+            timeActive: 0
+        };
+        
+        // Answer choices
+        const answers = [
+            { text: "Mars", correct: true, color: colors.planet1, x: -100, y: canvas.height - 150, size: 60, dir: 1, offset: 0 },
+            { text: "Neptune", correct: false, color: colors.planet2, x: canvas.width + 100, y: canvas.height - 150, size: 60, dir: -1, offset: Math.PI * 0.5 },
+            { text: "Venus", correct: false, color: colors.planet3, x: -150, y: canvas.height - 150, size: 60, dir: 1, offset: Math.PI },
+            { text: "Uranus", correct: false, color: colors.planet4, x: canvas.width + 150, y: canvas.height - 150, size: 60, dir: -1, offset: Math.PI * 1.5 }
+        ];
+        
+        // Play a simple beep sound
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Draw a pixelated circle (planet)
+        function drawPixelCircle(x, y, radius, color) {
+            // Pixel size for the chunky effect
+            const pixelSize = 3;
+            
+            ctx.fillStyle = color;
+            for (let py = -radius; py < radius; py += pixelSize) {
+                for (let px = -radius; px < radius; px += pixelSize) {
+                    if (px*px + py*py <= radius*radius) {
+                        ctx.fillRect(Math.floor(x + px), Math.floor(y + py), pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        // Check if an answer is in the hit zone
+        function isInHitZone(answer) {
+            return (
+                answer.x + answer.size/2 > hitZone.x &&
+                answer.x - answer.size/2 < hitZone.x + hitZone.width &&
+                answer.y + answer.size/2 > hitZone.y &&
+                answer.y - answer.size/2 < hitZone.y + hitZone.height
+            );
+        }
+        
+        // Draw the game state
+        function draw(timestamp) {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.question;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 50);
+            
+            // Draw hit zone
+            if (hitZone.active) {
+                hitZone.timeActive++;
+                if (hitZone.timeActive > 5) {
+                    hitZone.active = false;
+                    hitZone.timeActive = 0;
+                }
+                ctx.fillStyle = colors.hitZoneActive;
+            } else {
+                ctx.fillStyle = colors.hitZone;
+            }
+            
+            // Pixelated hit zone border
+            const borderWidth = 4;
+            for (let i = 0; i < borderWidth; i++) {
+                ctx.strokeStyle = i % 2 === 0 ? colors.hitZone : '#1166AA';
+                ctx.strokeRect(
+                    hitZone.x - i, 
+                    hitZone.y - i, 
+                    hitZone.width + i*2, 
+                    hitZone.height + i*2
+                );
+            }
+            
+            // If game is over, show result
+            if (gameResult) {
+                ctx.fillStyle = gameResult === 'correct' ? colors.correct : colors.incorrect;
+                ctx.font = '30px sans-serif';
+                ctx.fillText(
+                    gameResult === 'correct' ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 40
+                );
+                restartBtn.style.display = 'block';
+                return;
+            }
+            
+            // Update and draw answers
+            const time = timestamp * 0.001; // Convert to seconds
+            answers.forEach(answer => {
+                if (gameActive) {
+                    // Move rhythmically
+                    answer.x += answer.dir * 3;
+                    const bounce = Math.sin(time * 4 + answer.offset) * 5;
+                    answer.y = (canvas.height - 150) + bounce;
+                    
+                    // Pulsing size effect
+                    const pulse = Math.sin(time * 4 + answer.offset) * 0.1 + 1;
+                    const currentSize = answer.size * pulse;
+                    
+                    // Loop back when offscreen
+                    if (answer.x > canvas.width + 100 && answer.dir > 0) {
+                        answer.x = -100;
+                    } else if (answer.x < -100 && answer.dir < 0) {
+                        answer.x = canvas.width + 100;
+                    }
+                    
+                    // Highlight if in hit zone
+                    if (isInHitZone(answer)) {
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                        ctx.beginPath();
+                        ctx.arc(answer.x, answer.y, currentSize * 0.6, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+                
+                // Draw planet
+                drawPixelCircle(answer.x, answer.y, answer.size/2 * (isInHitZone(answer) ? 1.1 : 1), answer.color);
+                
+                // Draw text label
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(answer.text, answer.x, answer.y + answer.size/2 + 20);
+            });
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            draw(timestamp);
+            if (gameActive) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Handle input events
+        canvas.addEventListener('click', function(event) {
+            if (!gameActive) return;
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // Check if hit zone was clicked
+            if (x >= hitZone.x && x <= hitZone.x + hitZone.width &&
+                y >= hitZone.y && y <= hitZone.y + hitZone.height) {
+                
+                hitZone.active = true;
+                playSound(220, 0.1);
+                
+                // Check if any answer is in the hit zone
+                let foundInZone = false;
+                
+                answers.forEach(answer => {
+                    if (isInHitZone(answer)) {
+                        foundInZone = true;
+                        gameActive = false;
+                        if (answer.correct) {
+                            gameResult = 'correct';
+                            playSound(440, 0.3, 'square');
+                            setTimeout(() => playSound(660, 0.3, 'square'), 100);
+                        } else {
+                            gameResult = 'incorrect';
+                            playSound(150, 0.5, 'sawtooth');
+                        }
+                    }
+                });
+                
+                if (!foundInZone) {
+                    playSound(110, 0.1, 'triangle');
+                }
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            // Reset game state
+            gameActive = true;
+            gameResult = null;
+            
+            // Reset answer positions
+            answers[0].x = -100;
+            answers[1].x = canvas.width + 100;
+            answers[2].x = -150;
+            answers[3].x = canvas.width + 150;
+            
+            restartBtn.style.display = 'none';
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        });
+        
+        // Start the game
+        gameLoop(0);
+    </script>
+</body>
+</html>

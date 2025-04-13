@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Stack Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: 2px solid #777;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+        #restart:hover {
+            background-color: #666;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Game setup
+        const isMobile = window.innerWidth < 600;
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Canvas dimensions
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit palette
+        const COLORS = {
+            background: '#0A0A2A',
+            gridLines: '#1A1A4A',
+            question: '#FFFFFF',
+            correct: '#58D058',
+            incorrect: '#FF5555',
+            shadow: 'rgba(255,255,255,0.2)',
+            blockBorder: '#000000',
+            textHighlight: '#FFFF00'
+        };
+        
+        // Planet options
+        const planets = [
+            { name: "Mars", correct: true, color: "#D83C27", symbol: "♂" },
+            { name: "Venus", correct: false, color: "#EDB120", symbol: "♀" },
+            { name: "Jupiter", correct: false, color: "#E0A080", symbol: "♃" },
+            { name: "Neptune", correct: false, color: "#3E9ACD", symbol: "♆" }
+        ];
+        
+        // Shuffle planets
+        const shuffledPlanets = [...planets].sort(() => Math.random() - 0.5);
+        
+        // Game variables
+        let blocks = [];
+        let stackBlocks = [];
+        let gameOver = false;
+        let nextBlockTimer = 0;
+        let blockSpawnRate = 800; // ms
+        let lastTime = 0;
+        let selectedBlock = null;
+        const blockSize = isMobile ? 70 : 120;
+        const gridCellSize = isMobile ? 20 : 30;
+        const questionHeight = isMobile ? 60 : 80;
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'land') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = 150;
+                gainNode.gain.value = 0.2;
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(550, audioContext.currentTime + 0.2);
+                gainNode.gain.value = 0.2;
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(196, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(175, audioContext.currentTime + 0.2);
+                gainNode.gain.value = 0.2;
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        }
+        
+        // Create a falling block
+        function createBlock() {
+            if (blocks.length >= shuffledPlanets.length) return;
+            
+            const planet = shuffledPlanets[blocks.length];
+            blocks.push({
+                x: Math.random() * (canvas.width - blockSize),
+                y: -blockSize,
+                width: blockSize,
+                height: blockSize,
+                speed: 2 + Math.random() * 2,
+                planet: planet,
+                particles: []
+            });
+        }
+        
+        // Draw the grid background
+        function drawGrid() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = COLORS.gridLines;
+            ctx.lineWidth = 1;
+            
+            // Draw vertical lines
+            for (let x = 0; x < canvas.width; x += gridCellSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, questionHeight);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            // Draw horizontal lines
+            for (let y = questionHeight; y < canvas.height; y += gridCellSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, questionHeight);
+            
+            ctx.fillStyle = COLORS.question;
+            ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, questionHeight / 2 + 5);
+        }
+        
+        // Draw a block
+        function drawBlock(block, inStack = false) {
+            // Draw shadow for falling blocks
+            if (!inStack && !gameOver) {
+                ctx.fillStyle = COLORS.shadow;
+                ctx.fillRect(block.x, canvas.height - stackBlocks.length * blockSize - blockSize, blockSize, blockSize);
+            }
+            
+            // Draw block background
+            ctx.fillStyle = block.planet.color;
+            ctx.fillRect(block.x, block.y, block.width, block.height);
+            
+            // Draw block border with pixel effect
+            ctx.strokeStyle = COLORS.blockBorder;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(block.x, block.y, block.width, block.height);
+            
+            // Draw inner pixel details
+            const pixelSize = isMobile ? 4 : 6;
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    if ((i + j) % 2 === 0) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                        ctx.fillRect(
+                            block.x + block.width * 0.2 + i * pixelSize,
+                            block.y + block.height * 0.2 + j * pixelSize,
+                            pixelSize, pixelSize
+                        );
+                    }
+                }
+            }
+            
+            // Planet symbol
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${isMobile ? 24 : 36}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(block.planet.symbol, block.x + block.width / 2, block.y + block.height / 2 + 5);
+            
+            // Planet name
+            ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+            ctx.fillText(block.planet.name, block.x + block.width / 2, block.y + block.height * 0.8);
+            
+            // Draw particles
+            block.particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            });
+        }
+        
+        // Create particles for landing effect
+        function createParticles(block) {
+            for (let i = 0; i < 10; i++) {
+                block.particles.push({
+                    x: block.x + Math.random() * block.width,
+                    y: block.y + block.height - 5,
+                    vx: Math.random() * 2 - 1,
+                    vy: -Math.random() * 3 - 2,
+                    size: Math.random() * 4 + 2,
+                    color: 'rgba(255,255,255,0.7)',
+                    life: 20
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles(block) {
+            block.particles = block.particles.filter(particle => {
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.life--;
+                return particle.life > 0;
+            });
+        }
+        
+        // Check for collision with stack
+        function checkStackCollision(block) {
+            const stackTop = canvas.height - stackBlocks.length * blockSize;
+            if (block.y + block.height >= stackTop) {
+                block.y = stackTop - block.height;
+                stackBlocks.push(block);
+                playSound('land');
+                createParticles(block);
+                blocks = blocks.filter(b => b !== block);
+                return true;
+            }
+            return false;
+        }
+        
+        // Handle block selection
+        function selectBlock(block) {
+            selectedBlock = block;
+            if (block.planet.correct) {
+                playSound('correct');
+                gameOver = true;
+                setTimeout(() => {
+                    showResult(true);
+                }, 500);
+            } else {
+                playSound('wrong');
+                gameOver = true;
+                setTimeout(() => {
+                    showResult(false);
+                }, 500);
+            }
+        }
+        
+        // Show game result
+        function showResult(isCorrect) {
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = isCorrect ? COLORS.correct : COLORS.incorrect;
+            ctx.fillText(
+                isCorrect ? 'Correct!' : 'Wrong!', 
+                canvas.width / 2, 
+                canvas.height / 2
+            );
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        // Reset game
+        function resetGame() {
+            blocks = [];
+            stackBlocks = [];
+            selectedBlock = null;
+            gameOver = false;
+            nextBlockTimer = 0;
+            restartBtn.style.display = 'none';
+            // Re-shuffle planets
+            shuffledPlanets.sort(() => Math.random() - 0.5);
+        }
+        
+        // Check for clicks on blocks
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Check stack blocks first (from top to bottom)
+            for (let i = stackBlocks.length - 1; i >= 0; i--) {
+                const block = stackBlocks[i];
+                if (
+                    clickX >= block.x && 
+                    clickX <= block.x + block.width && 
+                    clickY >= block.y && 
+                    clickY <= block.y + block.height
+                ) {
+                    selectBlock(block);
+                    return;
+                }
+            }
+            
+            // Then check falling blocks
+            for (const block of blocks) {
+                if (
+                    clickX >= block.x && 
+                    clickX <= block.x + block.width && 
+                    clickY >= block.y && 
+                    clickY <= block.y + block.height
+                ) {
+                    selectBlock(block);
+                    return;
+                }
+            }
+        });
+        
+        // Add restart button handler
+        restartBtn.addEventListener('click', resetGame);
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Create new blocks
+            if (!gameOver) {
+                nextBlockTimer += deltaTime;
+                if (nextBlockTimer >= blockSpawnRate && blocks.length + stackBlocks.length < shuffledPlanets.length) {
+                    createBlock();
+                    nextBlockTimer = 0;
+                }
+            }
+            
+            // Draw background
+            drawGrid();
+            drawQuestion();
+            
+            // Update block positions
+            if (!gameOver) {
+                for (const block of blocks) {
+                    block.y += block.speed;
+                    checkStackCollision(block);
+                }
+            }
+            
+            // Draw shadow for next landing
+            if (blocks.length > 0 && !gameOver) {
+                const nextBlock = blocks[0];
+                ctx.fillStyle = COLORS.shadow;
+                ctx.fillRect(nextBlock.x, canvas.height - stackBlocks.length * blockSize - blockSize, blockSize, blockSize);
+            }
+            
+            // Draw stack blocks
+            stackBlocks.forEach(block => {
+                updateParticles(block);
+                drawBlock(block, true);
+            });
+            
+            // Draw falling blocks
+            blocks.forEach(block => {
+                updateParticles(block);
+                drawBlock(block);
+            });
+            
+            // Highlight selected block
+            if (selectedBlock) {
+                ctx.strokeStyle = selectedBlock.planet.correct ? COLORS.correct : COLORS.incorrect;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(
+                    selectedBlock.x - 4, 
+                    selectedBlock.y - 4, 
+                    selectedBlock.width + 8, 
+                    selectedBlock.height + 8
+                );
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        resetGame();
+        createBlock();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wave-Tap Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 3px solid #666;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Determine if mobile based on screen size
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors - 8-bit palette
+        const COLORS = {
+            background: '#0a385c',
+            question: '#ffffff',
+            correctWave: '#7cfc00',
+            wrongWave1: '#ff5a5a',
+            wrongWave2: '#ffaa00',
+            wrongWave3: '#00aaff',
+            fish1: '#ffff55',
+            fish2: '#55ffff',
+            indicator: '#ffffff'
+        };
+        
+        // Game variables
+        let waves = [];
+        let gameActive = true;
+        let gameOver = false;
+        let lastTime = 0;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Answer options
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle answers
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+        
+        const shuffledAnswers = shuffleArray([...answers]);
+        
+        // Wave class
+        class Wave {
+            constructor(y, speed, text, correct, color) {
+                this.x = -200;
+                this.y = y;
+                this.width = canvas.width + 400;
+                this.height = 70;
+                this.speed = speed;
+                this.text = text;
+                this.correct = correct;
+                this.color = color;
+                this.amplitude = 10;
+                this.frequency = 0.02;
+                this.fishes = [];
+                this.clicked = false;
+                this.splash = null;
+                
+                // Add random fish to the wave
+                const fishCount = 2 + Math.floor(Math.random() * 3);
+                for (let i = 0; i < fishCount; i++) {
+                    this.fishes.push({
+                        x: Math.random() * this.width,
+                        size: 8 + Math.floor(Math.random() * 5),
+                        color: Math.random() > 0.5 ? COLORS.fish1 : COLORS.fish2,
+                        offset: Math.random() * Math.PI * 2
+                    });
+                }
+            }
+            
+            update(deltaTime) {
+                if (gameActive && !this.clicked) {
+                    this.x += this.speed * deltaTime;
+                    
+                    // Reset wave position if it goes off screen
+                    if (this.x > canvas.width) {
+                        this.x = -this.width;
+                    }
+                }
+                
+                // Update splash if exists
+                if (this.splash) {
+                    this.splash.time += deltaTime;
+                    if (this.splash.time > 500) {
+                        this.splash = null;
+                    }
+                }
+            }
+            
+            draw() {
+                ctx.save();
+                
+                // Draw wave base
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                
+                // Start at left side
+                ctx.moveTo(this.x, this.y);
+                
+                // Draw wavy top
+                for (let i = 0; i < this.width; i += 10) {
+                    const x = this.x + i;
+                    const yOffset = Math.sin((x + lastTime * 0.1) * this.frequency) * this.amplitude;
+                    ctx.lineTo(x, this.y + yOffset);
+                }
+                
+                // Complete the rectangle
+                ctx.lineTo(this.x + this.width, this.y);
+                ctx.lineTo(this.x + this.width, this.y + this.height);
+                ctx.lineTo(this.x, this.y + this.height);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Draw fish
+                this.fishes.forEach(fish => {
+                    const fishX = (this.x + fish.x) % this.width;
+                    const fishY = this.y + Math.sin((fishX + lastTime * 0.1) * this.frequency) * this.amplitude + 25;
+                    
+                    // Draw pixelated fish
+                    ctx.fillStyle = fish.color;
+                    ctx.fillRect(fishX, fishY, fish.size, fish.size / 2);
+                    ctx.fillRect(fishX + fish.size, fishY - fish.size / 4, fish.size / 2, fish.size / 4);
+                });
+                
+                // Draw answer text
+                ctx.fillStyle = '#000000';
+                ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+                ctx.textAlign = 'center';
+                // Find center of visible part of wave
+                const visibleCenterX = Math.max(this.x + this.width/2, canvas.width/2);
+                const textY = this.y + 40;
+                ctx.fillText(this.text, visibleCenterX, textY);
+                
+                // Draw indicator arrow for correct answer
+                if (this.correct) {
+                    const arrowX = canvas.width - 30;
+                    const arrowY = this.y + this.height / 2;
+                    
+                    ctx.fillStyle = COLORS.indicator;
+                    ctx.beginPath();
+                    ctx.moveTo(arrowX, arrowY - 10);
+                    ctx.lineTo(arrowX, arrowY + 10);
+                    ctx.lineTo(arrowX - 15, arrowY);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                
+                // Draw splash effect
+                if (this.splash) {
+                    const splashSize = this.splash.time / 2;
+                    ctx.fillStyle = 'rgba(255, 255, 255, ' + (1 - this.splash.time/500) + ')';
+                    
+                    // Draw pixelated splash
+                    for (let i = 0; i < 8; i++) {
+                        const angle = Math.PI * 2 * (i / 8);
+                        const splashX = this.splash.x + Math.cos(angle) * splashSize;
+                        const splashY = this.splash.y + Math.sin(angle) * splashSize;
+                        ctx.fillRect(splashX, splashY, 6, 6);
+                    }
+                }
+                
+                ctx.restore();
+            }
+            
+            checkClick(x, y) {
+                // Check if click is on wave
+                if (x >= this.x && x <= this.x + this.width) {
+                    // Get Y position with wave effect
+                    const waveY = this.y + Math.sin((x + lastTime * 0.1) * this.frequency) * this.amplitude;
+                    
+                    if (y >= waveY && y <= waveY + this.height) {
+                        this.clicked = true;
+                        this.splash = {
+                            x: x,
+                            y: y,
+                            time: 0
+                        };
+                        
+                        // Play sound
+                        if (this.correct) {
+                            playSound(440, 0.2, 'square');
+                        } else {
+                            playSound(220, 0.2, 'sawtooth');
+                        }
+                        
+                        endGame(this.correct);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameActive = true;
+            gameOver = false;
+            waves = [];
+            restartBtn.style.display = 'none';
+            
+            // Shuffle answers again for restart
+            const shuffledAnswers = shuffleArray([...answers]);
+            
+            // Create waves with different speeds
+            const waveCount = 4;
+            const waveColors = [COLORS.correctWave, COLORS.wrongWave1, COLORS.wrongWave2, COLORS.wrongWave3];
+            
+            for (let i = 0; i < waveCount; i++) {
+                const answer = shuffledAnswers[i];
+                const y = 150 + i * (canvas.height - 200) / waveCount;
+                const speed = 0.05 + Math.random() * 0.05; // Varying speeds
+                
+                // Use the right color for the right answer
+                const color = answer.correct ? COLORS.correctWave : waveColors[i % 3 + 1];
+                
+                waves.push(new Wave(y, speed, answer.text, answer.correct, color));
+            }
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            // Calculate delta time
+            if (!lastTime) lastTime = timestamp;
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = isMobile ? '20px sans-serif' : '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 80);
+            
+            // Update and draw waves
+            waves.forEach(wave => {
+                wave.update(deltaTime);
+                wave.draw();
+            });
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = COLORS.question;
+                ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameResult ? 'Correct!' : 'Wrong!', canvas.width / 2, canvas.height / 2);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/tap
+        function handleClick(event) {
+            if (!gameActive) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const clickX = (event.clientX - rect.left) * scaleX;
+            const clickY = (event.clientY - rect.top) * scaleY;
+            
+            let waveClicked = false;
+            
+            for (const wave of waves) {
+                if (wave.checkClick(clickX, clickY)) {
+                    waveClicked = true;
+                    break;
+                }
+            }
+            
+            if (waveClicked) {
+                // Play click sound
+                playSound(660, 0.05, 'square');
+            }
+        }
+        
+        // End game
+        let gameResult = false;
+        function endGame(correct) {
+            gameActive = false;
+            gameOver = true;
+            gameResult = correct;
+            
+            // Show restart button after a short delay
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+            }, 1000);
+        }
+        
+        // Play sound
+        function playSound(frequency, duration, type = 'square') {
+            try {
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = frequency;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.error("Sound couldn't play:", e);
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', initGame);
+        
+        // Start game
+        initGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

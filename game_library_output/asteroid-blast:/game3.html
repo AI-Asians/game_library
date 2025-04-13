@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Asteroid-Blast Educational Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #000;
+      overflow: hidden;
+    }
+    canvas {
+      border: 2px solid #444;
+      image-rendering: pixelated;
+    }
+    .game-container {
+      position: relative;
+    }
+    .restart-button {
+      position: absolute;
+      display: none;
+      left: 50%;
+      top: 60%;
+      transform: translateX(-50%);
+      padding: 8px 16px;
+      background-color: #333;
+      color: #fff;
+      border: 2px solid #666;
+      font-family: sans-serif;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <button class="restart-button" id="restartButton">RESTART</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartButton = document.getElementById('restartButton');
+    
+    // Device detection and canvas sizing
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game colors (limited palette for 8-bit feel)
+    const COLORS = {
+      background: '#000022',
+      ship: '#22dd88',
+      shipDetail: '#0088ff',
+      laser: '#ff4466',
+      asteroid1: '#aa6622',
+      asteroid2: '#8844cc',
+      asteroid3: '#2277cc',
+      asteroid4: '#dd4422',
+      explosion: ['#ffff00', '#ff6600', '#dd2200'],
+      text: '#ffffff',
+      questionBackground: '#000033'
+    };
+
+    // Game variables
+    let ship = {
+      x: canvas.width / 2,
+      y: canvas.height - 60,
+      width: 32,
+      height: 32,
+      speed: 5,
+      isMovingLeft: false,
+      isMovingRight: false,
+      shootCooldown: 0
+    };
+    
+    let lasers = [];
+    let asteroids = [];
+    let explosions = [];
+    let gameOver = false;
+    let correct = false;
+    
+    // The one MCQ question
+    const question = "What is the capital of France?";
+    const answers = [
+      { text: "Paris", correct: true },
+      { text: "London", correct: false },
+      { text: "Berlin", correct: false },
+      { text: "Rome", correct: false }
+    ];
+    
+    // Sound effects (simple beep sounds)
+    function playSound(type) {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      switch(type) {
+        case 'laser':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.1);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+          oscillator.start();
+          oscillator.stop(audioContext.currentTime + 0.1);
+          break;
+        case 'explosion':
+          oscillator.type = 'sawtooth';
+          oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(55, audioContext.currentTime + 0.3);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+          oscillator.start();
+          oscillator.stop(audioContext.currentTime + 0.3);
+          break;
+        case 'correct':
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.2);
+          gainNode.gain.linearRampToValueAtTime(0.5, audioContext.currentTime + 0.1);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+          oscillator.start();
+          oscillator.stop(audioContext.currentTime + 0.3);
+          break;
+        case 'wrong':
+          oscillator.type = 'triangle';
+          oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.2);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+          oscillator.start();
+          oscillator.stop(audioContext.currentTime + 0.2);
+          break;
+      }
+    }
+    
+    // Initialize game
+    function initGame() {
+      gameOver = false;
+      correct = false;
+      ship.x = canvas.width / 2;
+      lasers = [];
+      asteroids = [];
+      explosions = [];
+      
+      // Shuffle answers
+      const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+      
+      // Create asteroids with answers
+      for (let i = 0; i < shuffledAnswers.length; i++) {
+        let size = Math.floor(Math.random() * 20) + 40;
+        asteroids.push({
+          x: Math.random() * (canvas.width - size * 2) + size,
+          y: Math.random() * -300,
+          size: size,
+          speedX: (Math.random() - 0.5) * 1.5,
+          speedY: Math.random() * 1.5 + 0.5,
+          text: shuffledAnswers[i].text,
+          correct: shuffledAnswers[i].correct,
+          color: COLORS[`asteroid${i+1}`]
+        });
+      }
+      
+      restartButton.style.display = 'none';
+    }
+    
+    // Input handling
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') ship.isMovingLeft = true;
+      if (e.key === 'ArrowRight') ship.isMovingRight = true;
+      if (e.key === ' ' && !gameOver && ship.shootCooldown <= 0) {
+        lasers.push({
+          x: ship.x,
+          y: ship.y - 15,
+          speed: 10,
+          width: 4,
+          height: 16
+        });
+        ship.shootCooldown = 10;
+        playSound('laser');
+      }
+      if (e.key === 'r' && gameOver) {
+        initGame();
+      }
+    });
+    
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft') ship.isMovingLeft = false;
+      if (e.key === 'ArrowRight') ship.isMovingRight = false;
+    });
+    
+    // Touch controls for mobile
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+      
+      if (touchX < canvas.width / 2) {
+        ship.isMovingLeft = true;
+        ship.isMovingRight = false;
+      } else {
+        ship.isMovingLeft = false;
+        ship.isMovingRight = true;
+      }
+      
+      if (ship.shootCooldown <= 0 && !gameOver) {
+        lasers.push({
+          x: ship.x,
+          y: ship.y - 15,
+          speed: 10,
+          width: 4,
+          height: 16
+        });
+        ship.shootCooldown = 10;
+        playSound('laser');
+      }
+    });
+    
+    canvas.addEventListener('touchend', () => {
+      ship.isMovingLeft = false;
+      ship.isMovingRight = false;
+    });
+    
+    restartButton.addEventListener('click', () => {
+      initGame();
+    });
+    
+    // Game logic update
+    function update() {
+      if (gameOver) return;
+      
+      // Ship movement
+      if (ship.isMovingLeft) ship.x -= ship.speed;
+      if (ship.isMovingRight) ship.x += ship.speed;
+      
+      // Keep ship in bounds
+      if (ship.x < ship.width / 2) ship.x = ship.width / 2;
+      if (ship.x > canvas.width - ship.width / 2) ship.x = canvas.width - ship.width / 2;
+      
+      // Update shoot cooldown
+      if (ship.shootCooldown > 0) ship.shootCooldown--;
+      
+      // Move lasers
+      for (let i = lasers.length - 1; i >= 0; i--) {
+        lasers[i].y -= lasers[i].speed;
+        
+        // Remove lasers that go off screen
+        if (lasers[i].y < 0) {
+          lasers.splice(i, 1);
+          continue;
+        }
+        
+        // Collision detection
+        for (let j = asteroids.length - 1; j >= 0; j--) {
+          const laser = lasers[i];
+          const asteroid = asteroids[j];
+          
+          if (
+            laser.x < asteroid.x + asteroid.size &&
+            laser.x + laser.width > asteroid.x - asteroid.size &&
+            laser.y < asteroid.y + asteroid.size &&
+            laser.y + laser.height > asteroid.y - asteroid.size
+          ) {
+            // Create explosion
+            explosions.push({
+              x: asteroid.x,
+              y: asteroid.y,
+              size: asteroid.size,
+              frame: 0,
+              maxFrames: 10
+            });
+            
+            // Check if correct answer
+            if (asteroid.correct) {
+              playSound('correct');
+              correct = true;
+              gameOver = true;
+            } else {
+              playSound('wrong');
+              gameOver = true;
+            }
+            
+            // Remove the laser and asteroid
+            asteroids.splice(j, 1);
+            lasers.splice(i, 1);
+            playSound('explosion');
+            break;
+          }
+        }
+      }
+      
+      // Move asteroids
+      for (let i = 0; i < asteroids.length; i++) {
+        asteroids[i].x += asteroids[i].speedX;
+        asteroids[i].y += asteroids[i].speedY;
+        
+        // Bounce off the edges
+        if (asteroids[i].x < asteroids[i].size || asteroids[i].x > canvas.width - asteroids[i].size) {
+          asteroids[i].speedX *= -1;
+        }
+        
+        // If asteroid goes below screen, move it back to top
+        if (asteroids[i].y > canvas.height + asteroids[i].size) {
+          asteroids[i].y = -asteroids[i].size;
+          asteroids[i].x = Math.random() * (canvas.width - asteroids[i].size * 2) + asteroids[i].size;
+        }
+      }
+      
+      // Update explosions
+      for (let i = explosions.length - 1; i >= 0; i--) {
+        explosions[i].frame++;
+        if (explosions[i].frame >= explosions[i].maxFrames) {
+          explosions.splice(i, 1);
+        }
+      }
+      
+      // Show restart button if game over
+      if (gameOver) {
+        restartButton.style.display = 'block';
+      }
+    }
+    
+    // Rendering functions
+    function drawPixelatedShip(x, y) {
+      // Ship body
+      ctx.fillStyle = COLORS.ship;
+      // Main body
+      ctx.fillRect(x - 16, y - 8, 32, 24);
+      ctx.fillRect(x - 8, y - 16, 16, 8);
+      
+      // Ship details
+      ctx.fillStyle = COLORS.shipDetail;
+      ctx.fillRect(x - 14, y + 4, 6, 6);
+      ctx.fillRect(x + 8, y + 4, 6, 6);
+      ctx.fillRect(x - 4, y - 12, 8, 4);
+      
+      // Thrusters
+      ctx.fillStyle = '#ff4422';
+      ctx.fillRect(x - 12, y + 16, 6, 4 + Math.floor(Math.random() * 3));
+      ctx.fillRect(x + 6, y + 16, 6, 4 + Math.floor(Math.random() * 3));
+    }
+    
+    function drawPixelatedAsteroid(asteroid) {
+      ctx.fillStyle = asteroid.color;
+      
+      // Draw a pixelated asteroid
+      ctx.beginPath();
+      const segments = 8;
+      const variation = asteroid.size / 4;
+      
+      for (let i = 0; i < segments; i++) {
+        const angle = (i / segments) * Math.PI * 2;
+        const radius = asteroid.size - Math.floor(Math.random() * variation);
+        const x = asteroid.x + Math.cos(angle) * radius;
+        const y = asteroid.y + Math.sin(angle) * radius;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      
+      ctx.closePath();
+      ctx.fill();
+      
+      // Draw answer text
+      ctx.fillStyle = COLORS.text;
+      ctx.font = `${Math.floor(asteroid.size / 3)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(asteroid.text, asteroid.x, asteroid.y);
+    }
+    
+    function drawPixelatedLaser(laser) {
+      ctx.fillStyle = COLORS.laser;
+      ctx.fillRect(laser.x - laser.width / 2, laser.y, laser.width, laser.height);
+      
+      // Laser trail
+      ctx.fillStyle = 'rgba(255, 68, 102, 0.5)';
+      ctx.fillRect(laser.x - laser.width / 2, laser.y + laser.height, laser.width, 8);
+    }
+    
+    function drawPixelatedExplosion(explosion) {
+      const particles = 12;
+      const progress = explosion.frame / explosion.maxFrames;
+      
+      for (let i = 0; i < particles; i++) {
+        const angle = (i / particles) * Math.PI * 2;
+        const distance = explosion.size * progress * 1.5;
+        const x = explosion.x + Math.cos(angle) * distance;
+        const y = explosion.y + Math.sin(angle) * distance;
+        const particleSize = explosion.size / 3 * (1 - progress);
+        
+        // Choose color based on explosion frame
+        const colorIndex = Math.min(
+          Math.floor(explosion.frame / (explosion.maxFrames / COLORS.explosion.length)),
+          COLORS.explosion.length - 1
+        );
+        ctx.fillStyle = COLORS.explosion[colorIndex];
+        
+        // Draw pixelated particle
+        ctx.fillRect(
+          Math.floor(x - particleSize / 2),
+          Math.floor(y - particleSize / 2),
+          Math.floor(particleSize),
+          Math.floor(particleSize)
+        );
+      }
+    }
+    
+    function draw() {
+      // Clear screen
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw Question
+      ctx.fillStyle = COLORS.questionBackground;
+      ctx.fillRect(0, 0, canvas.width, 50);
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(question, canvas.width / 2, 25);
+      
+      // Draw ship
+      drawPixelatedShip(ship.x, ship.y);
+      
+      // Draw lasers
+      lasers.forEach(drawPixelatedLaser);
+      
+      // Draw asteroids
+      asteroids.forEach(drawPixelatedAsteroid);
+      
+      // Draw explosions
+      explosions.forEach(drawPixelatedExplosion);
+      
+      // Draw game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = correct ? '#44ff44' : '#ff4444';
+        ctx.font = '32px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+          correct ? 'CORRECT!' : 'WRONG!', 
+          canvas.width / 2, 
+          canvas.height / 3
+        );
+        
+        if (correct) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '24px sans-serif';
+          ctx.fillText(
+            'Paris is the capital of France', 
+            canvas.width / 2, 
+            canvas.height / 2
+          );
+        }
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game
+    initGame();
+    gameLoop();
+  </script>
+</body>
+</html>

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quest: Slot Machine Edition</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            background: #000;
+            display: block;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = ctx = canvas.getContext('2d');
+        
+        // Game colors (8-bit style palette)
+        const COLORS = {
+            background: '#0f380f',  // Dark green (Game Boy style)
+            text: '#8bac0f',        // Light green
+            highlight: '#9bbc0f',   // Lighter green
+            border: '#306230',      // Medium green
+            button: '#e76e55',      // Red-orange
+            buttonPressed: '#8f3f35', // Darker red-orange
+            arrow: '#ffff00',       // Yellow
+            correct: '#00ff00',     // Bright green
+            incorrect: '#ff0000',   // Bright red
+            slot: '#306230'         // Medium green
+        };
+
+        // Game state
+        const state = {
+            answers: ['Berlin', 'London', 'Paris', 'Madrid', 'Rome', 'Amsterdam', 'Brussels'],
+            correctAnswer: 'Paris',
+            currentIndex: 0,
+            slotSpeed: 13,          // Frames between slot movement
+            slotTimer: 0,
+            gameOver: false,
+            isCorrect: null,
+            buttonPressed: false,
+            restartButton: {
+                x: 350,
+                y: 400,
+                width: 100,
+                height: 40
+            },
+            stopButton: {
+                x: 550,
+                y: 320,
+                width: 120,
+                height: 120
+            },
+            countdown: 10,          // 10 second countdown
+            countdownTimer: 0,
+            arrowFlash: 0           // For flashing arrow effect
+        };
+
+        // Sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSlotTick() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.05);
+        }
+        
+        function playButtonPress() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(165.4, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.15);
+        }
+        
+        function playResult(isCorrect) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = 'square';
+            
+            if (isCorrect) {
+                // Ascending sound for correct
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(554, audioCtx.currentTime + 0.2);
+            } else {
+                // Descending sound for incorrect
+                oscillator.frequency.setValueAtTime(277, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(196, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(165, audioCtx.currentTime + 0.2);
+            }
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // Draw the slot machine
+        function drawSlotMachine() {
+            // Main slot machine body
+            ctx.fillStyle = COLORS.border;
+            ctx.fillRect(250, 250, 300, 140);
+            
+            // Inner slot window
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(265, 280, 270, 80);
+            
+            // Pixelated border around slot window
+            ctx.fillStyle = COLORS.slot;
+            // Top border with pixels
+            for (let x = 265; x < 535; x += 10) {
+                ctx.fillRect(x, 280, 8, 8);
+            }
+            // Bottom border with pixels
+            for (let x = 265; x < 535; x += 10) {
+                ctx.fillRect(x, 352, 8, 8);
+            }
+            // Left border with pixels
+            for (let y = 280; y < 360; y += 10) {
+                ctx.fillRect(265, y, 8, 8);
+            }
+            // Right border with pixels
+            for (let y = 280; y < 360; y += 10) {
+                ctx.fillRect(527, y, 8, 8);
+            }
+            
+            // Display the current answer in the slot
+            ctx.font = '32px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText(state.answers[state.currentIndex], 400, 330);
+            
+            // Draw the flashing arrow pointer to indicate where to stop
+            state.arrowFlash = (state.arrowFlash + 1) % 40;
+            if (state.arrowFlash < 20 || state.gameOver) {
+                ctx.fillStyle = COLORS.arrow;
+                // Draw a pixelated arrow pointing to the slot
+                ctx.fillRect(225, 310, 5, 5);
+                ctx.fillRect(220, 315, 5, 5);
+                ctx.fillRect(215, 320, 5, 5);
+                ctx.fillRect(220, 325, 5, 5);
+                ctx.fillRect(225, 330, 5, 5);
+                ctx.fillRect(230, 315, 5, 10);
+                ctx.fillRect(235, 320, 5, 5);
+            }
+        }
+        
+        // Draw the stop button
+        function drawStopButton() {
+            const btn = state.stopButton;
+            
+            // Button base (pixelated arcade style)
+            ctx.fillStyle = state.buttonPressed ? COLORS.buttonPressed : COLORS.button;
+            ctx.fillRect(btn.x, btn.y, btn.width, btn.height);
+            
+            // Button highlight/shadow for 3D effect
+            if (!state.buttonPressed) {
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillRect(btn.x + 5, btn.y + 5, btn.width - 10, 15);
+            }
+            
+            // Button border (pixelated)
+            ctx.fillStyle = '#000';
+            ctx.fillRect(btn.x, btn.y, btn.width, 5);
+            ctx.fillRect(btn.x, btn.y, 5, btn.height);
+            ctx.fillRect(btn.x + btn.width - 5, btn.y, 5, btn.height);
+            ctx.fillRect(btn.x, btn.y + btn.height - 5, btn.width, 5);
+            
+            // Button text
+            ctx.font = '24px Arial';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.fillText('STOP', btn.x + btn.width/2, btn.y + btn.height/2 + 10);
+        }
+        
+        // Draw the restart button
+        function drawRestartButton() {
+            const btn = state.restartButton;
+            
+            ctx.fillStyle = COLORS.button;
+            ctx.fillRect(btn.x, btn.y, btn.width, btn.height);
+            
+            // Button highlight for 3D effect
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.fillRect(btn.x + 3, btn.y + 3, btn.width - 6, 8);
+            
+            // Button border (pixelated)
+            ctx.fillStyle = '#000';
+            ctx.fillRect(btn.x, btn.y, btn.width, 3);
+            ctx.fillRect(btn.x, btn.y, 3, btn.height);
+            ctx.fillRect(btn.x + btn.width - 3, btn.y, 3, btn.height);
+            ctx.fillRect(btn.x, btn.y + btn.height - 3, btn.width, 3);
+            
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.fillText('RESTART', btn.x + btn.width/2, btn.y + btn.height/2 + 5);
+        }
+
+        // Draw the timer/countdown
+        function drawTimer() {
+            const timeLeft = Math.ceil(state.countdown - (state.countdownTimer / 60));
+            
+            // Timer background
+            ctx.fillStyle = COLORS.border;
+            ctx.fillRect(350, 200, 100, 30);
+            
+            // Timer value
+            ctx.font = '20px Arial';
+            ctx.fillStyle = timeLeft <= 3 ? COLORS.incorrect : COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText(`Time: ${timeLeft}s`, 400, 222);
+        }
+
+        // Check if player clicked on a button
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            // Check if stop button was clicked
+            const stopBtn = state.stopButton;
+            if (!state.gameOver && 
+                x >= stopBtn.x && x <= stopBtn.x + stopBtn.width &&
+                y >= stopBtn.y && y <= stopBtn.y + stopBtn.height) {
+                
+                state.buttonPressed = true;
+                playButtonPress();
+                
+                // Check if the answer is correct
+                state.isCorrect = (state.answers[state.currentIndex] === state.correctAnswer);
+                state.gameOver = true;
+                
+                playResult(state.isCorrect);
+                
+                // Reset button press after a short delay
+                setTimeout(() => {
+                    state.buttonPressed = false;
+                }, 200);
+            }
+            
+            // Check if restart button was clicked when game is over
+            const restartBtn = state.restartButton;
+            if (state.gameOver &&
+                x >= restartBtn.x && x <= restartBtn.x + restartBtn.width &&
+                y >= restartBtn.y && y <= restartBtn.y + restartBtn.height) {
+                
+                resetGame();
+            }
+        }
+
+        // Reset the game to initial state
+        function resetGame() {
+            state.currentIndex = 0;
+            state.gameOver = false;
+            state.isCorrect = null;
+            state.buttonPressed = false;
+            state.countdownTimer = 0;
+            playButtonPress();
+        }
+
+        // Main update function
+        function update() {
+            // If not game over, rotate through answers
+            if (!state.gameOver) {
+                state.slotTimer++;
+                state.countdownTimer++;
+                
+                // Time's up check
+                if (state.countdownTimer >= state.countdown * 60) {
+                    state.gameOver = true;
+                    state.isCorrect = false;
+                    playResult(false);
+                }
+                
+                // Update slot machine position
+                if (state.slotTimer >= state.slotSpeed) {
+                    state.currentIndex = (state.currentIndex + 1) % state.answers.length;
+                    state.slotTimer = 0;
+                    playSlotTick();
+                }
+            }
+        }
+
+        // Main draw function
+        function draw() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw title and question
+            ctx.font = '32px Arial';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText('Capital Quest', 400, 80);
+            
+            ctx.font = '24px Arial';
+            ctx.fillText('What is the capital of France?', 400, 150);
+            
+            // Draw timer
+            drawTimer();
+            
+            // Draw slot machine
+            drawSlotMachine();
+            
+            // Draw stop button
+            drawStopButton();
+            
+            // If game over, show result and restart button
+            if (state.gameOver) {
+                ctx.font = '36px Arial';
+                ctx.fillStyle = state.isCorrect ? COLORS.correct : COLORS.incorrect;
+                ctx.fillText(state.isCorrect ? 'CORRECT!' : 'WRONG!', 400, 450);
+                
+                drawRestartButton();
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Add event listeners
+        canvas.addEventListener('click', handleClick);
+        window.addEventListener('resize', function() {
+            // Maintain the canvas size ratio while filling the screen appropriately
+            const container = document.body;
+            const containerRatio = container.clientWidth / container.clientHeight;
+            const canvasRatio = canvas.width / canvas.height;
+            
+            if (containerRatio > canvasRatio) {
+                canvas.style.height = '100vh';
+                canvas.style.width = 'auto';
+            } else {
+                canvas.style.width = '100vw';
+                canvas.style.height = 'auto';
+            }
+        });
+        
+        // Initial resize
+        window.dispatchEvent(new Event('resize'));
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

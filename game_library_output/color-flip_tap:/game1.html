@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>True or False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Game constants
+        const MOBILE = window.innerWidth <= 600;
+        const CANVAS_WIDTH = MOBILE ? 360 : 800;
+        const CANVAS_HEIGHT = MOBILE ? 640 : 600;
+        
+        // Colors - 8-bit style limited palette
+        const COLORS = {
+            background: "#0f380f",
+            text: "#8bac0f",
+            border: "#306230",
+            trueTile: "#9bbc0f",
+            falseTile: "#0f3850",
+            highlight: "#e0f8cf",
+            target: "#ffaa00",
+            correct: "#73bf21",
+            incorrect: "#d82800",
+            neutral: "#8bac0f"
+        };
+
+        // Setup canvas
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+
+        // Game state
+        let gameOver = false;
+        let currentColor = "true";
+        let flipSpeed = 500; // milliseconds per flip
+        let lastFlipTime = 0;
+        let elapsedTime = 0;
+        let result = null;
+        let showRestart = false;
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Generate sound
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === "flip") {
+                oscillator.type = "square";
+                oscillator.frequency.value = 220;
+                gainNode.gain.value = 0.1;
+                oscillator.start();
+                setTimeout(() => oscillator.stop(), 50);
+            } else if (type === "correct") {
+                oscillator.type = "square";
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
+                gainNode.gain.value = 0.2;
+                oscillator.start();
+                setTimeout(() => oscillator.stop(), 200);
+            } else if (type === "wrong") {
+                oscillator.type = "sawtooth";
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+                gainNode.gain.value = 0.2;
+                oscillator.start();
+                setTimeout(() => oscillator.stop(), 300);
+            }
+        }
+        
+        // Draw pixel border
+        function drawPixelBorder(x, y, width, height, color, thickness = 4) {
+            ctx.fillStyle = color;
+            
+            // Top
+            ctx.fillRect(x, y, width, thickness);
+            // Bottom
+            ctx.fillRect(x, y + height - thickness, width, thickness);
+            // Left
+            ctx.fillRect(x, y, thickness, height);
+            // Right
+            ctx.fillRect(x + width - thickness, y, thickness, height);
+        }
+        
+        // Draw a pixel art tile
+        function drawTile(x, y, width, height, color, isHighlighted = false) {
+            // Main tile
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Pixel border
+            drawPixelBorder(x, y, width, height, COLORS.border);
+            
+            // Highlight effect if active
+            if (isHighlighted) {
+                ctx.strokeStyle = COLORS.highlight;
+                ctx.lineWidth = 6;
+                ctx.strokeRect(x + 8, y + 8, width - 16, height - 16);
+            }
+        }
+        
+        // Game update function
+        function update(timestamp) {
+            if (!lastFlipTime) lastFlipTime = timestamp;
+            const deltaTime = timestamp - lastFlipTime;
+            elapsedTime += deltaTime;
+            
+            // Speed up slightly over time
+            flipSpeed = Math.max(150, 500 - (elapsedTime / 50));
+            
+            // Flip colors
+            if (deltaTime > flipSpeed && !gameOver) {
+                currentColor = currentColor === "true" ? "false" : "true";
+                playSound("flip");
+                lastFlipTime = timestamp;
+            }
+            
+            draw();
+            requestAnimationFrame(update);
+        }
+        
+        // Draw function
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${MOBILE ? 24 : 32}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText("The Great Wall of China", canvas.width / 2, MOBILE ? 120 : 150);
+            ctx.fillText("is visible from space.", canvas.width / 2, MOBILE ? 160 : 200);
+            
+            // Draw instruction
+            ctx.font = `${MOBILE ? 16 : 20}px sans-serif`;
+            ctx.fillText("Tap when tile shows correct answer!", canvas.width / 2, MOBILE ? 210 : 250);
+            
+            // Draw target indicator
+            ctx.fillStyle = COLORS.target;
+            ctx.font = `${MOBILE ? 28 : 36}px sans-serif`;
+            ctx.fillText("FALSE", canvas.width / 2, MOBILE ? 280 : 320);
+            
+            // Draw flipping tile
+            const tileWidth = MOBILE ? 200 : 300;
+            const tileHeight = MOBILE ? 100 : 150;
+            const tileX = (canvas.width - tileWidth) / 2;
+            const tileY = MOBILE ? 320 : 350;
+            
+            if (!gameOver) {
+                // Draw current color tile
+                const tileColor = currentColor === "true" ? COLORS.trueTile : COLORS.falseTile;
+                drawTile(tileX, tileY, tileWidth, tileHeight, tileColor, true);
+                
+                // Draw current text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${MOBILE ? 32 : 48}px sans-serif`;
+                ctx.textAlign = "center";
+                ctx.fillText(currentColor.toUpperCase(), canvas.width / 2, tileY + tileHeight / 2 + 10);
+            } else {
+                // Draw result
+                const resultColor = result ? COLORS.correct : COLORS.incorrect;
+                drawTile(tileX, tileY, tileWidth, tileHeight, resultColor);
+                
+                // Draw result text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${MOBILE ? 24 : 32}px sans-serif`;
+                ctx.fillText(result ? "CORRECT!" : "WRONG!", canvas.width / 2, tileY + tileHeight / 2 - 10);
+                ctx.font = `${MOBILE ? 18 : 22}px sans-serif`;
+                ctx.fillText("The Great Wall is NOT visible from space", canvas.width / 2, tileY + tileHeight / 2 + 30);
+                
+                // Draw restart button
+                if (showRestart) {
+                    const btnWidth = MOBILE ? 120 : 180;
+                    const btnHeight = MOBILE ? 50 : 60;
+                    const btnX = (canvas.width - btnWidth) / 2;
+                    const btnY = tileY + tileHeight + 40;
+                    
+                    drawTile(btnX, btnY, btnWidth, btnHeight, COLORS.neutral);
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = `${MOBILE ? 20 : 24}px sans-serif`;
+                    ctx.fillText("RESTART", canvas.width / 2, btnY + btnHeight / 2 + 8);
+                }
+            }
+            
+            // Draw timer bar
+            if (!gameOver) {
+                const timerWidth = canvas.width * 0.8;
+                const timerHeight = 10;
+                const timerX = (canvas.width - timerWidth) / 2;
+                const timerY = MOBILE ? 550 : 530;
+                
+                ctx.fillStyle = COLORS.border;
+                ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+                
+                const progress = Math.min(1, elapsedTime / 8000); // 8 seconds total
+                ctx.fillStyle = progress > 0.7 ? COLORS.incorrect : COLORS.text;
+                ctx.fillRect(timerX, timerY, timerWidth * progress, timerHeight);
+            }
+        }
+        
+        // Handle click/tap
+        function handleTap(e) {
+            e.preventDefault();
+            
+            if (gameOver) {
+                if (showRestart) {
+                    // Reset game
+                    gameOver = false;
+                    result = null;
+                    showRestart = false;
+                    elapsedTime = 0;
+                    lastFlipTime = 0;
+                }
+                return;
+            }
+            
+            // Check answer - Great Wall is NOT visible from space (false is correct)
+            result = currentColor === "false";
+            gameOver = true;
+            
+            // Play sound based on result
+            playSound(result ? "correct" : "wrong");
+            
+            // Show restart button after a delay
+            setTimeout(() => {
+                showRestart = true;
+            }, 1500);
+        }
+        
+        // Event listeners
+        canvas.addEventListener("click", handleTap);
+        canvas.addEventListener("touchstart", handleTap);
+        
+        // Start the game
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>

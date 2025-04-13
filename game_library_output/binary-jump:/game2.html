@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Binary Jump</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Game constants
+        const COLORS = {
+            SKY: '#5c94fc',
+            GROUND: '#8b531c',
+            PLATFORM_TRUE: '#2ecc71',
+            PLATFORM_FALSE: '#e74c3c',
+            PLATFORM_SELECTED: '#f1c40f',
+            PLATFORM_CORRECT: '#2ecc71',
+            PLATFORM_INCORRECT: '#e74c3c',
+            CHARACTER: '#3498db',
+            TEXT: '#ffffff'
+        };
+        
+        // Game state
+        let gameState = {
+            character: {
+                x: canvas.width * 0.25,
+                y: canvas.height * 0.6,
+                width: 40,
+                height: 40,
+                velocityY: 0,
+                isJumping: false,
+                direction: 1 // 1 for right, -1 for left
+            },
+            platforms: [
+                {
+                    x: canvas.width * 0.25 - 75,
+                    y: canvas.height * 0.7,
+                    width: 150,
+                    height: 30,
+                    label: 'True',
+                    isCorrect: true
+                },
+                {
+                    x: canvas.width * 0.75 - 75,
+                    y: canvas.height * 0.7,
+                    width: 150,
+                    height: 30,
+                    label: 'False',
+                    isCorrect: false
+                }
+            ],
+            question: 'Water boils at 100 degrees Celsius at sea level.',
+            gravity: 0.8,
+            gameEnded: false,
+            result: null,
+            restartButton: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height * 0.8,
+                width: 120,
+                height: 40
+            },
+            clouds: Array(5).fill().map(() => ({
+                x: Math.random() * canvas.width,
+                y: Math.random() * 150 + 50,
+                width: Math.random() * 60 + 40,
+                speed: Math.random() * 0.5 + 0.2
+            }))
+        };
+        
+        // Sound effects
+        function playJumpSound() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } catch (e) {
+                console.log('Sound playback failed:', e);
+            }
+        }
+        
+        function playResultSound(correct) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                if (correct) {
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(392, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(523, audioContext.currentTime + 0.2);
+                    
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime + 0.3);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+                    
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                } else {
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.2);
+                    
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                }
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+            } catch (e) {
+                console.log('Sound playback failed:', e);
+            }
+        }
+        
+        // Draw functions
+        function drawPixelatedRect(x, y, width, height, color) {
+            const pixelSize = 4;
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    if (i + pixelSize <= width && j + pixelSize <= height) {
+                        ctx.fillRect(Math.floor(x + i), Math.floor(y + j), pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        function drawCharacter() {
+            const { x, y, width, height, direction } = gameState.character;
+            
+            // Body
+            drawPixelatedRect(x, y, width, height, COLORS.CHARACTER);
+            
+            // Eyes
+            ctx.fillStyle = 'white';
+            ctx.fillRect(x + 10 + (direction === 1 ? 5 : 0), y + 12, 5, 5);
+            ctx.fillRect(x + 25 + (direction === 1 ? 0 : -5), y + 12, 5, 5);
+            
+            // Pupils
+            ctx.fillStyle = 'black';
+            ctx.fillRect(x + 12 + (direction === 1 ? 5 : 0), y + 14, 2, 2);
+            ctx.fillRect(x + 27 + (direction === 1 ? 0 : -5), y + 14, 2, 2);
+            
+            // Mouth
+            ctx.fillStyle = 'black';
+            ctx.fillRect(x + 15, y + 25, 10, 2);
+        }
+        
+        function drawPlatforms() {
+            gameState.platforms.forEach(platform => {
+                // Base platform
+                let platformColor = platform.label === 'True' ? COLORS.PLATFORM_TRUE : COLORS.PLATFORM_FALSE;
+                
+                if (gameState.gameEnded) {
+                    if (platform.isCorrect) {
+                        platformColor = COLORS.PLATFORM_CORRECT;
+                    } else if (gameState.result === platform.label) {
+                        platformColor = COLORS.PLATFORM_INCORRECT;
+                    }
+                }
+                
+                drawPixelatedRect(platform.x, platform.y, platform.width, platform.height, platformColor);
+                
+                // Platform top line
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(platform.x, platform.y, platform.width, 4);
+                
+                // Label
+                ctx.fillStyle = COLORS.TEXT;
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(platform.label, platform.x + platform.width / 2, platform.y + platform.height / 2 + 7);
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 100);
+        }
+        
+        function drawInstructions() {
+            if (!gameState.gameEnded) {
+                ctx.fillStyle = COLORS.TEXT;
+                ctx.font = '18px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Press SPACE to jump', canvas.width / 2, canvas.height - 50);
+            }
+        }
+        
+        function drawResult() {
+            if (gameState.gameEnded) {
+                ctx.fillStyle = gameState.platforms.find(p => p.label === gameState.result)?.isCorrect ? 
+                    COLORS.PLATFORM_CORRECT : COLORS.PLATFORM_INCORRECT;
+                ctx.font = 'bold 32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.platforms.find(p => p.label === gameState.result)?.isCorrect ? 'Correct!' : 'Incorrect!', 
+                    canvas.width / 2, 
+                    170
+                );
+                
+                // Draw restart button
+                drawPixelatedRect(
+                    gameState.restartButton.x, 
+                    gameState.restartButton.y, 
+                    gameState.restartButton.width, 
+                    gameState.restartButton.height, 
+                    '#3498db'
+                );
+                
+                ctx.fillStyle = COLORS.TEXT;
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    'Restart', 
+                    gameState.restartButton.x + gameState.restartButton.width / 2, 
+                    gameState.restartButton.y + gameState.restartButton.height / 2 + 7
+                );
+            }
+        }
+        
+        function drawClouds() {
+            ctx.fillStyle = '#ffffff';
+            gameState.clouds.forEach(cloud => {
+                // Draw a simple 8-bit style cloud
+                drawPixelatedRect(cloud.x, cloud.y, cloud.width, cloud.width / 2, '#ffffff');
+            });
+        }
+        
+        function drawGround() {
+            drawPixelatedRect(0, canvas.height * 0.75, canvas.width, canvas.height * 0.25, COLORS.GROUND);
+            
+            // Draw pixel-art grass line
+            ctx.fillStyle = '#0faf2e';
+            for (let x = 0; x < canvas.width; x += 8) {
+                const height = 8 + Math.floor(Math.sin(x * 0.05) * 4);
+                ctx.fillRect(x, canvas.height * 0.75 - height, 8, height);
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.SKY;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawClouds();
+            drawGround();
+            drawPlatforms();
+            drawCharacter();
+            drawQuestion();
+            drawInstructions();
+            drawResult();
+        }
+        
+        // Game logic
+        function update() {
+            if (!gameState.gameEnded) {
+                // Move clouds
+                gameState.clouds.forEach(cloud => {
+                    cloud.x += cloud.speed;
+                    if (cloud.x > canvas.width) {
+                        cloud.x = -cloud.width;
+                    }
+                });
+                
+                // Character physics
+                gameState.character.velocityY += gameState.gravity;
+                gameState.character.y += gameState.character.velocityY;
+                
+                // Check platform collisions
+                let onPlatform = false;
+                gameState.platforms.forEach(platform => {
+                    if (
+                        gameState.character.x + gameState.character.width > platform.x &&
+                        gameState.character.x < platform.x + platform.width &&
+                        gameState.character.y + gameState.character.height > platform.y &&
+                        gameState.character.y + gameState.character.height < platform.y + platform.height + 10 &&
+                        gameState.character.velocityY > 0
+                    ) {
+                        gameState.character.y = platform.y - gameState.character.height;
+                        gameState.character.velocityY = 0;
+                        gameState.character.isJumping = false;
+                        onPlatform = true;
+                        
+                        // End game if character lands on a platform
+                        if (gameState.character.x > platform.x && 
+                            gameState.character.x < platform.x + platform.width) {
+                            gameState.gameEnded = true;
+                            gameState.result = platform.label;
+                            playResultSound(platform.isCorrect);
+                        }
+                    }
+                });
+                
+                // Make character face the direction it's moving
+                if (gameState.character.velocityY < 0) {
+                    if (gameState.character.x < canvas.width / 2) {
+                        gameState.character.direction = 1; // Right
+                    } else {
+                        gameState.character.direction = -1; // Left
+                    }
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', function(event) {
+            if (event.code === 'Space' && !gameState.character.isJumping && !gameState.gameEnded) {
+                gameState.character.velocityY = -15;
+                gameState.character.isJumping = true;
+                playJumpSound();
+                
+                // Determine direction to jump
+                let currentPlatformIndex = 0;
+                if (gameState.character.x > canvas.width / 2) {
+                    currentPlatformIndex = 1;
+                }
+                
+                // Jump to the opposite platform
+                const targetPlatformIndex = 1 - currentPlatformIndex;
+                const targetX = gameState.platforms[targetPlatformIndex].x + gameState.platforms[targetPlatformIndex].width / 2 - gameState.character.width / 2;
+                
+                // Calculate horizontal velocity
+                const distance = targetX - gameState.character.x;
+                const time = 30; // frames to reach destination
+                gameState.character.velocityX = distance / time;
+            }
+        });
+        
+        canvas.addEventListener('click', function(event) {
+            if (gameState.gameEnded) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (event.clientX - rect.left) * (canvas.width / rect.width);
+                const clickY = (event.clientY - rect.top) * (canvas.height / rect.height);
+                
+                // Check if restart button was clicked
+                if (
+                    clickX > gameState.restartButton.x &&
+                    clickX < gameState.restartButton.x + gameState.restartButton.width &&
+                    clickY > gameState.restartButton.y &&
+                    clickY < gameState.restartButton.y + gameState.restartButton.height
+                ) {
+                    // Reset game
+                    gameState.character.x = canvas.width * 0.25;
+                    gameState.character.y = canvas.height * 0.6;
+                    gameState.character.velocityY = 0;
+                    gameState.character.isJumping = false;
+                    gameState.gameEnded = false;
+                    gameState.result = null;
+                }
+            }
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

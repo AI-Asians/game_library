@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dig-Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #555;
+            color: white;
+            border: 3px solid #777;
+            padding: 5px 10px;
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Colors (limited palette)
+        const COLORS = {
+            sky: '#87CEEB',
+            dirt1: '#8B4513',
+            dirt2: '#A0522D',
+            dirt3: '#CD853F',
+            correct: '#4CAF50',
+            incorrect: '#F44336',
+            text: '#FFFFFF',
+            shovel: '#C0C0C0',
+            handle: '#8B4513',
+            particles: ['#D2B48C', '#DEB887', '#F5DEB3']
+        };
+        
+        // Game state
+        let gameOver = false;
+        let particles = [];
+        let grid = [];
+        const gridSize = 8; // Size of each dirt block
+        const gridWidth = Math.floor(canvas.width / gridSize);
+        const gridHeight = Math.floor(canvas.height / gridSize);
+        
+        // Options for the question
+        const options = [
+            { text: "Paris", correct: true, x: 300, y: 250, width: 200, height: 80 },
+            { text: "London", correct: false, x: 100, y: 400, width: 200, height: 80 },
+            { text: "Berlin", correct: false, x: 500, y: 400, width: 200, height: 80 },
+            { text: "Rome", correct: false, x: 300, y: 450, width: 200, height: 80 }
+        ];
+        
+        // Initialize the dirt grid
+        function initGrid() {
+            for (let y = 0; y < gridHeight; y++) {
+                grid[y] = [];
+                for (let x = 0; x < gridWidth; x++) {
+                    // Different dirt layers based on depth
+                    let dirtType;
+                    if (y < gridHeight * 0.3) {
+                        dirtType = COLORS.dirt1;
+                    } else if (y < gridHeight * 0.6) {
+                        dirtType = COLORS.dirt2;
+                    } else {
+                        dirtType = COLORS.dirt3;
+                    }
+                    grid[y][x] = { visible: true, color: dirtType };
+                }
+            }
+        }
+        
+        // Create a simple audio context for sound effects
+        let audioCtx;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log('Web Audio API not supported');
+        }
+        
+        // Play a retro beep sound
+        function playSound(freq, duration, type = 'square') {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Generate random particles when digging
+        function createParticles(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x + Math.random() * 10 - 5,
+                    y: y + Math.random() * 10 - 5,
+                    vx: Math.random() * 4 - 2,
+                    vy: Math.random() * -3 - 2,
+                    size: Math.floor(Math.random() * 3) + 2,
+                    color: COLORS.particles[Math.floor(Math.random() * COLORS.particles.length)],
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.1; // Gravity
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas with sky color
+            ctx.fillStyle = COLORS.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the dirt grid
+            for (let y = 0; y < gridHeight; y++) {
+                for (let x = 0; x < gridWidth; x++) {
+                    const cell = grid[y][x];
+                    if (cell.visible) {
+                        ctx.fillStyle = cell.color;
+                        ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+                        
+                        // Add some pixelated texture
+                        if (Math.random() > 0.8) {
+                            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                            ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+                        }
+                    }
+                }
+            }
+            
+            // Draw the options (only if they're uncovered enough)
+            options.forEach(option => {
+                let uncoveredPixels = 0;
+                let totalPixels = 0;
+                
+                // Count how many pixels of this option are uncovered
+                for (let y = Math.floor(option.y / gridSize); y < Math.floor((option.y + option.height) / gridSize); y++) {
+                    for (let x = Math.floor(option.x / gridSize); x < Math.floor((option.x + option.width) / gridSize); x++) {
+                        if (y >= 0 && y < gridHeight && x >= 0 && x < gridWidth) {
+                            totalPixels++;
+                            if (!grid[y][x].visible) {
+                                uncoveredPixels++;
+                            }
+                        }
+                    }
+                }
+                
+                // If at least 30% is uncovered, show the option
+                if (uncoveredPixels > totalPixels * 0.3 || gameOver) {
+                    // Create a pixelated button effect
+                    ctx.fillStyle = option.correct ? COLORS.correct : COLORS.incorrect;
+                    
+                    // Pixelated rectangle
+                    for (let y = 0; y < option.height; y += 4) {
+                        for (let x = 0; x < option.width; x += 4) {
+                            ctx.fillRect(option.x + x, option.y + y, 4, 4);
+                        }
+                    }
+                    
+                    // Draw text
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = '24px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(option.text, option.x + option.width / 2, option.y + option.height / 2);
+                }
+            });
+            
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            
+            // Draw the question
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, 60);
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '28px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 35);
+            
+            // Draw shovel cursor if game is not over
+            if (!gameOver && mouseX !== null && mouseY !== null) {
+                // Shovel head
+                ctx.fillStyle = COLORS.shovel;
+                ctx.fillRect(mouseX, mouseY, 16, 8);
+                
+                // Shovel handle
+                ctx.fillStyle = COLORS.handle;
+                ctx.fillRect(mouseX + 4, mouseY - 12, 8, 12);
+            }
+        }
+        
+        // Mouse position
+        let mouseX = null;
+        let mouseY = null;
+        
+        // Game loop
+        function gameLoop() {
+            if (!gameOver) {
+                updateParticles();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Check if an option was uncovered and selected
+        function checkOptionSelection(x, y) {
+            for (const option of options) {
+                if (x >= option.x && x <= option.x + option.width &&
+                    y >= option.y && y <= option.y + option.height) {
+                    
+                    // End the game
+                    gameOver = true;
+                    restartBtn.style.display = 'block';
+                    
+                    // Play sound based on correctness
+                    if (option.correct) {
+                        playSound(523.25, 0.2); // C5
+                        playSound(659.25, 0.3, 'sine'); // E5
+                        playSound(783.99, 0.4); // G5
+                    } else {
+                        playSound(311.13, 0.3); // Eb4
+                        playSound(233.08, 0.5); // Bb3
+                    }
+                    
+                    // Reveal all the options
+                    for (let y = 0; y < gridHeight; y++) {
+                        for (let x = 0; x < gridWidth; x++) {
+                            grid[y][x].visible = false;
+                        }
+                    }
+                    
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Handle mouse/touch events
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Dig a small area around the click
+            const radius = 3;
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (dx*dx + dy*dy <= radius*radius) {
+                        const gridX = Math.floor((x + dx * gridSize) / gridSize);
+                        const gridY = Math.floor((y + dy * gridSize) / gridSize);
+                        
+                        if (gridX >= 0 && gridX < gridWidth && gridY >= 0 && gridY < gridHeight) {
+                            if (grid[gridY][gridX].visible) {
+                                grid[gridY][gridX].visible = false;
+                                createParticles(gridX * gridSize, gridY * gridSize, 2);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Play dig sound
+            playSound(150, 0.08);
+            
+            // Check if an option was selected
+            checkOptionSelection(x, y);
+        }
+        
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        }
+        
+        // Reset the game
+        function resetGame() {
+            gameOver = false;
+            particles = [];
+            initGrid();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        restartBtn.addEventListener('click', resetGame);
+        
+        // Start the game
+        initGrid();
+        gameLoop();
+    </script>
+</body>
+</html>

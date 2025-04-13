@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz Arkanoid</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #f55;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Check if on mobile and adjust if needed
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game elements
+        const colors = {
+            background: '#121212',
+            paddle: '#5588ff',
+            ball: '#ffff44',
+            correctBrick: '#44ff44',
+            incorrectBrick: '#ff4444',
+            text: '#ffffff',
+            question: '#ffcc22',
+            highlight: '#66ffff'
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(freq, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playBounceSound() {
+            playSound(220, 'square', 0.1);
+        }
+        
+        function playHitSound() {
+            playSound(330, 'square', 0.15);
+        }
+        
+        function playWinSound() {
+            playSound(440, 'square', 0.1);
+            setTimeout(() => playSound(660, 'square', 0.2), 100);
+            setTimeout(() => playSound(880, 'square', 0.3), 300);
+        }
+        
+        function playLoseSound() {
+            playSound(280, 'sawtooth', 0.1);
+            setTimeout(() => playSound(230, 'sawtooth', 0.1), 100);
+            setTimeout(() => playSound(180, 'sawtooth', 0.3), 200);
+        }
+        
+        // Game state
+        let gameState = {
+            ball: {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                radius: 8,
+                dx: 4,
+                dy: -4,
+                speed: 5
+            },
+            paddle: {
+                width: 100,
+                height: 16,
+                x: canvas.width / 2 - 50,
+                y: canvas.height - 30
+            },
+            bricks: [],
+            question: "What is the capital of France?",
+            answers: ["Berlin", "London", "Paris", "Madrid"],
+            correctAnswer: "Paris",
+            gameOver: false,
+            playerWon: false,
+            particles: []
+        };
+        
+        // Create bricks (answer options)
+        function createBricks() {
+            const brickWidth = 150;
+            const brickHeight = 40;
+            const brickPadding = 30;
+            const brickOffsetTop = 120;
+            
+            gameState.bricks = [];
+            
+            for (let i = 0; i < gameState.answers.length; i++) {
+                const brickX = (i * (brickWidth + brickPadding)) + 
+                               (canvas.width - (gameState.answers.length * (brickWidth + brickPadding)) + brickPadding) / 2;
+                
+                gameState.bricks.push({
+                    x: brickX,
+                    y: brickOffsetTop,
+                    width: brickWidth,
+                    height: brickHeight,
+                    text: gameState.answers[i],
+                    isCorrect: gameState.answers[i] === gameState.correctAnswer,
+                    active: true
+                });
+            }
+        }
+        
+        // Create particles
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    dx: (Math.random() - 0.5) * 6,
+                    dy: (Math.random() - 0.5) * 6,
+                    radius: Math.random() * 4 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = 0; i < gameState.particles.length; i++) {
+                const particle = gameState.particles[i];
+                
+                particle.x += particle.dx;
+                particle.y += particle.dy;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            for (const particle of gameState.particles) {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    Math.floor(particle.x),
+                    Math.floor(particle.y),
+                    Math.floor(particle.radius),
+                    Math.floor(particle.radius)
+                );
+            }
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            const pixelSize = 2;
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(Math.floor(x + i), Math.floor(y + j), pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        // Draw pixelated ball
+        function drawPixelBall(x, y, radius, color) {
+            ctx.fillStyle = color;
+            for (let i = -radius; i < radius; i += 2) {
+                for (let j = -radius; j < radius; j += 2) {
+                    if (i*i + j*j < radius*radius) {
+                        ctx.fillRect(Math.floor(x + i), Math.floor(y + j), 2, 2);
+                    }
+                }
+            }
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.font = '20px sans-serif';
+            ctx.fillStyle = colors.question;
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 70);
+            
+            // Draw bricks (answer options)
+            for (const brick of gameState.bricks) {
+                if (brick.active) {
+                    const brickColor = brick.isCorrect ? colors.correctBrick : colors.incorrectBrick;
+                    
+                    // Draw brick
+                    drawPixelRect(brick.x, brick.y, brick.width, brick.height, brickColor);
+                    
+                    // Draw brick border (darker shade)
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(brick.x, brick.y, brick.width, brick.height);
+                    
+                    // Draw answer text
+                    ctx.font = '16px sans-serif';
+                    ctx.fillStyle = colors.text;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(brick.text, brick.x + brick.width / 2, brick.y + brick.height / 2 + 6);
+                    
+                    // Add a small indicator for correct answer
+                    if (brick.isCorrect) {
+                        ctx.fillStyle = colors.highlight;
+                        ctx.fillRect(brick.x + brick.width - 10, brick.y + 5, 5, 5);
+                    }
+                }
+            }
+            
+            // Draw paddle
+            drawPixelRect(gameState.paddle.x, gameState.paddle.y, gameState.paddle.width, gameState.paddle.height, colors.paddle);
+            
+            // Draw ball
+            drawPixelBall(gameState.ball.x, gameState.ball.y, gameState.ball.radius, colors.ball);
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw win/lose message
+            if (gameState.gameOver) {
+                ctx.font = '30px sans-serif';
+                ctx.fillStyle = gameState.playerWon ? colors.correctBrick : colors.incorrectBrick;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.playerWon ? "Correct!" : "Wrong!",
+                    canvas.width / 2,
+                    canvas.height / 2
+                );
+                
+                document.getElementById('restartBtn').style.display = 'block';
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (gameState.gameOver) return;
+            
+            // Move the ball
+            gameState.ball.x += gameState.ball.dx;
+            gameState.ball.y += gameState.ball.dy;
+            
+            // Wall collision
+            if (gameState.ball.x + gameState.ball.radius > canvas.width || 
+                gameState.ball.x - gameState.ball.radius < 0) {
+                gameState.ball.dx = -gameState.ball.dx;
+                playBounceSound();
+            }
+            
+            if (gameState.ball.y - gameState.ball.radius < 0) {
+                gameState.ball.dy = -gameState.ball.dy;
+                playBounceSound();
+            }
+            
+            // Paddle collision
+            if (gameState.ball.y + gameState.ball.radius > gameState.paddle.y &&
+                gameState.ball.x > gameState.paddle.x &&
+                gameState.ball.x < gameState.paddle.x + gameState.paddle.width) {
+                
+                // Calculate bounce angle based on where the ball hits the paddle
+                const hitPosition = (gameState.ball.x - gameState.paddle.x) / gameState.paddle.width;
+                const bounceAngle = hitPosition * Math.PI - Math.PI/2;
+                
+                gameState.ball.dx = gameState.ball.speed * Math.cos(bounceAngle);
+                gameState.ball.dy = -gameState.ball.speed * Math.sin(bounceAngle);
+                playBounceSound();
+            }
+            
+            // Check if ball goes out of bounds (bottom)
+            if (gameState.ball.y + gameState.ball.radius > canvas.height) {
+                gameState.gameOver = true;
+                gameState.playerWon = false;
+                playLoseSound();
+            }
+            
+            // Brick collision
+            for (const brick of gameState.bricks) {
+                if (brick.active &&
+                    gameState.ball.x + gameState.ball.radius > brick.x &&
+                    gameState.ball.x - gameState.ball.radius < brick.x + brick.width &&
+                    gameState.ball.y + gameState.ball.radius > brick.y &&
+                    gameState.ball.y - gameState.ball.radius < brick.y + brick.height) {
+                    
+                    // Brick hit
+                    playHitSound();
+                    
+                    if (brick.isCorrect) {
+                        // Correct answer hit
+                        brick.active = false;
+                        createParticles(brick.x + brick.width/2, brick.y + brick.height/2, colors.correctBrick);
+                        gameState.gameOver = true;
+                        gameState.playerWon = true;
+                        playWinSound();
+                    } else {
+                        // Incorrect answer hit
+                        brick.active = false;
+                        createParticles(brick.x + brick.width/2, brick.y + brick.height/2, colors.incorrectBrick);
+                        // Game continues
+                    }
+                    
+                    // Calculate bounce direction
+                    const ballCenterX = gameState.ball.x;
+                    const ballCenterY = gameState.ball.y;
+                    const brickCenterX = brick.x + brick.width / 2;
+                    const brickCenterY = brick.y + brick.height / 2;
+                    
+                    // Determine which side of the brick was hit
+                    if (Math.abs(ballCenterX - brickCenterX) > Math.abs(ballCenterY - brickCenterY)) {
+                        gameState.ball.dx = -gameState.ball.dx;
+                    } else {
+                        gameState.ball.dy = -gameState.ball.dy;
+                    }
+                    
+                    break;
+                }
+            }
+            
+            // Update particles
+            updateParticles();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch movement
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const relX = e.clientX - rect.left;
+            
+            gameState.paddle.x = relX - gameState.paddle.width / 2;
+            
+            // Keep paddle within canvas boundaries
+            if (gameState.paddle.x < 0) {
+                gameState.paddle.x = 0;
+            }
+            if (gameState.paddle.x + gameState.paddle.width > canvas.width) {
+                gameState.paddle.x = canvas.width - gameState.paddle.width;
+            }
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const relX = e.touches[0].clientX - rect.left;
+            
+            gameState.paddle.x = relX - gameState.paddle.width / 2;
+            
+            // Keep paddle within canvas boundaries
+            if (gameState.paddle.x < 0) {
+                gameState.paddle.x = 0;
+            }
+            if (gameState.paddle.x + gameState.paddle.width > canvas.width) {
+                gameState.paddle.x = canvas.width - gameState.paddle.width;
+            }
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameState = {
+                ball: {
+                    x: canvas.width / 2,
+                    y: canvas.height / 2,
+                    radius: 8,
+                    dx: 4,
+                    dy: -4,
+                    speed: 5
+                },
+                paddle: {
+                    width: 100,
+                    height: 16,
+                    x: canvas.width / 2 - 50,
+                    y: canvas.height - 30
+                },
+                bricks: [],
+                question: "What is the capital of France?",
+                answers: ["Berlin", "London", "Paris", "Madrid"],
+                correctAnswer: "Paris",
+                gameOver: false,
+                playerWon: false,
+                particles: []
+            };
+            
+            createBricks();
+            document.getElementById('restartBtn').style.display = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        document.getElementById('restartBtn').addEventListener('click', resetGame);
+        
+        // Initialize game
+        createBricks();
+        gameLoop();
+    </script>
+</body>
+</html>

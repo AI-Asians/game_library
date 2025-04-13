@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Defense</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            display: none;
+            padding: 10px 20px;
+            background-color: #444;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        let gameWon = false;
+        const colors = ['#FF5555', '#55FF55', '#5555FF', '#FFFF55', '#FF55FF', '#55FFFF', '#FFFFFF', '#AAAAAA'];
+        const baseHealth = 100;
+        let health = baseHealth;
+        
+        // Restart button
+        const restartBtn = document.getElementById('restart');
+        restartBtn.addEventListener('click', () => {
+            restartBtn.style.display = 'none';
+            init();
+        });
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize audio
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Play sound effects
+        function playSound(type) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'damage':
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(150, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Game entities
+        class Entity {
+            constructor(text, isCorrect) {
+                this.text = text;
+                this.isCorrect = isCorrect;
+                this.width = isMobile ? 80 : 120;
+                this.height = isMobile ? 40 : 60;
+                this.x = Math.random() * (canvas.width - this.width);
+                this.y = -this.height;
+                this.speed = 1 + Math.random() * 2;
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+                this.eyeColor = '#FFFFFF';
+                this.exploding = false;
+                this.explosionSize = 0;
+                this.explosionMaxSize = this.width * 1.5;
+            }
+            
+            update() {
+                if (this.exploding) {
+                    this.explosionSize += 4;
+                    if (this.explosionSize > this.explosionMaxSize) {
+                        return true;
+                    }
+                    return false;
+                }
+                
+                this.y += this.speed;
+                
+                // Check if entity reached the base
+                if (this.y > canvas.height - this.height - 30) {
+                    if (this.isCorrect) {
+                        playSound('damage');
+                        health -= 20;
+                        if (health <= 0) {
+                            gameOver = true;
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
+            
+            draw() {
+                if (this.exploding) {
+                    // Draw explosion
+                    ctx.fillStyle = '#FF7700';
+                    ctx.beginPath();
+                    ctx.arc(this.x + this.width/2, this.y + this.height/2, this.explosionSize/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#FFDD00';
+                    ctx.beginPath();
+                    ctx.arc(this.x + this.width/2, this.y + this.height/2, this.explosionSize/3, 0, Math.PI * 2);
+                    ctx.fill();
+                    return;
+                }
+                
+                // Draw the entity body
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // Draw pixelated border
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+                
+                // Draw pixelated eyes for character
+                const eyeSize = this.width / 10;
+                ctx.fillStyle = this.eyeColor;
+                ctx.fillRect(this.x + this.width/4 - eyeSize/2, this.y + this.height/3, eyeSize, eyeSize);
+                ctx.fillRect(this.x + this.width*3/4 - eyeSize/2, this.y + this.height/3, eyeSize, eyeSize);
+                
+                // Draw mouth
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(this.x + this.width/4, this.y + this.height*2/3, this.width/2, eyeSize);
+                
+                // Draw text
+                ctx.fillStyle = '#000000';
+                ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x + this.width/2, this.y + this.height/2 + (isMobile ? 15 : 20));
+            }
+            
+            contains(x, y) {
+                return x >= this.x && x <= this.x + this.width &&
+                       y >= this.y && y <= this.y + this.height;
+            }
+        }
+        
+        // Game objects
+        let entities = [];
+        let explosions = [];
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            gameWon = false;
+            health = baseHealth;
+            entities = [];
+            explosions = [];
+            
+            // Add entities
+            entities.push(new Entity('Paris', true));
+            entities.push(new Entity('London', false));
+            entities.push(new Entity('Berlin', false));
+            entities.push(new Entity('Rome', false));
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            
+            if (!gameOver && !gameWon) {
+                requestAnimationFrame(gameLoop);
+            } else {
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Update game state
+        function update() {
+            // Update entities
+            for (let i = entities.length - 1; i >= 0; i--) {
+                if (entities[i].update()) {
+                    if (entities[i].exploding) {
+                        entities.splice(i, 1);
+                    } else if (entities[i].isCorrect) {
+                        entities[i].y = canvas.height - entities[i].height - 30;
+                    } else {
+                        entities.splice(i, 1);
+                    }
+                }
+            }
+            
+            // Check if all entities are gone
+            if (entities.length === 0 && !gameOver) {
+                gameWon = true;
+            }
+        }
+        
+        // Render game
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#000022';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width/2, 30);
+            
+            // Draw base at the bottom
+            ctx.fillStyle = '#444466';
+            ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+            
+            // Draw pixelated pattern on base
+            ctx.fillStyle = '#555577';
+            for (let i = 0; i < canvas.width; i += 20) {
+                ctx.fillRect(i, canvas.height - 30, 10, 10);
+                ctx.fillRect(i + 10, canvas.height - 20, 10, 10);
+            }
+            
+            // Draw health bar
+            const healthWidth = (canvas.width - 40) * (health / baseHealth);
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(20, 50, canvas.width - 40, 15);
+            ctx.fillStyle = health > 50 ? '#33CC33' : health > 20 ? '#CCCC33' : '#CC3333';
+            ctx.fillRect(20, 50, healthWidth, 15);
+            
+            // Draw entities
+            entities.forEach(entity => entity.draw());
+            
+            // Draw game over text
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FF5555';
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2);
+            }
+            
+            // Draw game won text
+            if (gameWon) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#55FF55';
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('CORRECT!', canvas.width/2, canvas.height/2);
+            }
+        }
+        
+        // Handle click/tap
+        function handleClick(e) {
+            if (gameOver || gameWon) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            for (let i = 0; i < entities.length; i++) {
+                if (entities[i].contains(x, y)) {
+                    if (entities[i].isCorrect) {
+                        playSound('correct');
+                        entities[i].exploding = true;
+                        gameWon = true;
+                    } else {
+                        playSound('wrong');
+                        gameOver = true;
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleClick(touch);
+        });
+        
+        // Start game
+        init();
+    </script>
+</body>
+</html>

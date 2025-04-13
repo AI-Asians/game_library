@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breaking News: Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Detect if on mobile
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let correct = null;
+        let tickerPos = canvas.width;
+        let breakingNewsFlash = 0;
+        let liveIndicatorPulse = 0;
+        let restartButtonVisible = false;
+        
+        // Colors
+        const colors = {
+            darkBlue: '#0000AA',
+            blue: '#0055FF',
+            red: '#FF0000',
+            brightRed: '#FF5555',
+            white: '#FFFFFF',
+            black: '#000000',
+            gray: '#555555',
+            lightGray: '#AAAAAA',
+            yellow: '#FFFF00',
+            green: '#00AA00'
+        };
+        
+        // Question and answers
+        const question = "Which planet is known as the Red Planet?";
+        const answers = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+        
+        // News headlines for wrong answers
+        const fakeNews = [
+            "Scientists discover ocean on Venus surface",
+            "Jupiter's red spot confirmed as alien signal source",
+            "Mercury's mysterious red glow shocks astronomers"
+        ];
+        
+        // Sound effects generator
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playBeep(freq, duration, type = 'square', volume = 0.2) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+            
+            return oscillator;
+        }
+        
+        function playNewsJingle() {
+            playBeep(440, 150, 'square', 0.15);
+            setTimeout(() => playBeep(523, 150, 'square', 0.15), 150);
+            setTimeout(() => playBeep(659, 300, 'square', 0.15), 300);
+        }
+        
+        function playCorrect() {
+            playBeep(523, 100, 'square', 0.15);
+            setTimeout(() => playBeep(659, 100, 'square', 0.15), 100);
+            setTimeout(() => playBeep(784, 300, 'square', 0.15), 200);
+        }
+        
+        function playIncorrect() {
+            playBeep(196, 300, 'square', 0.15);
+            setTimeout(() => playBeep(185, 300, 'square', 0.15), 300);
+        }
+        
+        // Play jingle at start
+        setTimeout(playNewsJingle, 100);
+        
+        // Draw pixel TV frame
+        function drawTVFrame() {
+            // Outer TV casing
+            ctx.fillStyle = colors.gray;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Screen area (slightly inset)
+            const borderSize = canvas.width * 0.03;
+            ctx.fillStyle = colors.black;
+            ctx.fillRect(
+                borderSize, 
+                borderSize, 
+                canvas.width - borderSize * 2, 
+                canvas.height - borderSize * 2
+            );
+            
+            // TV scanlines
+            ctx.fillStyle = 'rgba(255,255,255,0.03)';
+            for (let i = borderSize; i < canvas.height - borderSize; i += 4) {
+                ctx.fillRect(borderSize, i, canvas.width - borderSize * 2, 2);
+            }
+            
+            // TV buttons
+            const buttonSize = canvas.width * 0.02;
+            const buttonSpacing = canvas.width * 0.01;
+            const buttonY = canvas.height - borderSize / 2 - buttonSize / 2;
+            
+            for (let i = 0; i < 4; i++) {
+                const buttonX = canvas.width * 0.7 + (buttonSize + buttonSpacing) * i;
+                ctx.fillStyle = colors.darkBlue;
+                ctx.fillRect(buttonX, buttonY, buttonSize, buttonSize);
+            }
+        }
+        
+        // Draw breaking news banner
+        function drawBreakingNews() {
+            const bannerHeight = canvas.height * 0.09;
+            const bannerY = canvas.height * 0.12;
+            
+            // Flashing effect
+            breakingNewsFlash += 0.05;
+            const flash = Math.sin(breakingNewsFlash) > 0;
+            
+            // Banner background
+            ctx.fillStyle = flash ? colors.red : colors.brightRed;
+            ctx.fillRect(canvas.width * 0.1, bannerY, canvas.width * 0.8, bannerHeight);
+            
+            // Banner border
+            ctx.fillStyle = colors.white;
+            const borderThickness = 4;
+            ctx.fillRect(canvas.width * 0.1, bannerY, canvas.width * 0.8, borderThickness);
+            ctx.fillRect(canvas.width * 0.1, bannerY + bannerHeight - borderThickness, canvas.width * 0.8, borderThickness);
+            ctx.fillRect(canvas.width * 0.1, bannerY, borderThickness, bannerHeight);
+            ctx.fillRect(canvas.width * 0.1 + canvas.width * 0.8 - borderThickness, bannerY, borderThickness, bannerHeight);
+            
+            // Banner text
+            ctx.fillStyle = colors.white;
+            ctx.font = `bold ${canvas.width * 0.04}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("BREAKING NEWS", canvas.width * 0.5, bannerY + bannerHeight / 2);
+        }
+        
+        // Draw question headline
+        function drawQuestion() {
+            ctx.fillStyle = colors.white;
+            ctx.font = `bold ${canvas.width * 0.04}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width * 0.5, canvas.height * 0.25);
+        }
+        
+        // Draw answer options as news stories
+        function drawAnswers() {
+            const startY = canvas.height * 0.35;
+            const height = canvas.height * 0.1;
+            const spacing = canvas.height * 0.02;
+            
+            answers.forEach((answer, index) => {
+                const y = startY + (height + spacing) * index;
+                
+                // Story background
+                ctx.fillStyle = colors.darkBlue;
+                ctx.fillRect(canvas.width * 0.15, y, canvas.width * 0.7, height);
+                
+                // Hover effect
+                if (mouseY >= y && mouseY <= y + height &&
+                    mouseX >= canvas.width * 0.15 && mouseX <= canvas.width * 0.15 + canvas.width * 0.7 && !gameOver) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.fillRect(canvas.width * 0.15, y, canvas.width * 0.7, height);
+                }
+                
+                // Story headline style
+                ctx.fillStyle = colors.white;
+                let displayText = answer.text;
+                
+                // If game is over, show fake headlines for wrong answers
+                if (gameOver && !answer.correct && correct === false) {
+                    displayText = fakeNews[index - 1];
+                }
+                
+                // Add result indicator if clicked
+                if (gameOver && answer.isSelected) {
+                    if (answer.correct) {
+                        ctx.fillStyle = colors.green;
+                        displayText = "CONFIRMED: " + displayText + " is the Red Planet";
+                    } else {
+                        ctx.fillStyle = colors.red;
+                        displayText = "FAKE NEWS: " + displayText + " is not red";
+                    }
+                }
+                
+                ctx.font = `bold ${canvas.width * 0.03}px sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                
+                // Truncate text if needed
+                const maxWidth = canvas.width * 0.65;
+                let textWidth = ctx.measureText(displayText).width;
+                if (textWidth > maxWidth) {
+                    let ratio = maxWidth / textWidth;
+                    let newLength = Math.floor(displayText.length * ratio) - 3;
+                    displayText = displayText.substring(0, newLength) + "...";
+                }
+                
+                ctx.fillText(displayText, canvas.width * 0.17, y + height / 2);
+            });
+        }
+        
+        // Draw news ticker at bottom
+        function drawNewsTicker() {
+            const tickerHeight = canvas.height * 0.06;
+            const tickerY = canvas.height * 0.9;
+            
+            // Ticker background
+            ctx.fillStyle = colors.blue;
+            ctx.fillRect(0, tickerY, canvas.width, tickerHeight);
+            
+            // Ticker text
+            ctx.fillStyle = colors.white;
+            ctx.font = `${canvas.width * 0.025}px sans-serif`;
+            ctx.textBaseline = 'middle';
+            
+            const tickerText = "ASTRONOMERS REPORTING NEW FINDINGS • QUIZ YOUR SPACE KNOWLEDGE • LATEST SOLAR SYSTEM DISCOVERIES • ";
+            const textWidth = ctx.measureText(tickerText).width;
+            
+            // Scroll the ticker
+            tickerPos -= 2;
+            if (tickerPos < -textWidth) {
+                tickerPos = canvas.width;
+            }
+            
+            // Draw multiple instances to create endless scroll
+            for (let i = 0; i < 3; i++) {
+                ctx.fillText(tickerText, tickerPos + textWidth * i, tickerY + tickerHeight / 2);
+            }
+        }
+        
+        // Draw live indicator
+        function drawLiveIndicator() {
+            // Pulsing animation
+            liveIndicatorPulse += 0.1;
+            const pulse = Math.sin(liveIndicatorPulse) * 0.5 + 0.5;
+            
+            // Live indicator box
+            ctx.fillStyle = colors.red;
+            const liveSize = canvas.width * 0.06;
+            const liveX = canvas.width * 0.05;
+            const liveY = canvas.height * 0.05;
+            ctx.fillRect(liveX, liveY, liveSize, liveSize / 2);
+            
+            // Live text
+            ctx.fillStyle = `rgba(255,255,255,${0.5 + pulse * 0.5})`;
+            ctx.font = `bold ${liveSize * 0.6}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("LIVE", liveX + liveSize / 2, liveY + liveSize / 4);
+        }
+        
+        // Draw news anchor
+        function drawNewsAnchor() {
+            // Simple pixelated news anchor silhouette in corner
+            const anchorWidth = canvas.width * 0.12;
+            const anchorHeight = canvas.height * 0.12;
+            const anchorX = canvas.width * 0.82;
+            const anchorY = canvas.height * 0.05;
+            
+            // Draw anchor background (news desk)
+            ctx.fillStyle = colors.darkBlue;
+            ctx.fillRect(anchorX, anchorY, anchorWidth, anchorHeight);
+            
+            // Draw anchor head
+            ctx.fillStyle = colors.lightGray;
+            const headSize = anchorWidth * 0.4;
+            ctx.fillRect(
+                anchorX + anchorWidth / 2 - headSize / 2,
+                anchorY + anchorHeight * 0.15,
+                headSize,
+                headSize
+            );
+            
+            // Draw anchor body
+            ctx.fillStyle = colors.blue;
+            ctx.fillRect(
+                anchorX + anchorWidth / 2 - headSize * 0.6,
+                anchorY + anchorHeight * 0.15 + headSize,
+                headSize * 1.2,
+                headSize * 0.8
+            );
+            
+            // Draw desk microphone
+            ctx.fillStyle = colors.black;
+            ctx.fillRect(
+                anchorX + anchorWidth / 2 - headSize * 0.1,
+                anchorY + anchorHeight * 0.15 + headSize * 1.5,
+                headSize * 0.2,
+                headSize * 0.3
+            );
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            if (restartButtonVisible) {
+                const buttonWidth = canvas.width * 0.3;
+                const buttonHeight = canvas.height * 0.07;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height * 0.8;
+                
+                // Button background
+                ctx.fillStyle = colors.blue;
+                ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                
+                // Button border
+                ctx.fillStyle = colors.white;
+                const borderThickness = 3;
+                ctx.fillRect(buttonX, buttonY, buttonWidth, borderThickness);
+                ctx.fillRect(buttonX, buttonY + buttonHeight - borderThickness, buttonWidth, borderThickness);
+                ctx.fillRect(buttonX, buttonY, borderThickness, buttonHeight);
+                ctx.fillRect(buttonX + buttonWidth - borderThickness, buttonY, borderThickness, buttonHeight);
+                
+                // Button text
+                ctx.fillStyle = colors.white;
+                ctx.font = `bold ${canvas.height * 0.03}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText("NEXT STORY", canvas.width / 2, buttonY + buttonHeight / 2);
+                
+                // Check if clicking on restart button
+                if (mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
+                    mouseY >= buttonY && mouseY <= buttonY + buttonHeight && mouseIsDown) {
+                    resetGame();
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawTVFrame();
+            drawBreakingNews();
+            drawQuestion();
+            drawNewsAnchor();
+            drawAnswers();
+            drawNewsTicker();
+            drawLiveIndicator();
+            
+            if (gameOver) {
+                drawRestartButton();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game loop
+        gameLoop();
+        
+        // Handle mouse/touch position
+        let mouseX = 0;
+        let mouseY = 0;
+        let mouseIsDown = false;
+        
+        function updateMousePosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            if (e.type.includes('touch')) {
+                mouseX = (e.touches[0].clientX - rect.left) * scaleX;
+                mouseY = (e.touches[0].clientY - rect.top) * scaleY;
+            } else {
+                mouseX = (e.clientX - rect.left) * scaleX;
+                mouseY = (e.clientY - rect.top) * scaleY;
+            }
+        }
+        
+        // Handle click/tap on answers
+        function handleClick() {
+            if (gameOver) return;
+            
+            const startY = canvas.height * 0.35;
+            const height = canvas.height * 0.1;
+            const spacing = canvas.height * 0.02;
+            
+            answers.forEach((answer, index) => {
+                const y = startY + (height + spacing) * index;
+                
+                if (mouseY >= y && mouseY <= y + height &&
+                    mouseX >= canvas.width * 0.15 && mouseX <= canvas.width * 0.15 + canvas.width * 0.7) {
+                    
+                    gameOver = true;
+                    correct = answer.correct;
+                    answer.isSelected = true;
+                    
+                    if (answer.correct) {
+                        playCorrect();
+                    } else {
+                        playIncorrect();
+                    }
+                    
+                    setTimeout(() => {
+                        restartButtonVisible = true;
+                    }, 1000);
+                }
+            });
+        }
+        
+        // Reset game state
+        function resetGame() {
+            gameOver = false;
+            correct = null;
+            restartButtonVisible = false;
+            answers.forEach(answer => answer.isSelected = false);
+            playNewsJingle();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', updateMousePosition);
+        canvas.addEventListener('touchmove', updateMousePosition);
+        
+        canvas.addEventListener('mousedown', () => {
+            mouseIsDown = true;
+            handleClick();
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            mouseIsDown = true;
+            updateMousePosition(e);
+            handleClick();
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            mouseIsDown = false;
+        });
+        
+        canvas.addEventListener('touchend', () => {
+            mouseIsDown = false;
+        });
+    </script>
+</body>
+</html>

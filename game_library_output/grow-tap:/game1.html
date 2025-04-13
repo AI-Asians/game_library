@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital of France - Grow-Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        let isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit style palette
+        const COLORS = {
+            bg: '#0f380f',       // Dark green background
+            question: '#9bbc0f', // Light green text
+            border: '#306230',   // Medium green borders
+            option: '#8bac0f',   // Option background
+            highlight: '#e0f8cf', // Highlight color
+            correct: '#9bbc0f',  // Correct answer color
+            wrong: '#d13b27'     // Wrong answer color
+        };
+        
+        // Game state
+        let gameOver = false;
+        let success = false;
+        
+        // Options data
+        const options = [
+            { text: "Paris", correct: true, pulse: 0, speed: 0.04, phase: Math.random() * Math.PI * 2 },
+            { text: "London", correct: false, pulse: 0, speed: 0.05, phase: Math.random() * Math.PI * 2 },
+            { text: "Berlin", correct: false, pulse: 0, speed: 0.03, phase: Math.random() * Math.PI * 2 },
+            { text: "Rome", correct: false, pulse: 0, speed: 0.035, phase: Math.PI + Math.random() * Math.PI }
+        ];
+        
+        // Sound functions
+        function playBeep(freq, duration, type = 'square') {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        function playCorrect() {
+            playBeep(440, 100);
+            setTimeout(() => playBeep(660, 150), 100);
+            setTimeout(() => playBeep(880, 200), 250);
+        }
+        
+        function playWrong() {
+            playBeep(200, 300, 'sawtooth');
+        }
+        
+        function playClick() {
+            playBeep(330, 50);
+        }
+        
+        // Draw pixelated rectangle with border
+        function drawPixelRect(x, y, width, height, fillColor, borderColor) {
+            // Draw pixelated border (4px)
+            ctx.fillStyle = borderColor;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+            
+            // Draw inner rectangle
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(
+                Math.floor(x + 4), 
+                Math.floor(y + 4), 
+                Math.floor(width - 8), 
+                Math.floor(height - 8)
+            );
+        }
+        
+        // Get option rectangles based on current state
+        function getOptionRects() {
+            const rects = [];
+            const centerX = canvas.width / 2;
+            const questionHeight = canvas.height * 0.15;
+            const startY = questionHeight + 60;
+            const gap = isMobile ? 30 : 40;
+            
+            for (let i = 0; i < options.length; i++) {
+                // Calculate pulsing size based on sine wave
+                const option = options[i];
+                const baseSize = isMobile ? 70 : 100;
+                const pulseAmount = Math.sin(option.phase + option.pulse) * 0.5 + 0.5; // 0 to 1
+                const size = baseSize + Math.floor(pulseAmount * baseSize); // Pixelated steps
+                
+                // Calculate box dimensions
+                const x = centerX - size / 2;
+                const y = startY + (baseSize + gap) * i;
+                const width = size;
+                const height = size;
+                
+                // Store rectangle and its max state
+                rects.push({
+                    x, y, width, height, 
+                    option, 
+                    isMax: pulseAmount > 0.95
+                });
+            }
+            
+            return rects;
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear and draw background
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, canvas.height * 0.1);
+            
+            // Draw instructions
+            ctx.font = '16px sans-serif';
+            ctx.fillText("Tap when the correct answer is at its largest", canvas.width / 2, canvas.height * 0.17);
+            
+            // Draw options
+            const optionRects = getOptionRects();
+            optionRects.forEach(({x, y, width, height, option, isMax}) => {
+                // Determine colors
+                let fillColor = COLORS.option;
+                let borderColor = COLORS.border;
+                
+                if (gameOver) {
+                    if (option.correct) {
+                        fillColor = COLORS.correct;
+                    } else if (!option.correct && !success) {
+                        fillColor = COLORS.wrong;
+                    }
+                } else if (isMax) {
+                    borderColor = COLORS.highlight;
+                }
+                
+                // Draw box
+                drawPixelRect(x, y, width, height, fillColor, borderColor);
+                
+                // Draw text
+                ctx.fillStyle = '#000';
+                ctx.font = '20px sans-serif';
+                ctx.fillText(option.text, x + width / 2, y + height / 2);
+            });
+            
+            // Draw restart button if game is over
+            if (gameOver) {
+                const buttonWidth = 160;
+                const buttonHeight = 50;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height * 0.8;
+                
+                drawPixelRect(
+                    buttonX, buttonY,
+                    buttonWidth, buttonHeight,
+                    COLORS.option, COLORS.border
+                );
+                
+                ctx.fillStyle = '#000';
+                ctx.font = '20px sans-serif';
+                ctx.fillText("Restart", canvas.width / 2, buttonY + buttonHeight / 2);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            // Skip updating if game is over
+            if (gameOver) return;
+            
+            // Update the pulse of each option
+            options.forEach(option => {
+                option.pulse += option.speed;
+            });
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks/taps
+        canvas.addEventListener('click', function(e) {
+            // Get mouse position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const buttonWidth = 160;
+                const buttonHeight = 50;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height * 0.8;
+                
+                if (mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
+                    mouseY >= buttonY && mouseY <= buttonY + buttonHeight) {
+                    // Restart game
+                    gameOver = false;
+                    success = false;
+                    options.forEach(option => {
+                        option.pulse = 0;
+                        option.phase = Math.random() * Math.PI * 2;
+                    });
+                    playClick();
+                }
+            } else {
+                // Check if any option was clicked
+                const optionRects = getOptionRects();
+                for (const {x, y, width, height, option, isMax} of optionRects) {
+                    if (mouseX >= x && mouseX <= x + width &&
+                        mouseY >= y && mouseY <= y + height) {
+                        
+                        // End game
+                        gameOver = true;
+                        
+                        if (option.correct && isMax) {
+                            success = true;
+                            playCorrect();
+                        } else {
+                            success = false;
+                            playWrong();
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

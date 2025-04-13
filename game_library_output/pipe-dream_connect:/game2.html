@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipe-Dream Connect: The Red Planet</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #game-container {
+            position: relative;
+        }
+        #restart-btn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 5px 10px;
+            background-color: #333;
+            color: #fff;
+            border: 2px solid #fff;
+            display: none;
+            font-family: Arial, sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restart-btn">Restart</button>
+    </div>
+
+    <script>
+        // Setup canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart-btn');
+        
+        // Check if we're on mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors
+        const COLORS = {
+            background: '#004466',
+            grid: '#005577',
+            pipe: '#888888',
+            flowEnergy: '#22FFFF',
+            text: '#FFFFFF',
+            success: '#44FF44',
+            failure: '#FF4444',
+            startPoint: '#FFAA00',
+            endPoint: '#00AAFF'
+        };
+        
+        // Game state
+        let gameState = {
+            grid: {
+                size: isMobile ? 36 : 50,
+                rows: Math.floor(canvas.height / (isMobile ? 36 : 50)),
+                cols: Math.floor(canvas.width / (isMobile ? 36 : 50))
+            },
+            pipes: [],
+            draggedPipe: null,
+            pipeOptions: [
+                { type: 'Jupiter', correct: false },
+                { type: 'Mars', correct: true },
+                { type: 'Venus', correct: false },
+                { type: 'Mercury', correct: false }
+            ],
+            startPoint: { row: 2, col: 0 },
+            endPoint: { row: 2, col: 8 },
+            gameOver: false,
+            success: false,
+            flowProgress: 0,
+            flowSpeed: 0.05,
+            flowActive: false
+        };
+        
+        // Pipe shapes
+        const PIPE_SHAPES = {
+            horizontal: { connections: ['left', 'right'] },
+            vertical: { connections: ['up', 'down'] },
+            topRight: { connections: ['up', 'right'] },
+            topLeft: { connections: ['up', 'left'] },
+            bottomRight: { connections: ['down', 'right'] },
+            bottomLeft: { connections: ['down', 'left'] }
+        };
+        
+        // Initialize pipe options
+        function initPipeOptions() {
+            const shapes = Object.keys(PIPE_SHAPES);
+            const options = [];
+            
+            // Create pipe options with different shapes and answers
+            gameState.pipeOptions.forEach((option, index) => {
+                // Assign different shapes to each option
+                const shape = shapes[index % shapes.length];
+                
+                options.push({
+                    shape: shape,
+                    answer: option.type,
+                    correct: option.correct,
+                    row: gameState.grid.rows - 1,
+                    col: index + 1,
+                    placed: false
+                });
+            });
+            
+            gameState.pipeOptions = options;
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameState.pipes = [];
+            gameState.draggedPipe = null;
+            gameState.gameOver = false;
+            gameState.success = false;
+            gameState.flowProgress = 0;
+            gameState.flowActive = false;
+            
+            // Create available pipes
+            initPipeOptions();
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+        }
+        
+        // Draw pixel art pipe
+        function drawPipe(x, y, shape, answer, highlight = false, flowProgress = 0) {
+            const size = gameState.grid.size;
+            const innerSize = size * 0.7;
+            const pipeWidth = size * 0.3;
+            
+            // Draw pipe background
+            ctx.fillStyle = highlight ? '#AAAAAA' : COLORS.pipe;
+            ctx.fillRect(x + (size - innerSize) / 2, y + (size - innerSize) / 2, innerSize, innerSize);
+            
+            // Draw pipe connections based on shape
+            const connections = PIPE_SHAPES[shape].connections;
+            
+            // Helper for drawing connections
+            const drawConnection = (direction) => {
+                switch(direction) {
+                    case 'left':
+                        ctx.fillRect(x, y + (size - pipeWidth) / 2, size / 2, pipeWidth);
+                        break;
+                    case 'right':
+                        ctx.fillRect(x + size / 2, y + (size - pipeWidth) / 2, size / 2, pipeWidth);
+                        break;
+                    case 'up':
+                        ctx.fillRect(x + (size - pipeWidth) / 2, y, pipeWidth, size / 2);
+                        break;
+                    case 'down':
+                        ctx.fillRect(x + (size - pipeWidth) / 2, y + size / 2, pipeWidth, size / 2);
+                        break;
+                }
+            };
+            
+            // Draw the pipe connections
+            connections.forEach(drawConnection);
+            
+            // Draw answer text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${Math.floor(size * 0.25)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(answer, x + size / 2, y + size / 2);
+            
+            // Draw flow if active
+            if (flowProgress > 0) {
+                ctx.fillStyle = COLORS.flowEnergy;
+                
+                // Draw flow based on connections and progress
+                if (connections.includes('left') && flowProgress >= 0.2) {
+                    ctx.fillRect(x, y + (size - pipeWidth * 0.6) / 2, size / 2 * Math.min(1, (flowProgress - 0.2) * 5), pipeWidth * 0.6);
+                }
+                
+                if (connections.includes('right') && flowProgress >= 0.2) {
+                    ctx.fillRect(x + size / 2, y + (size - pipeWidth * 0.6) / 2, 
+                                size / 2 * Math.min(1, (flowProgress - 0.2) * 5), pipeWidth * 0.6);
+                }
+                
+                if (connections.includes('up') && flowProgress >= 0.2) {
+                    ctx.fillRect(x + (size - pipeWidth * 0.6) / 2, y, 
+                                pipeWidth * 0.6, size / 2 * Math.min(1, (flowProgress - 0.2) * 5));
+                }
+                
+                if (connections.includes('down') && flowProgress >= 0.2) {
+                    ctx.fillRect(x + (size - pipeWidth * 0.6) / 2, y + size / 2, 
+                                pipeWidth * 0.6, size / 2 * Math.min(1, (flowProgress - 0.2) * 5));
+                }
+                
+                // Draw center flow
+                if (flowProgress >= 0.1) {
+                    ctx.beginPath();
+                    ctx.arc(x + size / 2, y + size / 2, size * 0.15 * Math.min(1, flowProgress * 3), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+        
+        // Draw grid
+        function drawGrid() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid lines
+            ctx.strokeStyle = COLORS.grid;
+            ctx.lineWidth = 1;
+            
+            for (let i = 0; i <= gameState.grid.rows; i++) {
+                ctx.beginPath();
+                ctx.moveTo(0, i * gameState.grid.size);
+                ctx.lineTo(canvas.width, i * gameState.grid.size);
+                ctx.stroke();
+            }
+            
+            for (let j = 0; j <= gameState.grid.cols; j++) {
+                ctx.beginPath();
+                ctx.moveTo(j * gameState.grid.size, 0);
+                ctx.lineTo(j * gameState.grid.size, canvas.height - gameState.grid.size);
+                ctx.stroke();
+            }
+        }
+        
+        // Draw start and end points
+        function drawEndpoints() {
+            const size = gameState.grid.size;
+            const { startPoint, endPoint } = gameState;
+            
+            // Draw start point
+            ctx.fillStyle = COLORS.startPoint;
+            ctx.fillRect(
+                startPoint.col * size,
+                startPoint.row * size,
+                size,
+                size
+            );
+            
+            // Draw connector
+            ctx.fillStyle = COLORS.pipe;
+            ctx.fillRect(
+                startPoint.col * size + size * 0.7,
+                startPoint.row * size + (size - size * 0.3) / 2,
+                size * 0.3,
+                size * 0.3
+            );
+            
+            // Draw end point
+            ctx.fillStyle = COLORS.endPoint;
+            ctx.fillRect(
+                endPoint.col * size,
+                endPoint.row * size,
+                size,
+                size
+            );
+            
+            // Draw connector
+            ctx.fillStyle = COLORS.pipe;
+            ctx.fillRect(
+                endPoint.col * size,
+                endPoint.row * size + (size - size * 0.3) / 2,
+                size * 0.3,
+                size * 0.3
+            );
+            
+            // Draw flow in start point if active
+            if (gameState.flowActive) {
+                ctx.fillStyle = COLORS.flowEnergy;
+                ctx.fillRect(
+                    startPoint.col * size + size * 0.4,
+                    startPoint.row * size + (size - size * 0.2) / 2,
+                    size * 0.6 * Math.min(1, gameState.flowProgress * 3),
+                    size * 0.2
+                );
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            const questionText = "Which planet is known as the Red Planet?";
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 18 : 24}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(questionText, canvas.width / 2, 10);
+        }
+        
+        // Draw result message
+        function drawResult() {
+            if (!gameState.gameOver) return;
+            
+            const message = gameState.success ? "Correct!" : "Incorrect!";
+            
+            ctx.fillStyle = gameState.success ? COLORS.success : COLORS.failure;
+            ctx.font = `${isMobile ? 32 : 48}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(message, canvas.width / 2, canvas.height / 2 - 100);
+            
+            // Show restart button
+            restartBtn.style.display = 'block';
+        }
+        
+        // Check if pipes form a valid path
+        function checkPath() {
+            // Start from the startPoint and see if we can reach the endPoint
+            const { startPoint, endPoint, pipes } = gameState;
+            let currentPos = { row: startPoint.row, col: startPoint.col + 1 }; // Start from the first cell after startPoint
+            let previousDirection = 'left'; // Coming from the left (from the start point)
+            let pathValid = true;
+            let correctAnswer = false;
+            
+            // Function to get pipe at position
+            const getPipeAt = (row, col) => {
+                return pipes.find(p => p.row === row && p.col === col);
+            };
+            
+            // Check if we've reached the end
+            const reachedEnd = (pos) => {
+                return pos.row === endPoint.row && pos.col === endPoint.col;
+            };
+            
+            // Track visited positions to prevent loops
+            const visited = new Set();
+            
+            // Follow the path until we reach the end or hit a dead end
+            while (!reachedEnd(currentPos) && pathValid) {
+                // Mark current position as visited
+                const posKey = `${currentPos.row},${currentPos.col}`;
+                if (visited.has(posKey)) {
+                    pathValid = false;
+                    break;
+                }
+                visited.add(posKey);
+                
+                // Get pipe at current position
+                const currentPipe = getPipeAt(currentPos.row, currentPos.col);
+                if (!currentPipe) {
+                    pathValid = false;
+                    break;
+                }
+                
+                // Check if current pipe connects to the previous segment
+                const connections = PIPE_SHAPES[currentPipe.shape].connections;
+                if (!connections.includes(getOppositeDirection(previousDirection))) {
+                    pathValid = false;
+                    break;
+                }
+                
+                // Determine next direction
+                let nextDirection = null;
+                for (const conn of connections) {
+                    if (conn !== getOppositeDirection(previousDirection)) {
+                        nextDirection = conn;
+                        break;
+                    }
+                }
+                
+                if (!nextDirection) {
+                    pathValid = false;
+                    break;
+                }
+                
+                // Check if this pipe has the correct answer
+                if (currentPipe.correct) {
+                    correctAnswer = true;
+                }
+                
+                // Move to next position
+                previousDirection = nextDirection;
+                switch (nextDirection) {
+                    case 'right':
+                        currentPos.col += 1;
+                        break;
+                    case 'left':
+                        currentPos.col -= 1;
+                        break;
+                    case 'up':
+                        currentPos.row -= 1;
+                        break;
+                    case 'down':
+                        currentPos.row += 1;
+                        break;
+                }
+            }
+            
+            // Check if we reached the end and had correct answer
+            const success = pathValid && reachedEnd(currentPos) && correctAnswer;
+            
+            return { success, pathValid };
+        }
+        
+        // Helper function to get opposite direction
+        function getOppositeDirection(direction) {
+            switch (direction) {
+                case 'left': return 'right';
+                case 'right': return 'left';
+                case 'up': return 'down';
+                case 'down': return 'up';
+                default: return null;
+            }
+        }
+        
+        // Handle game flow animation
+        function updateFlow() {
+            if (!gameState.flowActive) return;
+            
+            gameState.flowProgress += gameState.flowSpeed;
+            
+            // Complete the flow
+            if (gameState.flowProgress >= 1) {
+                gameState.gameOver = true;
+                gameState.success = gameState.pathResult.success;
+                playSound(gameState.success ? 'success' : 'failure');
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background grid
+            drawGrid();
+            
+            // Draw placed pipes
+            gameState.pipes.forEach(pipe => {
+                const x = pipe.col * gameState.grid.size;
+                const y = pipe.row * gameState.grid.size;
+                drawPipe(x, y, pipe.shape, pipe.answer, false, 
+                        gameState.flowActive ? gameState.flowProgress : 0);
+            });
+            
+            // Draw endpoints
+            drawEndpoints();
+            
+            // Draw available pipe options at the bottom
+            gameState.pipeOptions.forEach(pipe => {
+                if (!pipe.placed) {
+                    const x = pipe.col * gameState.grid.size;
+                    const y = pipe.row * gameState.grid.size;
+                    drawPipe(x, y, pipe.shape, pipe.answer, pipe === gameState.draggedPipe);
+                }
+            });
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw dragged pipe
+            if (gameState.draggedPipe) {
+                const { dragX, dragY } = gameState;
+                drawPipe(dragX - gameState.grid.size / 2, dragY - gameState.grid.size / 2, 
+                        gameState.draggedPipe.shape, gameState.draggedPipe.answer, true);
+            }
+            
+            // Draw result if game is over
+            drawResult();
+        }
+        
+        // Main update function
+        function update() {
+            updateFlow();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Mouse/touch event handlers
+        function handleMouseDown(e) {
+            if (gameState.gameOver || gameState.flowActive) return;
+            
+            const { offsetX, offsetY } = getEventCoordinates(e);
+            const row = Math.floor(offsetY / gameState.grid.size);
+            const col = Math.floor(offsetX / gameState.grid.size);
+            
+            // Check if clicking on an available pipe
+            for (let i = 0; i < gameState.pipeOptions.length; i++) {
+                const pipe = gameState.pipeOptions[i];
+                if (!pipe.placed && pipe.row === row && pipe.col === col) {
+                    gameState.draggedPipe = pipe;
+                    gameState.dragX = offsetX;
+                    gameState.dragY = offsetY;
+                    playSound('pickup');
+                    break;
+                }
+            }
+        }
+        
+        function handleMouseMove(e) {
+            if (!gameState.draggedPipe) return;
+            
+            const { offsetX, offsetY } = getEventCoordinates(e);
+            gameState.dragX = offsetX;
+            gameState.dragY = offsetY;
+        }
+        
+        function handleMouseUp(e) {
+            if (!gameState.draggedPipe) return;
+            
+            const { offsetX, offsetY } = getEventCoordinates(e);
+            const row = Math.floor(offsetY / gameState.grid.size);
+            const col = Math.floor(offsetX / gameState.grid.size);
+            
+            // Check if valid position (not on endpoints or existing pipes)
+            const isEndpoint = (
+                (row === gameState.startPoint.row && col === gameState.startPoint.col) ||
+                (row === gameState.endPoint.row && col === gameState.endPoint.col)
+            );
+            
+            const isExistingPipe = gameState.pipes.some(p => p.row === row && p.col === col);
+            const isInGrid = row >= 0 && row < gameState.grid.rows - 1 && col >= 0 && col < gameState.grid.cols;
+            
+            if (!isEndpoint && !isExistingPipe && isInGrid) {
+                // Place the pipe
+                const placedPipe = {
+                    ...gameState.draggedPipe,
+                    row: row,
+                    col: col,
+                    placed: true
+                };
+                
+                gameState.pipes.push(placedPipe);
+                gameState.draggedPipe.placed = true;
+                
+                playSound('place');
+                
+                // Check if we have a complete path
+                const pathResult = checkPath();
+                if (pathResult.pathValid) {
+                    gameState.pathResult = pathResult;
+                    gameState.flowActive = true;
+                    playSound('flow');
+                }
+            }
+            
+            gameState.draggedPipe = null;
+        }
+        
+        // Helper to get coordinates for both mouse and touch events
+        function getEventCoordinates(e) {
+            let clientX, clientY;
+            
+            // Handle both mouse and touch events
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            return {
+                offsetX: clientX - rect.left,
+                offsetY: clientY - rect.top
+            };
+        }
+        
+        // Simple sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'pickup':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'place':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'flow':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'success':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'failure':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('touchstart', handleMouseDown);
+        canvas.addEventListener('touchmove', handleMouseMove);
+        canvas.addEventListener('touchend', handleMouseUp);
+        
+        // Restart button
+        restartBtn.addEventListener('click', () => {
+            initGame();
+        });
+        
+        // Start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Game Library</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #121212;
+        margin: 0;
+        padding: 20px;
+        color: #fff;
+      }
+
+      .header {
+        text-align: center;
+        padding: 20px 0;
+      }
+
+      h1 {
+        font-size: 36px;
+        color: #fff;
+        margin-bottom: 20px;
+      }
+
+      .games-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 10px;
+      }
+
+      .game-card {
+        background-color: #1e1e1e;
+        border-radius: 8px;
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.2s;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        cursor: pointer;
+        position: relative;
+        height: 230px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .game-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+      }
+
+      .game-thumbnail {
+        width: 100%;
+        height: 150px;
+        background-color: #333;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .game-thumbnail img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.3s;
+      }
+
+      .game-card:hover .game-thumbnail img {
+        transform: scale(1.05);
+      }
+
+      .game-thumbnail-fallback {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        width: 100%;
+      }
+
+      .game-thumbnail-icon {
+        width: 60px;
+        height: 60px;
+        background-color: #444;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        font-weight: bold;
+        color: #fff;
+        margin-bottom: 10px;
+      }
+
+      .game-info {
+        padding: 15px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        flex-grow: 1;
+        justify-content: center;
+      }
+
+      .game-title {
+        font-size: 16px;
+        font-weight: bold;
+        color: #fff;
+        margin-bottom: 5px;
+      }
+
+      .game-type {
+        font-size: 12px;
+        color: #aaa;
+      }
+
+      .play-button {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0);
+        background-color: rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.3s, background-color 0.3s;
+        backdrop-filter: blur(2px);
+      }
+
+      .play-icon {
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 10px 0 10px 16px;
+        border-color: transparent transparent transparent #ffffff;
+        margin-left: 4px;
+      }
+
+      .game-card:hover .play-button {
+        transform: translate(-50%, -50%) scale(1);
+      }
+
+      .play-button:hover {
+        background-color: rgba(255, 255, 255, 0.3);
+      }
+
+      .game-popup-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        display: none;
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .game-popup {
+        position: relative;
+        width: 820px;
+        height: 620px;
+        background-color: #1a1a1a;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+      }
+
+      .game-frame {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background-color: #000;
+      }
+
+      .close-button {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: rgba(0, 0, 0, 0.5);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 36px;
+        height: 36px;
+        cursor: pointer;
+        z-index: 1001;
+        font-weight: bold;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background-color 0.2s;
+      }
+
+      .close-button:hover {
+        background-color: rgba(255, 30, 30, 0.7);
+      }
+
+      .status-message {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        z-index: 1002;
+        display: none;
+      }
+
+      .fullscreen-button {
+        position: absolute;
+        top: 10px;
+        right: 56px;
+        background-color: rgba(0, 0, 0, 0.5);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 36px;
+        height: 36px;
+        cursor: pointer;
+        z-index: 1001;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background-color 0.2s;
+      }
+
+      .fullscreen-button:hover {
+        background-color: rgba(0, 0, 0, 0.7);
+      }
+
+      .fullscreen-icon {
+        width: 16px;
+        height: 16px;
+        position: relative;
+      }
+
+      .fullscreen-icon::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 6px;
+        height: 6px;
+        border-top: 2px solid white;
+        border-left: 2px solid white;
+      }
+
+      .fullscreen-icon::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        width: 6px;
+        height: 6px;
+        border-bottom: 2px solid white;
+        border-right: 2px solid white;
+      }
+
+      /* Game category section */
+      .category-section {
+        margin-bottom: 40px;
+      }
+
+      .category-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+
+      .category-title {
+        font-size: 24px;
+        font-weight: bold;
+        color: #fff;
+        margin: 0;
+        padding-left: 10px;
+        border-left: 4px solid #4cc9f0;
+      }
+
+      @media (max-width: 900px) {
+        .game-popup {
+          width: 95%;
+          height: 80%;
+        }
+      }
+
+      @media (max-width: 600px) {
+        .games-grid {
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        }
+
+        .game-card {
+          height: 200px;
+        }
+
+        .game-thumbnail {
+          height: 120px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>GAME LIBRARY</h1>
+    </div>
+
+    <div id="categoriesContainer">
+      <!-- Categories will be populated here -->
+    </div>
+
+    <div class="game-popup-overlay" id="gamePopupOverlay">
+      <div class="game-popup">
+        <button class="close-button" id="closeButton">✕</button>
+        <button class="fullscreen-button" id="fullscreenButton">
+          <div class="fullscreen-icon"></div>
+        </button>
+        <iframe id="gameFrame" class="game-frame" allowfullscreen></iframe>
+      </div>
+    </div>
+
+    <div class="status-message" id="statusMessage"></div>
+
+    <script>
+      // Game categories
+      const gameCategories = {
+        "Action Games": [
+          "bubble-pop:",
+          "quick-shoot:",
+          "asteroid-blast:",
+          "defend-tap:",
+          "rapid-fire_tap:",
+          "whack-a-mole_answer:",
+          "reflex-jump:",
+          "flash-dodge:",
+        ],
+        "Puzzle Games": [
+          "maze-navigate:",
+          "lock-combination:",
+          "pipe-dream_connect:",
+          "slide-puzzle_select:",
+          "jigsaw-tap:",
+          "sequence-tap:",
+          "code-breaker_tap:",
+          "tile-flip_tap:",
+          "pattern-trace:",
+        ],
+        "QuickResponse Games": [
+          "tap-pop:",
+          "quick-tap_target:",
+          "memory-flash_tap:",
+          "rapid-cycle:",
+          "swipe-select:",
+          "balance-tap:",
+        ],
+        "True/False Games": [
+          "binary-jump:",
+          "bridge-tap:",
+          "color-flip_tap:",
+          "gate-tap:",
+          'truth-laser:_press_t_key_to_fire_"true"_laser,_f_key_for_"false"_laser;_destroy_targets_matching_the_statement\'s_validity.',
+          "push-block:_use_arrow_keys_to_push_a_block_onto_a_true_or_false_pressure_plate.",
+        ],
+      };
+
+      // All game types in a single list (used for "All Games" category)
+      const allGames = [
+        "answer-catch:",
+        "arkanoid-select:",
+        "art-gallery:",
+        "asteroid-blast:",
+        "balance-tap:",
+        "binary-beam:_use_mouse_to_aim_a_continuous_beam_left_(false)_or_right_(true)_to_hit_targets_or_guide_objects.",
+        "binary-jump:",
+        "binary-jump_platformer:_character_runs_automatically;_press_jump_key_(spacebar)_only_if_the_statement_is_true_to_clear_gaps_or_collect_items._if_false,_do_nothing.",
+        "book-shelf:",
+        "bouncer-tap:",
+        "bridge-tap:",
+        "bubble-pop:",
+        "build-tap:",
+        "cannon-aim:",
+        "charge-beam_tap:",
+        "charge-shot:",
+        "charge-tap:",
+        "chemistry-mix:",
+        "code-breaker_tap:",
+        "code-entry:",
+        "color-fill:",
+        "color-flip_tap:",
+        "color-match_tap:",
+        "color-switcher:_press_a_key_to_switch_player_color_to_green_(true)_or_red_(false);_only_allows_passing_through_gates_of_the_same_color.",
+        "connect-tap:",
+        "constellation-draw:",
+        "conveyor-sort:",
+        "conveyor-tap:",
+        "cut-the-rope_tap:",
+        "defend-tap:",
+        "dig-tap:",
+        "dj-scratch:",
+        "factory-sort:",
+        "fan-tap:",
+        "filter-gate:_press_key_to_activate_true_filter_or_false_filter,_allowing_correctly_labeled_items_to_pass.",
+        "filter-tap:",
+        "fishing-for-answers:",
+        "flash-dodge:",
+        "fling-select:",
+        "galaxy-jump:",
+        "gardening-select:",
+        "gate-tap:",
+        "grow-tap:",
+        "heartbeat-tap:",
+        "ingredient-mix:",
+        "jigsaw-tap:",
+        "launch-tap:",
+        "light-switch_tap:",
+        "light-up_tap:",
+        "lock-combination:",
+        "lock-pick_tap:",
+        "magnet-tap:",
+        "maze-navigate:",
+        "memory-flash_tap:",
+        "merge-tap:",
+        "mine-sweeper_select:",
+        "mirror-tap:",
+        "morse-code_key:_tap_one_key_for_dot_(true),_another_for_dash_(false)_to_input_the_correct_signal.",
+        "morse-tap:",
+        "music-sequencer:",
+        "network-node:",
+        "news-headline:",
+        "orbit-tap:",
+        "paint-bucket_tap:",
+        "parry-tap:",
+        "path-chooser_tap:",
+        "path-paint_tap:",
+        "path-switcher:_an_object_moves_along_a_path;_press_a_key_to_switch_tracks_towards_a_true_or_false_destination.",
+        "pattern-trace:",
+        "phase-tap:",
+        "pipe-dream_connect:",
+        "platform-builder:",
+        "portal-tap:",
+        "push-block:_use_arrow_keys_to_push_a_block_onto_a_true_or_false_pressure_plate.",
+        "push-pull_tap:",
+        "quick-shoot:",
+        "quick-sort:_drag_a_single_falling_object_(mouse)_into_the_correct_true_or_false_boxes_before_it_hits_bottom_(inspired_by_tetris_but_sorting-focused)._[as_provided]",
+        "quick-stack:",
+        "quick-tap_target:",
+        "racing-lanes:",
+        "rapid-cycle:",
+        "rapid-fire_tap:",
+        "reflex-alley_tap:",
+        "reflex-jump:",
+        "rhythm-hit:",
+        "rotate-shield_tap:",
+        "rotate-tap:",
+        "sequence-tap:",
+        "shape-sort_tap:",
+        "slide-puzzle_select:",
+        "sound-match_tap:",
+        'sound-toggle:_press_a_key_to_turn_sound_on_(true)_or_off_(false);_match_the_required_state_based_on_the_statement_(e.g.,_"silence_is_needed"_=_false).',
+        "sound-wave_tap:",
+        "speed-match:",
+        "spell-casting:",
+        "split-decision:_screen_splits;_click_the_true_side_or_false_side_quickly_based_on_the_statement.",
+        "stack-tap:",
+        "submarine-ping:",
+        "swipe-select:",
+        "switch-track_tap:",
+        "sword_&_shield:_use_left_click_(sword_-_attack_false)_and_right_click_(shield_-_block_true)_based_on_incoming_statement-attacks.",
+        "tap-lane_change:",
+        "tap-pop:",
+        "tile-flip_tap:",
+        "time-travel:",
+        "tower-defense_select:",
+        'truth-laser:_press_t_key_to_fire_"true"_laser,_f_key_for_"false"_laser;_destroy_targets_matching_the_statement\'s_validity.',
+        "two-button_rhythm:_hit_left_key_for_false,_right_key_for_true,_timed_to_markers_on_a_rhythm_track.",
+        "wave-tap:",
+        "whack-a-mole_answer:",
+        "whack-an-answer:",
+        "word-link:",
+        "zoom-tap:",
+      ];
+
+      // DOM elements
+      const categoriesContainer = document.getElementById(
+        "categoriesContainer"
+      );
+      const gamePopupOverlay = document.getElementById("gamePopupOverlay");
+      const gameFrame = document.getElementById("gameFrame");
+      const closeButton = document.getElementById("closeButton");
+      const fullscreenButton = document.getElementById("fullscreenButton");
+      const statusMessage = document.getElementById("statusMessage");
+
+      // Format game name for display
+      function formatGameName(name) {
+        // Remove everything after the first colon if it exists
+        const simpleName = name.split(":")[0];
+
+        return simpleName
+          .replace(/_tap/g, "")
+          .replace(/-/g, " ")
+          .replace(/_/g, " ")
+          .split(" ")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+      }
+
+      // Get initials for the game icon
+      function getGameInitials(name) {
+        // Remove everything after the first colon if it exists
+        const simpleName = name.split(":")[0];
+
+        const formattedName = simpleName
+          .replace(/_tap/g, "")
+          .replace(/-/g, " ")
+          .replace(/_/g, " ")
+          .split(" ")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+
+        const words = formattedName.split(" ");
+        if (words.length === 1) {
+          return words[0].substring(0, 2).toUpperCase();
+        } else {
+          return (words[0].charAt(0) + words[1].charAt(0)).toUpperCase();
+        }
+      }
+
+      // Determine game type (MCQ or TF)
+      function getGameType(name) {
+        // These keywords usually indicate True/False games
+        const tfKeywords = [
+          "true",
+          "false",
+          "binary",
+          "tf_",
+          "bridge",
+          "split",
+          "truth",
+          "shield",
+        ];
+
+        // Convert name to lowercase for case-insensitive matching
+        const lowerName = name.toLowerCase();
+
+        for (const keyword of tfKeywords) {
+          if (lowerName.includes(keyword)) {
+            return "True/False";
+          }
+        }
+
+        return "Multiple Choice";
+      }
+
+      // Build thumbnail path for a game
+      function getThumbnailPath(game) {
+        return `/Users/benedictneo/game_library/game_library_output/${game}/thumbnail.png`;
+      }
+
+      // Show status message
+      function showStatus(message, isError = false) {
+        statusMessage.textContent = message;
+        statusMessage.style.backgroundColor = isError
+          ? "rgba(255,0,0,0.8)"
+          : "rgba(0,0,0,0.8)";
+        statusMessage.style.display = "block";
+        setTimeout(() => {
+          statusMessage.style.display = "none";
+        }, 3000);
+      }
+
+      // Create a game card
+      function createGameCard(game) {
+        // Create game card element
+        const card = document.createElement("div");
+        card.className = "game-card";
+
+        // Create thumbnail container
+        const thumbnailContainer = document.createElement("div");
+        thumbnailContainer.className = "game-thumbnail";
+
+        // Try to load thumbnail image
+        const thumbnail = document.createElement("img");
+        thumbnail.src = getThumbnailPath(game);
+        thumbnail.alt = formatGameName(game);
+        thumbnail.onerror = function () {
+          this.style.display = "none";
+
+          // Create fallback content if image fails to load
+          const fallback = document.createElement("div");
+          fallback.className = "game-thumbnail-fallback";
+
+          const iconContainer = document.createElement("div");
+          iconContainer.className = "game-thumbnail-icon";
+          iconContainer.textContent = getGameInitials(game);
+
+          fallback.appendChild(iconContainer);
+          thumbnailContainer.appendChild(fallback);
+        };
+        thumbnailContainer.appendChild(thumbnail);
+
+        // Add play button overlay
+        const playButton = document.createElement("div");
+        playButton.className = "play-button";
+        const playIcon = document.createElement("div");
+        playIcon.className = "play-icon";
+        playButton.appendChild(playIcon);
+        thumbnailContainer.appendChild(playButton);
+
+        // Create game info container
+        const infoContainer = document.createElement("div");
+        infoContainer.className = "game-info";
+
+        // Create game title
+        const title = document.createElement("div");
+        title.className = "game-title";
+        title.textContent = formatGameName(game);
+
+        // Create game type badge
+        const type = document.createElement("div");
+        type.className = "game-type";
+        type.textContent = getGameType(game);
+
+        // Add elements to info container
+        infoContainer.appendChild(title);
+        infoContainer.appendChild(type);
+
+        // Add all elements to card
+        card.appendChild(thumbnailContainer);
+        card.appendChild(infoContainer);
+
+        // Add click event
+        card.addEventListener("click", () => {
+          // Use the game name with the colon for directory
+          const gamePath = `file:///Users/benedictneo/game_library/game_library_output/${game}/game1.html`;
+          console.log("Opening game:", gamePath);
+          showStatus(`Loading ${title.textContent}...`);
+
+          // Display game in popup
+          gameFrame.src = gamePath;
+          gamePopupOverlay.style.display = "flex";
+        });
+
+        return card;
+      }
+
+      // Create category section
+      function createCategorySection(categoryName, games) {
+        const section = document.createElement("div");
+        section.className = "category-section";
+
+        // Create category header
+        const header = document.createElement("div");
+        header.className = "category-header";
+
+        const title = document.createElement("h2");
+        title.className = "category-title";
+        title.textContent = categoryName;
+
+        header.appendChild(title);
+        section.appendChild(header);
+
+        // Create games grid for this category
+        const grid = document.createElement("div");
+        grid.className = "games-grid";
+
+        // Sort games alphabetically
+        const sortedGames = [...games].sort((a, b) => {
+          return formatGameName(a).localeCompare(formatGameName(b));
+        });
+
+        // Add game cards to grid
+        sortedGames.forEach((game) => {
+          const card = createGameCard(game);
+          grid.appendChild(card);
+        });
+
+        section.appendChild(grid);
+        return section;
+      }
+
+      // Add "All Games" as the first category
+      function displayAllCategories() {
+        // First, add the "All Games" category
+        const allGamesSection = createCategorySection("All Games", allGames);
+        categoriesContainer.appendChild(allGamesSection);
+
+        // Then add each defined category
+        Object.entries(gameCategories).forEach(([categoryName, games]) => {
+          if (games.length > 0) {
+            const section = createCategorySection(categoryName, games);
+            categoriesContainer.appendChild(section);
+          }
+        });
+      }
+
+      // Close popup functionality
+      closeButton.addEventListener("click", () => {
+        gamePopupOverlay.style.display = "none";
+        gameFrame.src = "about:blank";
+      });
+
+      // Fullscreen button functionality
+      fullscreenButton.addEventListener("click", () => {
+        if (gameFrame.requestFullscreen) {
+          gameFrame.requestFullscreen();
+        } else if (gameFrame.webkitRequestFullscreen) {
+          /* Safari */
+          gameFrame.webkitRequestFullscreen();
+        } else if (gameFrame.msRequestFullscreen) {
+          /* IE11 */
+          gameFrame.msRequestFullscreen();
+        }
+      });
+
+      // Close popup with Escape key
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && gamePopupOverlay.style.display === "flex") {
+          gamePopupOverlay.style.display = "none";
+          gameFrame.src = "about:blank";
+        }
+      });
+
+      // Click outside popup to close
+      gamePopupOverlay.addEventListener("click", (e) => {
+        if (e.target === gamePopupOverlay) {
+          gamePopupOverlay.style.display = "none";
+          gameFrame.src = "about:blank";
+        }
+      });
+
+      // Initialize when page loads
+      window.onload = displayAllCategories;
+    </script>
+  </body>
+</html>

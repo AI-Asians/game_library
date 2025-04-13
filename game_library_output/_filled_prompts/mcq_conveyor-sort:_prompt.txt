@@ -1,0 +1,101 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ What is the capital of France?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Conveyor-Sort**  
+ Description of mechanic: 
+
+- Items move along a conveyor belt from one side of the screen to the other
+- Player must sort items by clicking/tapping to direct them to the correct category
+- Items should automatically move at a steady pace
+- Multiple answer options should be traveling on the conveyor
+- Player must direct the correct answer into a designated bin/area
+- Incorrect answers should be directed to a different bin/area
+- Visual feedback should show if the sorting was correct or incorrect
+- The conveyor should have visible movement (like belt animation)
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+Conveyor should have visible rollers and texture details in pixel art style.
+Sorting bins should be clearly distinct with pixel art labels.
+Use contrasting colors for correct and incorrect bins.
+Add simple pixel-style arrows or buttons for directing items.
+Include basic pixel art items representing answer options.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+Conveyor should move at a challenging but manageable speed.
+Allow for multiple answer options to be on screen simultaneously.
+Keep sorting mechanics intuitive - one-click to direct an item.
+Ensure conveyor items are spaced well enough to make decisions.
+Include a visual countdown to create urgency.
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Space Wall Beam Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #gameContainer {
+            position: relative;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: 3px solid #888;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restartBtn">RESTART</button>
+    </div>
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Game variables
+        let charging = false;
+        let chargePower = 0;
+        let gameOver = false;
+        let correctAnswer = false; // The correct answer is FALSE
+        let beamFired = false;
+        let beamX = 0;
+        let beamY = 0;
+        let beamWidth = 0;
+        let beamTarget = null;
+        let screenShake = 0;
+        let particles = [];
+        let optimalChargeTime = 1.5 + Math.random() * 0.5; // Randomize optimal timing
+
+        // Beam properties
+        const chargeSpeed = 0.025;
+        const maxCharge = 1.0;
+        
+        // Target positions
+        const trueTarget = { x: canvas.width * 0.25, y: canvas.height * 0.4, width: 100, height: 100, text: "TRUE" };
+        const falseTarget = { x: canvas.width * 0.75, y: canvas.height * 0.4, width: 100, height: 100, text: "FALSE" };
+        
+        // Colors (limited palette)
+        const colors = {
+            background: "#0a0a1a",
+            question: "#ffffff",
+            beam: ["#ff0000", "#ff4400", "#ff8800", "#ffcc00", "#ffff00"],
+            chargeBar: "#00aa44",
+            chargeBarBg: "#224433",
+            trueTarget: "#cc4444",
+            falseTarget: "#4444cc",
+            targetBorder: "#ffffff",
+            particles: ["#ffff00", "#ff8800", "#ff4400", "#ffffff"]
+        };
+
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Simple sound generator
+        function playSound(type, frequency, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function chargeSound() {
+            playSound('square', 200 + chargePower * 400, 0.1);
+        }
+
+        function fireSound() {
+            playSound('sawtooth', 400, 0.3);
+        }
+
+        function hitSound(correct) {
+            if (correct) {
+                playSound('sine', 660, 0.5);
+                setTimeout(() => playSound('sine', 880, 0.5), 200);
+            } else {
+                playSound('square', 200, 0.5);
+                setTimeout(() => playSound('square', 150, 0.5), 200);
+            }
+        }
+
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            const pixelSize = 4;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillStyle = color;
+                    ctx.fillRect(Math.floor(x + i), Math.floor(y + j), pixelSize, pixelSize);
+                }
+            }
+        }
+
+        // Draw target
+        function drawTarget(target, color) {
+            drawPixelRect(target.x - target.width/2, target.y - target.height/2, target.width, target.height, color);
+            
+            // Border
+            ctx.strokeStyle = colors.targetBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(
+                Math.floor(target.x - target.width/2) + 2, 
+                Math.floor(target.y - target.height/2) + 2, 
+                target.width - 4, 
+                target.height - 4
+            );
+            
+            // Text
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(target.text, target.x, target.y);
+        }
+
+        // Create particles
+        function createParticles(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    size: Math.random() * 8 + 4,
+                    color: colors.particles[Math.floor(Math.random() * colors.particles.length)],
+                    life: 30
+                });
+            }
+        }
+
+        // Update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // Draw particles
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), p.size, p.size);
+            });
+        }
+
+        // Draw charge bar
+        function drawChargeBar() {
+            const barWidth = 300;
+            const barHeight = 30;
+            const barX = (canvas.width - barWidth) / 2;
+            const barY = canvas.height - 80;
+            
+            // Background
+            drawPixelRect(barX, barY, barWidth, barHeight, colors.chargeBarBg);
+            
+            // Fill
+            const fillWidth = barWidth * chargePower;
+            drawPixelRect(barX, barY, fillWidth, barHeight, colors.chargeBar);
+            
+            // Segments
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            for (let i = 1; i < 10; i++) {
+                const segX = barX + (barWidth / 10) * i;
+                ctx.beginPath();
+                ctx.moveTo(segX, barY);
+                ctx.lineTo(segX, barY + barHeight);
+                ctx.stroke();
+            }
+        }
+
+        // Check hit
+        function checkHit() {
+            // Determine which target is hit based on charge level
+            let targetHit = null;
+            
+            if (chargePower < 0.5) {
+                targetHit = trueTarget;
+                beamTarget = trueTarget;
+            } else {
+                targetHit = falseTarget;
+                beamTarget = falseTarget;
+            }
+            
+            // The correct answer is FALSE (Great Wall not visible from space)
+            const isCorrect = targetHit === falseTarget;
+            
+            // Create hit effect
+            createParticles(targetHit.x, targetHit.y, 20);
+            screenShake = 10;
+            
+            // Play sound
+            hitSound(isCorrect);
+            
+            // Set game state
+            gameOver = true;
+            correctAnswer = isCorrect;
+            
+            // Show restart button
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+            }, 1000);
+        }
+
+        // Main game update
+        function update() {
+            if (gameOver) return;
+            
+            if (charging) {
+                chargePower += chargeSpeed;
+                if (chargePower >= maxCharge) {
+                    chargePower = maxCharge;
+                }
+                
+                // Play charge sound at intervals
+                if (Math.floor(chargePower * 10) % 2 === 0 && Math.floor((chargePower - chargeSpeed) * 10) % 2 === 1) {
+                    chargeSound();
+                }
+            }
+            
+            if (beamFired) {
+                // Animate beam
+                beamWidth += 40;
+                if (beamX + beamWidth >= beamTarget.x) {
+                    checkHit();
+                    beamFired = false;
+                }
+            }
+            
+            // Update screen shake
+            if (screenShake > 0) {
+                screenShake--;
+            }
+            
+            // Update particles
+            updateParticles();
+        }
+
+        // Main game render
+        function render() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply screen shake
+            if (screenShake > 0) {
+                ctx.save();
+                ctx.translate(
+                    Math.random() * screenShake - screenShake/2,
+                    Math.random() * screenShake - screenShake/2
+                );
+            }
+            
+            // Draw question
+            ctx.fillStyle = colors.question;
+            ctx.font = "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("The Great Wall of China is visible from space.", canvas.width/2, 100);
+            
+            // Draw targets
+            drawTarget(trueTarget, colors.trueTarget);
+            drawTarget(falseTarget, colors.falseTarget);
+            
+            // Draw charge cannon
+            const cannonSize = 50;
+            const cannonX = canvas.width / 2 - cannonSize / 2;
+            const cannonY = canvas.height - 150;
+            
+            drawPixelRect(cannonX, cannonY, cannonSize, cannonSize, "#888888");
+            
+            // Draw beam if fired
+            if (beamFired) {
+                const beamHeight = 20;
+                const beamColor = colors.beam[Math.floor(Math.random() * colors.beam.length)];
+                drawPixelRect(beamX, beamY - beamHeight/2, beamWidth, beamHeight, beamColor);
+            }
+            
+            // Draw charge glow if charging
+            if (charging && !beamFired) {
+                const glowSize = 30 + Math.sin(Date.now() / 100) * 10 + chargePower * 20;
+                ctx.fillStyle = colors.beam[Math.floor(chargePower * 4)];
+                ctx.beginPath();
+                ctx.arc(cannonX + cannonSize/2, cannonY + cannonSize/2, glowSize, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw pulsing beam inside the cannon
+                const innerGlow = 10 + chargePower * 15;
+                ctx.fillStyle = "#ffffff";
+                ctx.beginPath();
+                ctx.arc(cannonX + cannonSize/2, cannonY + cannonSize/2, innerGlow, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw charge bar
+            drawChargeBar();
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw game over state
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0,0,0,0.7)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = correctAnswer ? "#44ff44" : "#ff4444";
+                ctx.font = "48px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(correctAnswer ? "CORRECT!" : "WRONG!", canvas.width/2, canvas.height/2);
+            }
+            
+            // Restore context if shaking
+            if (screenShake > 0) {
+                ctx.restore();
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Input handlers
+        canvas.addEventListener('mousedown', function() {
+            if (!gameOver && !beamFired) {
+                charging = true;
+                audioCtx.resume(); // Ensure audio context is running
+            }
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            if (!gameOver && charging) {
+                charging = false;
+                beamFired = true;
+                fireSound();
+                
+                // Set beam starting position
+                beamX = canvas.width / 2;
+                beamY = canvas.height - 150 + 25;
+                beamWidth = 0;
+            }
+        });
+
+        // Touch support
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if (!gameOver && !beamFired) {
+                charging = true;
+                audioCtx.resume(); // Ensure audio context is running
+            }
+        });
+
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            if (!gameOver && charging) {
+                charging = false;
+                beamFired = true;
+                fireSound();
+                
+                // Set beam starting position
+                beamX = canvas.width / 2;
+                beamY = canvas.height - 150 + 25;
+                beamWidth = 0;
+            }
+        });
+
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            // Reset game state
+            charging = false;
+            chargePower = 0;
+            gameOver = false;
+            beamFired = false;
+            particles = [];
+            screenShake = 0;
+            optimalChargeTime = 1.5 + Math.random() * 0.5;
+            restartBtn.style.display = 'none';
+        });
+
+        // Media query for mobile
+        function resizeCanvas() {
+            if (window.innerWidth <= 600) {
+                canvas.width = 360;
+                canvas.height = 640;
+                // Adjust target positions for mobile
+                trueTarget.x = canvas.width * 0.25;
+                falseTarget.x = canvas.width * 0.75;
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+                trueTarget.x = canvas.width * 0.25;
+                falseTarget.x = canvas.width * 0.75;
+            }
+        }
+
+        // Event listener for window resize
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Initial resize and start game
+        resizeCanvas();
+        gameLoop();
+    </script>
+</body>
+</html>

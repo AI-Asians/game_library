@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cut-The-Rope Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #5b6ee1;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // 8-bit color palette
+        const colors = {
+            bg: '#5fcde4',
+            rope: '#8b4513',
+            correct: '#71c471',
+            incorrect: '#e55e5e',
+            text: '#222034',
+            highlight: '#fbf236'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let answers = [];
+        let ropes = [];
+        let particles = [];
+        let swingTime = 0;
+        const gravity = 0.2;
+        const friction = 0.98;
+        
+        // Sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, type, duration) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.3;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 'square', 0.1);
+            setTimeout(() => playSound(880, 'square', 0.2), 100);
+        }
+        
+        function playIncorrectSound() {
+            playSound(200, 'sawtooth', 0.3);
+        }
+        
+        function playCutSound() {
+            playSound(600, 'square', 0.1);
+        }
+        
+        // Answer class
+        class Answer {
+            constructor(text, x, y, width, height, isCorrect) {
+                this.text = text;
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.isCorrect = isCorrect;
+                this.attached = true;
+                this.velocityY = 0;
+                this.velocityX = 0;
+                this.color = isCorrect ? colors.correct : colors.incorrect;
+                this.displayColor = '#fff';
+                this.revealed = false;
+            }
+            
+            update() {
+                if (!this.attached) {
+                    this.velocityY += gravity;
+                    this.y += this.velocityY;
+                    this.x += this.velocityX;
+                    this.velocityX *= friction;
+                    
+                    if (this.revealed) {
+                        this.displayColor = this.color;
+                    }
+                }
+            }
+            
+            draw() {
+                // Pixelated box
+                ctx.fillStyle = this.displayColor;
+                for (let i = 0; i < this.width; i += 4) {
+                    for (let j = 0; j < this.height; j += 4) {
+                        ctx.fillRect(Math.floor(this.x + i), Math.floor(this.y + j), 4, 4);
+                    }
+                }
+                
+                // Text
+                ctx.fillStyle = colors.text;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x + this.width / 2, this.y + this.height / 2);
+            }
+            
+            checkClick(mouseX, mouseY) {
+                return (
+                    mouseX >= this.x &&
+                    mouseX <= this.x + this.width &&
+                    mouseY >= 0 &&
+                    mouseY <= this.y &&
+                    this.attached
+                );
+            }
+        }
+        
+        // Rope class
+        class Rope {
+            constructor(answer) {
+                this.answer = answer;
+                this.segments = [];
+                for (let i = 0; i < 10; i++) {
+                    this.segments.push({
+                        x: answer.x + answer.width / 2,
+                        y: i * (answer.y / 10)
+                    });
+                }
+                this.cut = false;
+                this.cutPoint = 0;
+            }
+            
+            update() {
+                if (!this.cut) {
+                    // Calculate swing effect
+                    const swingOffset = Math.sin(swingTime + this.answer.x * 0.01) * 15;
+                    
+                    // Update rope segments
+                    for (let i = 0; i < this.segments.length; i++) {
+                        const segment = this.segments[i];
+                        const t = i / (this.segments.length - 1);
+                        segment.x = this.answer.x + this.answer.width / 2 + swingOffset * t;
+                    }
+                    
+                    // Update answer position based on rope
+                    this.answer.x = this.segments[this.segments.length - 1].x - this.answer.width / 2;
+                } else if (this.cutPoint < this.segments.length) {
+                    // Cut rope animation
+                    const segment = this.segments[this.cutPoint];
+                    segment.x += Math.random() * 4 - 2;
+                    segment.y += Math.random() * 2;
+                    
+                    if (Math.random() > 0.7) {
+                        this.cutPoint++;
+                    }
+                }
+            }
+            
+            draw() {
+                // Draw rope segments
+                ctx.strokeStyle = colors.rope;
+                ctx.lineWidth = 4;
+                
+                if (!this.cut) {
+                    ctx.beginPath();
+                    ctx.moveTo(this.segments[0].x, this.segments[0].y);
+                    for (let i = 1; i < this.segments.length; i++) {
+                        ctx.lineTo(this.segments[i].x, this.segments[i].y);
+                    }
+                    ctx.stroke();
+                } else {
+                    // Draw upper part
+                    if (this.cutPoint > 0) {
+                        ctx.beginPath();
+                        ctx.moveTo(this.segments[0].x, this.segments[0].y);
+                        for (let i = 1; i < this.cutPoint; i++) {
+                            ctx.lineTo(this.segments[i].x, this.segments[i].y);
+                        }
+                        ctx.stroke();
+                    }
+                    
+                    // Draw lower part if answer is still attached
+                    if (this.answer.attached && this.cutPoint < this.segments.length - 1) {
+                        ctx.beginPath();
+                        ctx.moveTo(this.segments[this.cutPoint].x, this.segments[this.cutPoint].y);
+                        for (let i = this.cutPoint + 1; i < this.segments.length; i++) {
+                            ctx.lineTo(this.segments[i].x, this.segments[i].y);
+                        }
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            cutRope(mouseY) {
+                this.cut = true;
+                
+                // Find the nearest segment to cutPoint
+                let closestDist = Infinity;
+                let closestIndex = 0;
+                
+                for (let i = 0; i < this.segments.length; i++) {
+                    const dist = Math.abs(this.segments[i].y - mouseY);
+                    if (dist < closestDist) {
+                        closestDist = dist;
+                        closestIndex = i;
+                    }
+                }
+                
+                this.cutPoint = closestIndex;
+                
+                // Create cutting particles
+                for (let i = 0; i < 10; i++) {
+                    particles.push({
+                        x: this.segments[closestIndex].x,
+                        y: this.segments[closestIndex].y,
+                        vx: Math.random() * 6 - 3,
+                        vy: Math.random() * 6 - 4,
+                        size: Math.random() * 6 + 2,
+                        color: colors.rope,
+                        life: 30
+                    });
+                }
+                
+                playCutSound();
+            }
+        }
+        
+        function createParticles(x, y, color, amount) {
+            for (let i = 0; i < amount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.random() * 8 - 4,
+                    vy: Math.random() * -10 - 2,
+                    size: Math.random() * 8 + 4,
+                    color: color,
+                    life: 60
+                });
+            }
+        }
+        
+        function initGame() {
+            gameOver = false;
+            answers = [];
+            ropes = [];
+            particles = [];
+            
+            // Create the answers
+            const answers_data = [
+                { text: "Paris", correct: true },
+                { text: "London", correct: false },
+                { text: "Berlin", correct: false },
+                { text: "Rome", correct: false }
+            ];
+            
+            // Shuffle answers
+            for (let i = answers_data.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [answers_data[i], answers_data[j]] = [answers_data[j], answers_data[i]];
+            }
+            
+            // Create answer objects
+            const answerWidth = 120;
+            const answerHeight = 60;
+            const spacing = (canvas.width - (answers_data.length * answerWidth)) / (answers_data.length + 1);
+            
+            for (let i = 0; i < answers_data.length; i++) {
+                const x = spacing + i * (answerWidth + spacing);
+                const y = 150;
+                const answer = new Answer(
+                    answers_data[i].text,
+                    x,
+                    y,
+                    answerWidth,
+                    answerHeight,
+                    answers_data[i].correct
+                );
+                answers.push(answer);
+                ropes.push(new Rope(answer));
+            }
+            
+            restartBtn.style.display = 'none';
+        }
+        
+        function update() {
+            swingTime += 0.03;
+            
+            // Update ropes
+            for (const rope of ropes) {
+                rope.update();
+            }
+            
+            // Update answers
+            for (const answer of answers) {
+                answer.update();
+                
+                // Check if answer has fallen off screen
+                if (answer.y > canvas.height && !gameOver) {
+                    if (answer.isCorrect) {
+                        endGame(true);
+                    }
+                }
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.vy += 0.1;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas with retro background
+            ctx.fillStyle = colors.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated clouds
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            for (let i = 0; i < 3; i++) {
+                const x = 100 + i * 250;
+                const y = 80;
+                const size = 60;
+                
+                for (let cx = 0; cx < size; cx += 6) {
+                    for (let cy = 0; cy < size/2; cy += 6) {
+                        if (Math.random() > 0.2) {
+                            ctx.fillRect(x + cx, y + cy, 6, 6);
+                        }
+                    }
+                }
+            }
+            
+            // Draw the question
+            ctx.fillStyle = 'white';
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 80);
+            
+            // Draw instruction
+            if (!gameOver) {
+                ctx.fillStyle = colors.highlight;
+                ctx.font = '16px sans-serif';
+                ctx.fillText("Cut the rope with the correct answer!", canvas.width / 2, 40);
+            }
+            
+            // Draw ropes
+            for (const rope of ropes) {
+                rope.draw();
+            }
+            
+            // Draw answers
+            for (const answer of answers) {
+                answer.draw();
+            }
+            
+            // Draw particles
+            for (const particle of particles) {
+                ctx.fillStyle = particle.color;
+                ctx.globalAlpha = particle.life / 30;
+                ctx.fillRect(
+                    Math.floor(particle.x),
+                    Math.floor(particle.y),
+                    Math.floor(particle.size),
+                    Math.floor(particle.size)
+                );
+            }
+            ctx.globalAlpha = 1;
+            
+            // Draw result message
+            if (gameOver) {
+                ctx.fillStyle = 'white';
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                if (gameWon) {
+                    ctx.fillText("Correct!", canvas.width / 2, canvas.height / 2);
+                } else {
+                    ctx.fillText("Incorrect!", canvas.width / 2, canvas.height / 2);
+                }
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function endGame(won) {
+            gameOver = true;
+            gameWon = won;
+            
+            // Reveal the correct answer
+            for (const answer of answers) {
+                answer.revealed = true;
+            }
+            
+            if (won) {
+                playCorrectSound();
+                createParticles(canvas.width / 2, canvas.height / 2, colors.correct, 40);
+            } else {
+                playIncorrectSound();
+                createParticles(canvas.width / 2, canvas.height / 2, colors.incorrect, 40);
+            }
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+            
+            // Check rope clicks
+            for (let i = 0; i < answers.length; i++) {
+                const answer = answers[i];
+                const rope = ropes[i];
+                
+                if (answer.attached && rope.segments.length > 0 && answer.checkClick(mouseX, mouseY)) {
+                    rope.cutRope(mouseY);
+                    answer.attached = false;
+                    
+                    if (answer.isCorrect) {
+                        setTimeout(() => endGame(true), 1000);
+                    } else {
+                        setTimeout(() => endGame(false), 1000);
+                    }
+                }
+            }
+        });
+        
+        restartBtn.addEventListener('click', initGame);
+        
+        // Initialize and start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

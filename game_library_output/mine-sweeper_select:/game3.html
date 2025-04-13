@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mine-Sweeper Capital Quest</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #555;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Game Variables
+        let canvas = document.getElementById("gameCanvas");
+        let ctx = canvas.getContext("2d");
+        let isMobile = window.innerWidth <= 800;
+        let gameOver = false;
+        let gameWon = false;
+        let tiles = [];
+        let restartBtn = {};
+        
+        // Set canvas dimensions
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Color palette (16 colors)
+        const COLORS = {
+            bg: "#3a3a4c",
+            tile: "#8b8ba7",
+            tileBorder: "#5d5d77",
+            tileHover: "#a7a7c8",
+            text: "#ffffff",
+            question: "#ffcc00",
+            correct: "#66cc66",
+            wrong: "#cc6666",
+            mine: "#222222",
+            button: "#6b8cff",
+            buttonHover: "#8ba6ff"
+        };
+        
+        // Game settings
+        const GRID_SIZE = isMobile ? 3 : 4;
+        const TILE_SIZE = Math.min(canvas.width, canvas.height) / (GRID_SIZE + 1);
+        const GRID_OFFSET_X = (canvas.width - (GRID_SIZE * TILE_SIZE)) / 2;
+        const GRID_OFFSET_Y = TILE_SIZE * 1.5;
+        const ANSWERS = [
+            "Paris", // correct
+            "London", "Rome", "Berlin", "Madrid", 
+            "Vienna", "Athens", "Brussels", "Amsterdam",
+            "Dublin", "Lisbon", "Warsaw", "Prague", 
+            "Stockholm", "Helsinki", "Budapest"
+        ];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effect functions
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === "click") {
+                oscillator.type = "sine";
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === "win") {
+                oscillator.type = "square";
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(554, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(659, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === "lose") {
+                oscillator.type = "sawtooth";
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(110, audioCtx.currentTime + 0.3);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameOver = false;
+            gameWon = false;
+            
+            // Create shuffled array of answers
+            let shuffledAnswers = [...ANSWERS];
+            for (let i = shuffledAnswers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledAnswers[i], shuffledAnswers[j]] = [shuffledAnswers[j], shuffledAnswers[i]];
+            }
+            
+            // Create tiles
+            tiles = [];
+            let count = 0;
+            for (let row = 0; row < GRID_SIZE; row++) {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let tile = {
+                        x: GRID_OFFSET_X + col * TILE_SIZE,
+                        y: GRID_OFFSET_Y + row * TILE_SIZE,
+                        width: TILE_SIZE * 0.9,
+                        height: TILE_SIZE * 0.9,
+                        revealed: false,
+                        isCorrect: count === 0, // First answer is correct
+                        answer: shuffledAnswers[count],
+                        hover: false,
+                        frame: 0
+                    };
+                    tiles.push(tile);
+                    count++;
+                }
+            }
+            
+            // Create restart button
+            restartBtn = {
+                x: canvas.width / 2 - TILE_SIZE,
+                y: canvas.height - TILE_SIZE * 1.5,
+                width: TILE_SIZE * 2,
+                height: TILE_SIZE * 0.8,
+                hover: false
+            };
+            
+            draw();
+        }
+        
+        // Draw everything
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = `${TILE_SIZE / 3}px Arial`;
+            ctx.textAlign = "center";
+            ctx.fillText("What is the capital of France?", canvas.width / 2, TILE_SIZE * 0.8);
+            
+            // Draw tiles
+            for (let tile of tiles) {
+                if (!tile.revealed) {
+                    // Draw unrevealed tile
+                    ctx.fillStyle = tile.hover ? COLORS.tileHover : COLORS.tile;
+                    
+                    // Pixel border effect
+                    for (let i = 0; i < 4; i++) {
+                        ctx.fillRect(
+                            tile.x - i, 
+                            tile.y - i, 
+                            tile.width + i*2, 
+                            tile.height + i*2
+                        );
+                    }
+                    
+                    // Inner tile
+                    ctx.fillStyle = COLORS.tileBorder;
+                    ctx.fillRect(
+                        tile.x + 4, 
+                        tile.y + 4, 
+                        tile.width - 8, 
+                        tile.height - 8
+                    );
+                    
+                    // Pixel pattern for unrevealed tile
+                    ctx.fillStyle = COLORS.tile;
+                    for (let x = 0; x < tile.width/8; x++) {
+                        for (let y = 0; y < tile.height/8; y++) {
+                            if ((x + y) % 2 === 0) {
+                                ctx.fillRect(
+                                    tile.x + 6 + x * 8, 
+                                    tile.y + 6 + y * 8, 
+                                    6, 6
+                                );
+                            }
+                        }
+                    }
+                    
+                    // Hover animation
+                    if (tile.hover) {
+                        tile.frame = (tile.frame + 1) % 30;
+                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = COLORS.buttonHover;
+                        ctx.strokeRect(
+                            tile.x - 2 + Math.sin(tile.frame / 5) * 2, 
+                            tile.y - 2 + Math.cos(tile.frame / 5) * 2, 
+                            tile.width + 4, 
+                            tile.height + 4
+                        );
+                    }
+                } else {
+                    // Draw revealed tile
+                    ctx.fillStyle = tile.isCorrect ? COLORS.correct : COLORS.wrong;
+                    ctx.fillRect(tile.x, tile.y, tile.width, tile.height);
+                    
+                    // Draw answer text
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = `${TILE_SIZE / 4}px Arial`;
+                    ctx.textAlign = "center";
+                    ctx.fillText(
+                        tile.answer, 
+                        tile.x + tile.width / 2, 
+                        tile.y + tile.height / 2 + TILE_SIZE / 12
+                    );
+                    
+                    // Draw mine or check mark
+                    if (!tile.isCorrect) {
+                        drawMine(
+                            tile.x + tile.width / 2, 
+                            tile.y + tile.height * 0.75, 
+                            TILE_SIZE / 5
+                        );
+                    } else {
+                        drawCheckmark(
+                            tile.x + tile.width / 2, 
+                            tile.y + tile.height * 0.75, 
+                            TILE_SIZE / 5
+                        );
+                    }
+                }
+            }
+            
+            // Draw game result
+            if (gameOver) {
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${TILE_SIZE / 3}px Arial`;
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    gameWon ? "Correct!" : "Wrong! Try again.", 
+                    canvas.width / 2, 
+                    canvas.height - TILE_SIZE * 2.5
+                );
+            }
+            
+            // Draw restart button
+            ctx.fillStyle = restartBtn.hover ? COLORS.buttonHover : COLORS.button;
+            ctx.fillRect(
+                restartBtn.x, 
+                restartBtn.y, 
+                restartBtn.width, 
+                restartBtn.height
+            );
+            
+            // Button pixel border
+            ctx.fillStyle = "#000";
+            ctx.fillRect(
+                restartBtn.x, 
+                restartBtn.y, 
+                restartBtn.width, 
+                4
+            );
+            ctx.fillRect(
+                restartBtn.x, 
+                restartBtn.y, 
+                4, 
+                restartBtn.height
+            );
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(
+                restartBtn.x + restartBtn.width - 4, 
+                restartBtn.y, 
+                4, 
+                restartBtn.height
+            );
+            ctx.fillRect(
+                restartBtn.x, 
+                restartBtn.y + restartBtn.height - 4, 
+                restartBtn.width, 
+                4
+            );
+            
+            // Button text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${TILE_SIZE / 4}px Arial`;
+            ctx.fillText(
+                "Restart", 
+                restartBtn.x + restartBtn.width / 2, 
+                restartBtn.y + restartBtn.height / 2 + TILE_SIZE / 12
+            );
+            
+            // Continue animation
+            if (!gameOver) {
+                requestAnimationFrame(draw);
+            } else {
+                setTimeout(() => requestAnimationFrame(draw), 100);
+            }
+        }
+        
+        // Draw mine
+        function drawMine(x, y, size) {
+            const pixelSize = size / 6;
+            
+            ctx.fillStyle = COLORS.mine;
+            
+            // Central circle
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Spikes
+            for (let i = 0; i < 8; i++) {
+                const angle = i * Math.PI / 4;
+                ctx.fillRect(
+                    x + Math.cos(angle) * size/2 - pixelSize/2,
+                    y + Math.sin(angle) * size/2 - pixelSize/2,
+                    pixelSize * 2,
+                    pixelSize * 2
+                );
+            }
+            
+            // Shine
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(
+                x - size/5,
+                y - size/5,
+                pixelSize,
+                pixelSize
+            );
+        }
+        
+        // Draw checkmark
+        function drawCheckmark(x, y, size) {
+            const pixelSize = size / 6;
+            
+            ctx.fillStyle = "#ffffff";
+            
+            // Checkmark
+            for (let i = 0; i < 3; i++) {
+                ctx.fillRect(
+                    x - size/2 + i * pixelSize,
+                    y - pixelSize + i * pixelSize,
+                    pixelSize,
+                    pixelSize
+                );
+            }
+            
+            for (let i = 0; i < 4; i++) {
+                ctx.fillRect(
+                    x - size/2 + 3 * pixelSize + i * pixelSize,
+                    y - pixelSize - i * pixelSize,
+                    pixelSize,
+                    pixelSize
+                );
+            }
+        }
+        
+        // Check if point is inside rectangle
+        function isPointInRect(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+        
+        // Handle mouse/touch events
+        function handleClick(x, y) {
+            if (gameOver) {
+                if (isPointInRect(x, y, restartBtn)) {
+                    playSound("click");
+                    initGame();
+                }
+                return;
+            }
+            
+            for (let tile of tiles) {
+                if (!tile.revealed && isPointInRect(x, y, tile)) {
+                    tile.revealed = true;
+                    
+                    if (tile.isCorrect) {
+                        gameWon = true;
+                        playSound("win");
+                    } else {
+                        playSound("lose");
+                        // Reveal correct answer
+                        for (let t of tiles) {
+                            if (t.isCorrect) {
+                                t.revealed = true;
+                            }
+                        }
+                    }
+                    
+                    gameOver = true;
+                    break;
+                }
+            }
+            
+            if (isPointInRect(x, y, restartBtn)) {
+                playSound("click");
+                initGame();
+            }
+        }
+        
+        // Handle mouse/touch movement
+        function handleMove(x, y) {
+            let needsRedraw = false;
+            
+            for (let tile of tiles) {
+                const wasHovering = tile.hover;
+                tile.hover = !tile.revealed && isPointInRect(x, y, tile);
+                
+                if (wasHovering !== tile.hover) {
+                    needsRedraw = true;
+                }
+            }
+            
+            const wasBtnHovering = restartBtn.hover;
+            restartBtn.hover = isPointInRect(x, y, restartBtn);
+            
+            if (wasBtnHovering !== restartBtn.hover) {
+                needsRedraw = true;
+            }
+            
+            if (needsRedraw && gameOver) {
+                requestAnimationFrame(draw);
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener("mousedown", function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            handleClick(x * scaleX, y * scaleY);
+        });
+        
+        canvas.addEventListener("mousemove", function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            handleMove(x * scaleX, y * scaleY);
+        });
+        
+        canvas.addEventListener("touchstart", function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            handleClick(x * scaleX, y * scaleY);
+        });
+        
+        canvas.addEventListener("touchmove", function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            handleMove(x * scaleX, y * scaleY);
+        });
+        
+        // Start the game
+        initGame();
+    </script>
+</body>
+</html>

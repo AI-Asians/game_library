@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital of France - Bouncer Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: 2px solid #888;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#0f0f2d',
+            platform1: '#d27d2c',
+            platform2: '#8b56ac',
+            platform3: '#379392',
+            bouncer: '#f8c537',
+            text: '#ffffff',
+            correct: '#4caf50',
+            incorrect: '#f44336',
+            highlight: '#ffff00'
+        };
+        
+        // Game variables
+        const restartBtn = document.getElementById('restartBtn');
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const options = [
+            { text: "London", correct: false },
+            { text: "Paris", correct: true },
+            { text: "Berlin", correct: false }
+        ];
+        
+        // Bouncer properties
+        const bouncer = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            size: canvas.width * 0.05,
+            velocityY: -10,
+            gravity: 0.3,
+            draw() {
+                ctx.fillStyle = COLORS.bouncer;
+                ctx.beginPath();
+                ctx.rect(this.x - this.size/2, this.y - this.size/2, this.size, this.size);
+                ctx.fill();
+                
+                // Add simple face to bouncer
+                ctx.fillStyle = '#000';
+                // Eyes
+                ctx.fillRect(this.x - this.size/4, this.y - this.size/6, this.size/6, this.size/6);
+                ctx.fillRect(this.x + this.size/8, this.y - this.size/6, this.size/6, this.size/6);
+                // Mouth
+                ctx.fillRect(this.x - this.size/6, this.y + this.size/6, this.size/3, this.size/8);
+            },
+            update() {
+                if (!gameOver) {
+                    this.velocityY += this.gravity;
+                    this.y += this.velocityY;
+                    
+                    // Bounce at bottom
+                    if (this.y > canvas.height - 50) {
+                        this.y = canvas.height - 50;
+                        this.velocityY *= -0.9;
+                        playSound(150, 0.05);
+                    }
+                    
+                    // Check platform collisions for visual highlight only
+                    platforms.forEach(platform => {
+                        if (Math.abs(this.y - platform.y) < 10 && 
+                            this.x > platform.x - platform.width/2 && 
+                            this.x < platform.x + platform.width/2) {
+                            platform.highlight = true;
+                        } else {
+                            platform.highlight = false;
+                        }
+                    });
+                }
+            }
+        };
+        
+        // Platform setup
+        const platformHeight = 30;
+        const platforms = [
+            {
+                x: canvas.width / 2,
+                y: canvas.height * 0.3,
+                width: canvas.width * 0.6,
+                height: platformHeight,
+                color: COLORS.platform1,
+                option: options[0],
+                highlight: false
+            },
+            {
+                x: canvas.width / 2,
+                y: canvas.height * 0.5,
+                width: canvas.width * 0.6,
+                height: platformHeight,
+                color: COLORS.platform2,
+                option: options[1],
+                highlight: false
+            },
+            {
+                x: canvas.width / 2,
+                y: canvas.height * 0.7,
+                width: canvas.width * 0.6,
+                height: platformHeight,
+                color: COLORS.platform3,
+                option: options[2],
+                highlight: false
+            }
+        ];
+        
+        // Particle system for effects
+        const particles = [];
+        
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x,
+                    y,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 0.5) * 5,
+                    size: Math.random() * 6 + 2,
+                    color,
+                    life: 20
+                });
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+        }
+        
+        // Draw platforms
+        function drawPlatforms() {
+            platforms.forEach(platform => {
+                // Draw platform
+                ctx.fillStyle = platform.highlight ? COLORS.highlight : platform.color;
+                ctx.fillRect(
+                    platform.x - platform.width/2,
+                    platform.y - platform.height/2,
+                    platform.width,
+                    platform.height
+                );
+                
+                // Draw border
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(
+                    platform.x - platform.width/2,
+                    platform.y - platform.height/2,
+                    platform.width,
+                    platform.height
+                );
+                
+                // Draw answer text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(platform.option.text, platform.x, platform.y);
+            });
+        }
+        
+        // Check if player clicked correct answer
+        function checkAnswer(x, y) {
+            if (gameOver) return;
+            
+            for (let i = 0; i < platforms.length; i++) {
+                const platform = platforms[i];
+                
+                // Check if bouncer is close to this platform
+                if (Math.abs(bouncer.y - platform.y) < 20 && 
+                    bouncer.x > platform.x - platform.width/2 && 
+                    bouncer.x < platform.x + platform.width/2) {
+                    
+                    // Create particles
+                    createParticles(bouncer.x, bouncer.y, platform.color, 20);
+                    
+                    // Set game state
+                    gameOver = true;
+                    gameWon = platform.option.correct;
+                    
+                    // Play sound
+                    if (platform.option.correct) {
+                        playSound(660, 0.1);
+                        setTimeout(() => playSound(880, 0.1), 100);
+                    } else {
+                        playSound(220, 0.1);
+                        setTimeout(() => playSound(180, 0.1), 100);
+                    }
+                    
+                    // Mark the correct/incorrect platforms
+                    platforms.forEach(p => {
+                        if (p === platform) {
+                            p.color = p.option.correct ? COLORS.correct : COLORS.incorrect;
+                        } else if (p.option.correct) {
+                            p.color = COLORS.correct;
+                        }
+                    });
+                    
+                    // Show restart button
+                    restartBtn.style.display = 'block';
+                    break;
+                }
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, 40);
+        }
+        
+        // Draw game over message
+        function drawGameOver() {
+            if (!gameOver) return;
+            
+            const message = gameWon ? "Correct!" : "Wrong!";
+            
+            ctx.fillStyle = gameWon ? COLORS.correct : COLORS.incorrect;
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(message, canvas.width / 2, canvas.height / 2 - 60);
+        }
+        
+        // Draw background elements
+        function drawBackground() {
+            // Draw stars
+            for (let i = 0; i < 50; i++) {
+                ctx.fillStyle = '#ffffff';
+                const size = Math.floor(Math.random() * 2) + 1;
+                const x = Math.floor((i * 37) % canvas.width);
+                const y = Math.floor((i * 17) % canvas.height);
+                ctx.fillRect(x, y, size, size);
+            }
+            
+            // Draw clouds (very simplified 8-bit style)
+            const cloudY = canvas.height * 0.1;
+            const cloudColors = ['#5555aa', '#6666bb'];
+            
+            for (let i = 0; i < 3; i++) {
+                const cloudX = canvas.width * (0.2 + i * 0.3);
+                ctx.fillStyle = cloudColors[i % 2];
+                
+                // Draw cloud segments
+                ctx.fillRect(cloudX - 30, cloudY, 20, 10);
+                ctx.fillRect(cloudX - 10, cloudY - 5, 20, 20);
+                ctx.fillRect(cloudX + 10, cloudY, 20, 10);
+            }
+        }
+        
+        // Simple sound generation
+        function playSound(frequency, duration) {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = 0.1;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration * 1000);
+            } catch (e) {
+                console.log("Audio not supported");
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBackground();
+            drawQuestion();
+            drawPlatforms();
+            bouncer.update();
+            bouncer.draw();
+            updateParticles();
+            drawParticles();
+            drawGameOver();
+            
+            // Continue animation
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            checkAnswer(x, y);
+        });
+        
+        restartBtn.addEventListener('click', () => {
+            // Reset game state
+            gameOver = false;
+            gameWon = false;
+            bouncer.y = canvas.height - 100;
+            bouncer.velocityY = -10;
+            
+            // Reset platform colors
+            platforms[0].color = COLORS.platform1;
+            platforms[1].color = COLORS.platform2;
+            platforms[2].color = COLORS.platform3;
+            
+            // Clear particles
+            particles.length = 0;
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>

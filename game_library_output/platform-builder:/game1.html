@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform-Builder Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #444;
+            color: white;
+            border: 3px solid #777;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 500;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: '#5C94FC',
+            ground: '#8D5200',
+            grass: '#00C800',
+            platform: '#CE9C85',
+            character: '#FF0000',
+            text: '#FFFFFF',
+            buttonBg: '#333333',
+            buttonText: '#FFFFFF',
+            goal: '#FCFC54',
+            wrong: '#FC5454'
+        };
+        
+        // Game state
+        let gameState = {
+            character: {
+                x: 50,
+                y: canvas.height - 150,
+                width: 20,
+                height: 30,
+                speed: 2,
+                falling: false,
+                reachedGoal: false
+            },
+            platforms: [],
+            answer: null,
+            gameOver: false,
+            particles: []
+        };
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Berlin", correct: false },
+            { text: "Paris", correct: true },
+            { text: "Rome", correct: false },
+            { text: "London", correct: false }
+        ];
+        
+        // Create platforms for each answer
+        function setupGame() {
+            gameState = {
+                character: {
+                    x: 50,
+                    y: canvas.height - 150,
+                    width: 20,
+                    height: 30,
+                    speed: 2,
+                    falling: false,
+                    reachedGoal: false
+                },
+                platforms: [],
+                answer: null,
+                gameOver: false,
+                particles: []
+            };
+            
+            restartBtn.style.display = 'none';
+            
+            // Shuffle answers
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            // Position for platforms
+            const gap = canvas.width / (shuffledAnswers.length + 1);
+            
+            shuffledAnswers.forEach((answer, index) => {
+                gameState.platforms.push({
+                    x: (index + 1) * gap - 50,
+                    y: canvas.height - 100,
+                    width: 100,
+                    height: 20,
+                    text: answer.text,
+                    correct: answer.correct,
+                    active: false,
+                    breaking: false,
+                    breakProgress: 0
+                });
+            });
+            
+            // Create goal at the end
+            gameState.goal = {
+                x: canvas.width - 50,
+                y: canvas.height - 150,
+                width: 30,
+                height: 50
+            };
+        }
+        
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawCharacter() {
+            const char = gameState.character;
+            
+            // Body
+            drawPixelRect(char.x, char.y, char.width, char.height, COLORS.character);
+            
+            // Eyes
+            drawPixelRect(char.x + 5, char.y + 8, 4, 4, '#FFFFFF');
+            drawPixelRect(char.x + 12, char.y + 8, 4, 4, '#FFFFFF');
+            
+            // Pupils
+            drawPixelRect(char.x + 6, char.y + 9, 2, 2, '#000000');
+            drawPixelRect(char.x + 13, char.y + 9, 2, 2, '#000000');
+            
+            // Legs
+            drawPixelRect(char.x + 4, char.y + char.height, 4, 5, COLORS.character);
+            drawPixelRect(char.x + char.width - 8, char.y + char.height, 4, 5, COLORS.character);
+        }
+        
+        function drawGround() {
+            // Draw ground
+            drawPixelRect(0, canvas.height - 50, canvas.width, 50, COLORS.ground);
+            
+            // Draw grass
+            drawPixelRect(0, canvas.height - 50, canvas.width, 5, COLORS.grass);
+            
+            // Draw pixel details on ground
+            ctx.fillStyle = '#6B3D00';
+            for (let i = 0; i < canvas.width; i += 20) {
+                for (let j = canvas.height - 45; j < canvas.height; j += 10) {
+                    if (Math.random() > 0.7) {
+                        ctx.fillRect(i + Math.random() * 15, j + Math.random() * 8, 4, 4);
+                    }
+                }
+            }
+        }
+        
+        function drawPlatforms() {
+            gameState.platforms.forEach(platform => {
+                if (platform.breaking) {
+                    // Draw breaking platform
+                    const segments = 10;
+                    const segmentWidth = platform.width / segments;
+                    
+                    for (let i = 0; i < segments; i++) {
+                        if (i >= platform.breakProgress * segments) {
+                            drawPixelRect(
+                                platform.x + i * segmentWidth, 
+                                platform.y + (i % 2) * platform.breakProgress * 10, 
+                                segmentWidth, 
+                                platform.height, 
+                                COLORS.platform
+                            );
+                        }
+                    }
+                } else {
+                    // Draw normal platform
+                    const color = platform.active ? (platform.correct ? COLORS.grass : COLORS.wrong) : COLORS.platform;
+                    drawPixelRect(platform.x, platform.y, platform.width, platform.height, color);
+                    
+                    // Draw pixel texture
+                    ctx.fillStyle = platform.active ? '#FFFFFF' : '#A67F6A';
+                    for (let i = 0; i < platform.width; i += 10) {
+                        if (Math.random() > 0.7) {
+                            ctx.fillRect(platform.x + i + Math.random() * 5, platform.y + Math.random() * 15, 3, 3);
+                        }
+                    }
+                    
+                    // Draw button
+                    const buttonWidth = 80;
+                    const buttonHeight = 30;
+                    const buttonX = platform.x + platform.width/2 - buttonWidth/2;
+                    const buttonY = platform.y - buttonHeight - 10;
+                    
+                    drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, COLORS.buttonBg);
+                    drawPixelRect(buttonX + 3, buttonY + 3, buttonWidth - 6, buttonHeight - 6, platform.active ? '#888888' : '#555555');
+                    
+                    // Draw answer text on button
+                    ctx.fillStyle = COLORS.buttonText;
+                    ctx.font = '14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(platform.text, buttonX + buttonWidth/2, buttonY + buttonHeight/2 + 5);
+                }
+            });
+        }
+        
+        function drawGoal() {
+            const goal = gameState.goal;
+            
+            // Draw flag pole
+            drawPixelRect(goal.x, goal.y, 5, goal.height, '#888888');
+            
+            // Draw flag
+            drawPixelRect(goal.x + 5, goal.y + 5, 20, 15, COLORS.goal);
+            
+            // Draw flag details
+            drawPixelRect(goal.x + 10, goal.y + 8, 10, 2, '#000000');
+            drawPixelRect(goal.x + 10, goal.y + 12, 10, 2, '#000000');
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = 'bold 18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 40);
+        }
+        
+        function drawParticles() {
+            gameState.particles.forEach((particle, index) => {
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.vy += 0.1; // gravity
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    gameState.particles.splice(index, 1);
+                    return;
+                }
+                
+                drawPixelRect(particle.x, particle.y, particle.size, particle.size, particle.color);
+            });
+        }
+        
+        function createParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 1) * 5,
+                    size: 3 + Math.random() * 5,
+                    life: 30 + Math.random() * 30,
+                    color: color
+                });
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw clouds
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(100, 70, 60, 20);
+            ctx.fillRect(130, 60, 30, 10);
+            ctx.fillRect(400, 90, 80, 25);
+            ctx.fillRect(420, 80, 40, 10);
+            
+            // Draw game elements
+            drawGround();
+            drawPlatforms();
+            drawGoal();
+            drawCharacter();
+            drawParticles();
+            drawQuestion();
+            
+            // Draw instruction text
+            if (!gameState.answer && !gameState.gameOver) {
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Click a platform to build it', canvas.width / 2, 70);
+            }
+            
+            // Draw result text
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.character.reachedGoal ? '#00FF00' : '#FF0000';
+                ctx.font = 'bold 24px sans-serif';
+                ctx.textAlign = 'center';
+                const resultText = gameState.character.reachedGoal ? 'Correct!' : 'Wrong!';
+                ctx.fillText(resultText, canvas.width / 2, 90);
+            }
+        }
+        
+        function update() {
+            if (gameState.gameOver) return;
+            
+            const char = gameState.character;
+            
+            // Move character forward
+            if (gameState.answer) {
+                char.x += char.speed;
+            }
+            
+            // Check if character is on a platform
+            let onPlatform = false;
+            let currentPlatform = null;
+            
+            gameState.platforms.forEach(platform => {
+                if (!platform.breaking && 
+                    char.x + char.width > platform.x && 
+                    char.x < platform.x + platform.width &&
+                    char.y + char.height >= platform.y &&
+                    char.y + char.height <= platform.y + 10) {
+                    onPlatform = true;
+                    currentPlatform = platform;
+                    char.y = platform.y - char.height;
+                }
+                
+                // Update breaking animation
+                if (platform.breaking) {
+                    platform.breakProgress += 0.05;
+                    if (platform.breakProgress >= 1) {
+                        platform.breaking = false;
+                        platform.active = false;
+                    }
+                }
+            });
+            
+            // Handle falling
+            if (!onPlatform && !char.reachedGoal) {
+                char.falling = true;
+                char.y += 5;
+                
+                // Check if fallen off screen
+                if (char.y > canvas.height) {
+                    gameState.gameOver = true;
+                    restartBtn.style.display = 'block';
+                }
+            }
+            
+            // Check if standing on wrong platform
+            if (currentPlatform && currentPlatform.active && !currentPlatform.correct && !currentPlatform.breaking) {
+                currentPlatform.breaking = true;
+                createParticles(currentPlatform.x + currentPlatform.width/2, currentPlatform.y, 20, COLORS.wrong);
+                playSound('wrong');
+            }
+            
+            // Check if reached goal
+            if (char.x + char.width > gameState.goal.x && !char.reachedGoal) {
+                char.reachedGoal = true;
+                gameState.gameOver = true;
+                createParticles(gameState.goal.x, gameState.goal.y, 30, COLORS.goal);
+                playSound('win');
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        function handleClick(e) {
+            if (gameState.gameOver) return;
+            
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            // Check if clicked on a platform button
+            gameState.platforms.forEach(platform => {
+                const buttonWidth = 80;
+                const buttonHeight = 30;
+                const buttonX = platform.x + platform.width/2 - buttonWidth/2;
+                const buttonY = platform.y - buttonHeight - 10;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth &&
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    
+                    // Reset other platforms
+                    gameState.platforms.forEach(p => p.active = false);
+                    
+                    // Activate this platform
+                    platform.active = true;
+                    gameState.answer = platform.text;
+                    
+                    // Play sound
+                    playSound('click');
+                    
+                    // Create particles
+                    createParticles(buttonX + buttonWidth/2, buttonY + buttonHeight/2, 10, '#FFFFFF');
+                }
+            });
+        }
+        
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                switch(type) {
+                    case 'click':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.1);
+                        break;
+                    case 'wrong':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(100, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                        break;
+                    case 'win':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                        oscillator.frequency.setValueAtTime(392, audioContext.currentTime + 0.1);
+                        oscillator.frequency.setValueAtTime(523, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                }
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize the game
+        setupGame();
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', setupGame);
+        gameLoop();
+    </script>
+</body>
+</html>

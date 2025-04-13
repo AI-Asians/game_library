@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Art Gallery Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        #gameCanvas {
+            border: 2px solid #333;
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Colors - 8-bit palette
+        const COLORS = {
+            background: '#765C48', // wall color
+            floor: '#463931',
+            floorTile1: '#5A4A3F',
+            floorTile2: '#463931',
+            frameOuter: '#AA8E45',
+            frameInner: '#DDBC5B',
+            wallPattern1: '#876C58',
+            wallPattern2: '#6A543F',
+            text: '#222222',
+            heading: '#111111',
+            spotlight: '#FFFFC8',
+            correct: '#77DD77',
+            incorrect: '#FF6961'
+        };
+
+        // Game state
+        let gameState = {
+            question: "What is the capital of France?",
+            options: [
+                {text: "London", image: null},
+                {text: "Paris", image: null, correct: true},
+                {text: "Berlin", image: null},
+                {text: "Rome", image: null}
+            ],
+            selectedOption: null,
+            hoverOption: null,
+            gameOver: false,
+            result: null,
+            restartBtn: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 120,
+                width: 120,
+                height: 40
+            }
+        };
+
+        // Sound effects
+        function playSound(type) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'hover':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.05);
+                    break;
+                case 'footstep':
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(120, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.07, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.08);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                    }, 100);
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                    }, 200);
+                    
+                    oscillator.stop(audioCtx.currentTime + 0.5);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(196.00, audioCtx.currentTime); // G3
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(185.00, audioCtx.currentTime + 0.1); // F#3 (slightly off)
+                    }, 100);
+                    
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+            }
+        }
+
+        // Generate pixel art for artworks
+        function generatePixelArt() {
+            // London - Big Ben pixel art
+            gameState.options[0].image = createPixelArt([
+                '...............####.......',
+                '...............#22#.......',
+                '...............#22#.......',
+                '.....#########.#22#.......',
+                '.....#2222222#.####.......',
+                '.....#2222222#......#.....',
+                '.....#2222222#......#.....',
+                '.....#22#####......##.....',
+                '.....#22#.........###.....',
+                '.....#22#........####.....',
+                '.....#22#.......#####.....',
+                '.....#22#......######.....',
+                '.....#22######.######.....',
+                '.....#22222222#######.....',
+                '.....#22222222#######.....',
+                '.....############3###.....',
+                '.....#33333333333333#.....',
+                '.....#33333333333333#.....',
+                '######33333333333333######',
+            ], {
+                '#': '#8B4513', // dark brown
+                '2': '#DEB887', // light brown
+                '3': '#555555', // gray
+                '.': null // transparent
+            });
+
+            // Paris - Eiffel Tower pixel art
+            gameState.options[1].image = createPixelArt([
+                '..............###.............',
+                '.............#555#............',
+                '............#55555#...........',
+                '...........#5555555#..........',
+                '............#55555#...........',
+                '.............#555#............',
+                '............#55555#...........',
+                '...........#5555555#..........',
+                '.........##555555555##........',
+                '........#55555###55555#.......',
+                '.......#5555#.....#5555#......',
+                '......#555#.......#555#.......',
+                '.....#555#.........#555#......',
+                '....#555#...........#555#.....',
+                '...#555#.............#555#....',
+                '..#555#...............#555#...',
+                '.#555#.................#555#..',
+                '#555#...................#555#.',
+                '#####...................#####.',
+            ], {
+                '#': '#444444', // dark gray
+                '5': '#888888', // light gray
+                '.': null // transparent
+            });
+
+            // Berlin - Brandenburg Gate pixel art 
+            gameState.options[2].image = createPixelArt([
+                '##########################',
+                '#6666666666666666666666666#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6#6#6#666666666666#6#6#66#',
+                '#6################6####66#',
+                '#66666666666666666666666666',
+                '#66666666666666666666666666',
+                '#66666666666666666666666666',
+                '#66666666666666666666666666',
+                '#66666######6######66666666',
+            ], {
+                '#': '#444444', // dark gray
+                '6': '#DDDDDD', // off-white
+                '.': null // transparent
+            });
+
+            // Rome - Colosseum pixel art
+            gameState.options[3].image = createPixelArt([
+                '......#############........',
+                '....##77777777777##........',
+                '...#77#########77#.........',
+                '..#77#.........#77#........',
+                '.#77#...#...#...#77#.......',
+                '#77#....#...#....#77#......',
+                '#7#.....#...#.....#7#......',
+                '#7#.....#...#.....#7#......',
+                '#7#.....#...#.....#7#......',
+                '#7#.....#...#.....#7#......',
+                '#7#.....#...#.....#7#......',
+                '#7#.....#...#.....#7#......',
+                '#7####################......',
+                '#777777777777777777#.......',
+                '#777777777777777777#.......',
+                '#####################......',
+            ], {
+                '#': '#8B4513', // brown
+                '7': '#DEB887', // light brown
+                '.': null // transparent
+            });
+        }
+
+        function createPixelArt(pixelArray, colorMap) {
+            const height = pixelArray.length;
+            const width = pixelArray[0].length;
+            const pixelCanvas = document.createElement('canvas');
+            pixelCanvas.width = width;
+            pixelCanvas.height = height;
+            const pixelCtx = pixelCanvas.getContext('2d');
+            
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const colorKey = pixelArray[y][x];
+                    const color = colorMap[colorKey];
+                    if (color) {
+                        pixelCtx.fillStyle = color;
+                        pixelCtx.fillRect(x, y, 1, 1);
+                    }
+                }
+            }
+            
+            return pixelCanvas;
+        }
+
+        function drawWallPattern() {
+            const patternSize = 24;
+            
+            // Draw wall background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height - 130);
+            
+            // Draw wall pattern
+            ctx.fillStyle = COLORS.wallPattern1;
+            for (let x = 0; x < canvas.width; x += patternSize) {
+                for (let y = 0; y < canvas.height - 130; y += patternSize) {
+                    if ((x / patternSize + y / patternSize) % 2 === 0) {
+                        ctx.fillRect(x, y, patternSize, patternSize);
+                    }
+                }
+            }
+
+            // Draw floor
+            ctx.fillStyle = COLORS.floor;
+            ctx.fillRect(0, canvas.height - 130, canvas.width, 130);
+            
+            // Draw floor tiles
+            const tileSize = 30;
+            for (let x = 0; x < canvas.width; x += tileSize) {
+                for (let y = canvas.height - 130; y < canvas.height; y += tileSize) {
+                    if ((x / tileSize + y / tileSize) % 2 === 0) {
+                        ctx.fillStyle = COLORS.floorTile1;
+                    } else {
+                        ctx.fillStyle = COLORS.floorTile2;
+                    }
+                    ctx.fillRect(x, y, tileSize, tileSize);
+                }
+            }
+        }
+
+        function drawFrame(x, y, width, height, selected, correct = null) {
+            // Outer frame
+            ctx.fillStyle = COLORS.frameOuter;
+            ctx.fillRect(x - 16, y - 16, width + 32, height + 32);
+            
+            // Inner frame
+            ctx.fillStyle = COLORS.frameInner;
+            ctx.fillRect(x - 8, y - 8, width + 16, height + 16);
+            
+            // Background
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(x, y, width, height);
+            
+            // Spotlight effect
+            const spotlightY = y - 40;
+            const gradient = ctx.createRadialGradient(
+                x + width/2, spotlightY, 5,
+                x + width/2, spotlightY, 100
+            );
+            gradient.addColorStop(0, 'rgba(255, 255, 220, 0.4)');
+            gradient.addColorStop(1, 'rgba(255, 255, 220, 0)');
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + width, y);
+            ctx.lineTo(x + width/2 + 80, spotlightY);
+            ctx.lineTo(x + width/2 - 80, spotlightY);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Highlight for selected frame
+            if (selected) {
+                const glowSize = 4;
+                const animOffset = Math.sin(Date.now() / 200) * 2;
+                
+                ctx.strokeStyle = correct === true ? COLORS.correct : 
+                                  correct === false ? COLORS.incorrect : 
+                                  '#FFD700';
+                ctx.lineWidth = glowSize + animOffset;
+                ctx.strokeRect(
+                    x - glowSize - 10, 
+                    y - glowSize - 10, 
+                    width + glowSize * 2 + 20, 
+                    height + glowSize * 2 + 20
+                );
+            }
+        }
+
+        function drawArtworks() {
+            // Positions for the four artworks
+            const positions = [
+                { x: 70, y: 110, width: 140, height: 140 },
+                { x: 260, y: 110, width: 140, height: 140 },
+                { x: 450, y: 110, width: 140, height: 140 },
+                { x: 640, y: 110, width: 140, height: 140 }
+            ];
+            
+            // Draw question at the top
+            ctx.fillStyle = COLORS.heading;
+            ctx.font = 'bold 24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 50);
+            
+            // Draw artworks
+            gameState.options.forEach((option, index) => {
+                const pos = positions[index];
+                const isSelected = gameState.selectedOption === index;
+                const isHover = gameState.hoverOption === index;
+                
+                let correct = null;
+                if (gameState.gameOver && gameState.selectedOption === index) {
+                    correct = option.correct;
+                }
+                
+                // Draw frame
+                drawFrame(
+                    pos.x, 
+                    pos.y, 
+                    pos.width, 
+                    pos.height, 
+                    isSelected || isHover,
+                    correct
+                );
+                
+                // Draw artwork
+                if (option.image) {
+                    const scale = Math.min(
+                        pos.width / option.image.width,
+                        pos.height / option.image.height
+                    );
+                    
+                    const scaledWidth = option.image.width * scale;
+                    const scaledHeight = option.image.height * scale;
+                    
+                    const xOffset = pos.x + (pos.width - scaledWidth) / 2;
+                    const yOffset = pos.y + (pos.height - scaledHeight) / 2;
+                    
+                    ctx.drawImage(
+                        option.image,
+                        0, 0, option.image.width, option.image.height,
+                        xOffset, yOffset, scaledWidth, scaledHeight
+                    );
+                }
+                
+                // Draw plaque with answer text
+                const plaqueWidth = pos.width + 20;
+                const plaqueHeight = 40;
+                const plaqueX = pos.x - 10;
+                const plaqueY = pos.y + pos.height + 20;
+                
+                ctx.fillStyle = '#DCB571';
+                ctx.fillRect(plaqueX, plaqueY, plaqueWidth, plaqueHeight);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, plaqueX + plaqueWidth / 2, plaqueY + 25);
+            });
+        }
+
+        function drawResult() {
+            if (!gameState.gameOver) return;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = 'bold 32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = gameState.result ? COLORS.correct : COLORS.incorrect;
+            ctx.fillText(
+                gameState.result ? "Correct!" : "Incorrect!", 
+                canvas.width / 2, 
+                canvas.height / 2 - 40
+            );
+            
+            // Draw restart button
+            ctx.fillStyle = '#4A6D8C';
+            ctx.fillRect(
+                gameState.restartBtn.x,
+                gameState.restartBtn.y,
+                gameState.restartBtn.width,
+                gameState.restartBtn.height
+            );
+            
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                gameState.restartBtn.x,
+                gameState.restartBtn.y,
+                gameState.restartBtn.width,
+                gameState.restartBtn.height
+            );
+            
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '18px sans-serif';
+            ctx.fillText(
+                "Try Again", 
+                gameState.restartBtn.x + gameState.restartBtn.width / 2, 
+                gameState.restartBtn.y + gameState.restartBtn.height / 2 + 6
+            );
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawWallPattern();
+            drawArtworks();
+            drawResult();
+            
+            requestAnimationFrame(draw);
+        }
+
+        function selectOption(index) {
+            if (gameState.gameOver) return;
+            
+            gameState.selectedOption = index;
+            const option = gameState.options[index];
+            
+            gameState.gameOver = true;
+            gameState.result = option.correct;
+            
+            if (option.correct) {
+                playSound('correct');
+            } else {
+                playSound('incorrect');
+            }
+        }
+
+        function checkHover(x, y) {
+            if (gameState.gameOver) {
+                // Check if restart button is hovered
+                if (
+                    x >= gameState.restartBtn.x &&
+                    x <= gameState.restartBtn.x + gameState.restartBtn.width &&
+                    y >= gameState.restartBtn.y &&
+                    y <= gameState.restartBtn.y + gameState.restartBtn.height
+                ) {
+                    return;
+                }
+            }
+            
+            // Positions for the four artworks (same as in drawArtworks)
+            const positions = [
+                { x: 70, y: 110, width: 140, height: 140 },
+                { x: 260, y: 110, width: 140, height: 140 },
+                { x: 450, y: 110, width: 140, height: 140 },
+                { x: 640, y: 110, width: 140, height: 140 }
+            ];
+            
+            // Extended hit area including plaque
+            const extendedPositions = positions.map(pos => ({
+                x: pos.x - 16,
+                y: pos.y - 16,
+                width: pos.width + 32,
+                height: pos.height + 100 // Include plaque area
+            }));
+            
+            let hoveredIndex = null;
+            
+            extendedPositions.forEach((pos, index) => {
+                if (
+                    x >= pos.x &&
+                    x <= pos.x + pos.width &&
+                    y >= pos.y &&
+                    y <= pos.y + pos.height
+                ) {
+                    hoveredIndex = index;
+                }
+            });
+            
+            if (hoveredIndex !== gameState.hoverOption) {
+                if (hoveredIndex !== null) {
+                    playSound('hover');
+                }
+                gameState.hoverOption = hoveredIndex;
+            }
+        }
+
+        function restart() {
+            gameState.gameOver = false;
+            gameState.result = null;
+            gameState.selectedOption = null;
+            gameState.hoverOption = null;
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            checkHover(x, y);
+        });
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState.gameOver) {
+                // Check if restart button is clicked
+                if (
+                    x >= gameState.restartBtn.x &&
+                    x <= gameState.restartBtn.x + gameState.restartBtn.width &&
+                    y >= gameState.restartBtn.y &&
+                    y <= gameState.restartBtn.y + gameState.restartBtn.height
+                ) {
+                    restart();
+                    playSound('footstep');
+                }
+            } else if (gameState.hoverOption !== null) {
+                selectOption(gameState.hoverOption);
+            }
+        });
+
+        // Initialize and start the game
+        generatePixelArt();
+        draw();
+    </script>
+</body>
+</html>

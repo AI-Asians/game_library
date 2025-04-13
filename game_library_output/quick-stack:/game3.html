@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Quick-Stack: Capital of France</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #gameCanvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if we're on mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - Limited palette
+        const COLORS = {
+            bg: '#110033',
+            question: '#FFFFFF',
+            correct: '#55FF55',
+            wrong: '#FF5555',
+            stack: '#444477',
+            highlight: '#FFFF33',
+            brick1: '#8855AA',
+            brick2: '#6633AA'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let restartButton = {
+            x: canvas.width / 2 - 50,
+            y: canvas.height / 2 + 40,
+            width: 100,
+            height: 40
+        };
+        
+        // Question data
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "Berlin", correct: false },
+            { text: "London", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle the answers
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+        
+        // Shuffle answers
+        const shuffledAnswers = shuffleArray([...answers]);
+        
+        // Falling answers
+        const fallingBlocks = shuffledAnswers.map((answer, index) => {
+            return {
+                text: answer.text,
+                correct: answer.correct,
+                x: (canvas.width / 5) * (index + 1) - 40,
+                y: -50 - Math.random() * 300,
+                width: 80,
+                height: 40,
+                speed: 1.5 + Math.random() * 1.5,
+                landed: false,
+                selected: false
+            };
+        });
+        
+        // Stack properties
+        const stack = {
+            height: 0,
+            maxHeight: 80,
+            bricks: []
+        };
+        
+        // Particles system
+        let particles = [];
+        
+        // Sound effects using AudioContext
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 'square', 0.1); // C5
+            setTimeout(() => playSound(659.25, 'square', 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 'square', 0.2), 200); // G5
+        }
+        
+        function playWrongSound() {
+            playSound(311.13, 'square', 0.1); // E4 flat
+            setTimeout(() => playSound(233.08, 'square', 0.3), 150); // Bb3
+        }
+        
+        function playClickSound() {
+            playSound(440, 'square', 0.05);
+        }
+        
+        function playSoundLand() {
+            playSound(150, 'square', 0.1);
+        }
+        
+        // Helper for 8-bit "chunky" rounding
+        function pixelSnap(value) {
+            return Math.floor(value / 4) * 4;
+        }
+        
+        // Create particles when clicking
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    size: 4 + Math.random() * 4,
+                    color: color,
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Add a brick to the stack
+        function addBrick(block) {
+            stack.bricks.push({
+                x: block.x,
+                y: canvas.height - stack.height - block.height,
+                width: block.width,
+                height: block.height,
+                text: block.text,
+                correct: block.correct
+            });
+            
+            stack.height += block.height;
+            
+            // Apply screen shake
+            if (!block.correct) {
+                shakeScreen();
+            }
+        }
+        
+        // Screen shake effect
+        let shakeAmount = 0;
+        let shakeX = 0;
+        let shakeY = 0;
+        
+        function shakeScreen() {
+            shakeAmount = 10;
+        }
+        
+        // Update screen shake
+        function updateScreenShake() {
+            if (shakeAmount > 0) {
+                shakeX = (Math.random() - 0.5) * shakeAmount;
+                shakeY = (Math.random() - 0.5) * shakeAmount;
+                shakeAmount -= 0.5;
+            } else {
+                shakeX = 0;
+                shakeY = 0;
+            }
+        }
+        
+        // Handle game restart
+        function restartGame() {
+            gameOver = false;
+            stack.height = 0;
+            stack.bricks = [];
+            particles = [];
+            
+            // Reset and shuffle answers
+            const newShuffledAnswers = shuffleArray([...answers]);
+            
+            // Reset falling blocks
+            for (let i = 0; i < fallingBlocks.length; i++) {
+                fallingBlocks[i].text = newShuffledAnswers[i].text;
+                fallingBlocks[i].correct = newShuffledAnswers[i].correct;
+                fallingBlocks[i].x = (canvas.width / 5) * (i + 1) - 40;
+                fallingBlocks[i].y = -50 - Math.random() * 300;
+                fallingBlocks[i].speed = 1.5 + Math.random() * 1.5;
+                fallingBlocks[i].landed = false;
+                fallingBlocks[i].selected = false;
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas with background
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.save();
+            if (shakeAmount > 0) {
+                ctx.translate(shakeX, shakeY);
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw the stack (brick pattern)
+            for (let brick of stack.bricks) {
+                for (let i = 0; i < 10; i++) {
+                    for (let j = 0; j < 4; j++) {
+                        ctx.fillStyle = (i + j) % 2 === 0 ? COLORS.brick1 : COLORS.brick2;
+                        ctx.fillRect(
+                            pixelSnap(brick.x + (brick.width / 10) * i), 
+                            pixelSnap(brick.y + (brick.height / 4) * j), 
+                            pixelSnap(brick.width / 10), 
+                            pixelSnap(brick.height / 4)
+                        );
+                    }
+                }
+                
+                // Draw text on brick
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(brick.text, brick.x + brick.width / 2, brick.y + brick.height / 2 + 5);
+            }
+            
+            // Draw falling blocks
+            for (let block of fallingBlocks) {
+                if (!block.landed) {
+                    // Draw block with pixelated effect
+                    const blockColor = block.correct ? COLORS.correct : COLORS.wrong;
+                    
+                    // Create pixelated effect
+                    for (let i = 0; i < 8; i++) {
+                        for (let j = 0; j < 4; j++) {
+                            const shade = (i + j) % 2 === 0 ? blockColor : 
+                                          block.selected ? COLORS.highlight : 
+                                          shadeColor(blockColor, -20);
+                            
+                            ctx.fillStyle = shade;
+                            ctx.fillRect(
+                                pixelSnap(block.x + (block.width / 8) * i),
+                                pixelSnap(block.y + (block.height / 4) * j),
+                                pixelSnap(block.width / 8),
+                                pixelSnap(block.height / 4)
+                            );
+                        }
+                    }
+                    
+                    // Draw answer text
+                    ctx.fillStyle = '#000000';
+                    ctx.font = '16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(block.text, block.x + block.width / 2, block.y + block.height / 2 + 5);
+                }
+            }
+            
+            // Draw particles
+            for (let particle of particles) {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    pixelSnap(particle.x), 
+                    pixelSnap(particle.y), 
+                    pixelSnap(particle.size), 
+                    pixelSnap(particle.size)
+                );
+            }
+            
+            // Draw game over and restart
+            if (gameOver) {
+                // Semi-transparent overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Game over text
+                ctx.fillStyle = COLORS.question;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 20);
+                
+                // Restart button
+                ctx.fillStyle = COLORS.brick1;
+                ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+                
+                // Create pixelated button effect
+                for (let i = 0; i < 10; i++) {
+                    for (let j = 0; j < 4; j++) {
+                        ctx.fillStyle = (i + j) % 2 === 0 ? COLORS.brick1 : COLORS.brick2;
+                        ctx.fillRect(
+                            pixelSnap(restartButton.x + (restartButton.width / 10) * i),
+                            pixelSnap(restartButton.y + (restartButton.height / 4) * j),
+                            pixelSnap(restartButton.width / 10),
+                            pixelSnap(restartButton.height / 4)
+                        );
+                    }
+                }
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '18px sans-serif';
+                ctx.fillText('Restart', restartButton.x + restartButton.width / 2, restartButton.y + restartButton.height / 2 + 6);
+            }
+            
+            ctx.restore();
+        }
+        
+        // Game update function
+        function update() {
+            updateScreenShake();
+            
+            if (!gameOver) {
+                // Update falling blocks
+                fallingBlocks.forEach(block => {
+                    if (!block.landed) {
+                        // Move blocks down
+                        block.y += block.speed;
+                        block.speed += 0.01; // Slightly increase speed over time
+                        
+                        // Check if block has landed
+                        if (block.y + block.height >= canvas.height - stack.height) {
+                            block.landed = true;
+                            playSoundLand();
+                            addBrick(block);
+                            
+                            // If correct answer landed, game over
+                            if (block.correct) {
+                                gameOver = true;
+                                playWrongSound();
+                            }
+                        }
+                    }
+                });
+                
+                // Check if all blocks have landed
+                if (fallingBlocks.every(block => block.landed)) {
+                    gameOver = true;
+                }
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Helper function to shade colors
+        function shadeColor(color, percent) {
+            let R = parseInt(color.substring(1, 3), 16);
+            let G = parseInt(color.substring(3, 5), 16);
+            let B = parseInt(color.substring(5, 7), 16);
+            
+            R = parseInt(R * (100 + percent) / 100);
+            G = parseInt(G * (100 + percent) / 100);
+            B = parseInt(B * (100 + percent) / 100);
+            
+            R = (R < 255) ? R : 255;
+            G = (G < 255) ? G : 255;
+            B = (B < 255) ? B : 255;
+            
+            R = Math.max(0, R).toString(16).padStart(2, '0');
+            G = Math.max(0, G).toString(16).padStart(2, '0');
+            B = Math.max(0, B).toString(16).padStart(2, '0');
+            
+            return `#${R}${G}${B}`;
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (clickX >= restartButton.x && clickX <= restartButton.x + restartButton.width &&
+                    clickY >= restartButton.y && clickY <= restartButton.y + restartButton.height) {
+                    playClickSound();
+                    restartGame();
+                }
+                return;
+            }
+            
+            // Check if a falling block was clicked
+            for (let block of fallingBlocks) {
+                if (!block.landed && 
+                    clickX >= block.x && clickX <= block.x + block.width &&
+                    clickY >= block.y && clickY <= block.y + block.height) {
+                    
+                    block.selected = true;
+                    
+                    // Create particles at click location
+                    const particleColor = block.correct ? COLORS.correct : COLORS.wrong;
+                    createParticles(clickX, clickY, particleColor, 15);
+                    
+                    // Handle correct/incorrect selection
+                    if (block.correct) {
+                        gameOver = true;
+                        playCorrectSound();
+                    } else {
+                        gameOver = true;
+                        playWrongSound();
+                    }
+                    
+                    break;
+                }
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

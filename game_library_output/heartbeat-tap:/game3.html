@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heartbeat Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: 4px solid #888;
+            display: none;
+            font-family: sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">RESTART</button>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const question = "The Great Wall of China is visible from space.";
+        const answer = false; // Correct answer is FALSE
+        
+        let gameActive = true;
+        let pulseSize = 0;
+        let pulseDirection = 1;
+        let pulseSpeed = 0.02;
+        let pulseCount = 0;
+        let maxPulseCount = 4;
+        
+        // Heart colors
+        const colors = {
+            outline: "#FF4466",
+            fill: "#FF0044",
+            targetZone: "#44FF44",
+            targetZoneBorder: "#AAFFAA",
+            text: "#FFFFFF",
+            resultTrue: "#44FF44",
+            resultFalse: "#FF4444"
+        };
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playPulseSound() {
+            playSound(220, 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 0.1);
+            setTimeout(() => playSound(660, 0.2), 100);
+        }
+        
+        function playWrongSound() {
+            playSound(110, 0.2, 'sawtooth');
+            setTimeout(() => playSound(80, 0.3, 'sawtooth'), 200);
+        }
+        
+        // Draw pixelated heart
+        function drawHeart(x, y, size) {
+            const pixelSize = Math.max(1, Math.floor(size / 15));
+            
+            // Heart shape pixels
+            const heartShape = [
+                "  XXXX  XXXX  ",
+                " XXXXXX XXXXX ",
+                "XXXXXXXXXXXXXXX",
+                "XXXXXXXXXXXXXXX",
+                "XXXXXXXXXXXXXXX",
+                " XXXXXXXXXXXXX ",
+                "  XXXXXXXXXXX  ",
+                "   XXXXXXXXX   ",
+                "    XXXXXXX    ",
+                "     XXXXX     ",
+                "      XXX      ",
+                "       X       "
+            ];
+            
+            ctx.fillStyle = colors.fill;
+            ctx.strokeStyle = colors.outline;
+            
+            for (let row = 0; row < heartShape.length; row++) {
+                for (let col = 0; col < heartShape[row].length; col++) {
+                    if (heartShape[row][col] === 'X') {
+                        ctx.fillRect(
+                            x - size/2 + col * pixelSize, 
+                            y - size/2 + row * pixelSize, 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw target zone indicator
+        function drawTargetZone(x, y, innerRadius, outerRadius) {
+            ctx.strokeStyle = colors.targetZoneBorder;
+            ctx.lineWidth = 4;
+            
+            // Draw pixelated inner circle
+            drawPixelCircle(x, y, innerRadius, false, colors.targetZone);
+            
+            // Draw pixelated outer circle
+            drawPixelCircle(x, y, outerRadius, false, colors.targetZone);
+        }
+        
+        function drawPixelCircle(x, y, radius, fill, color) {
+            const pixelSize = 3;
+            const points = [];
+            
+            // Generate points around the circle
+            for (let angle = 0; angle < Math.PI * 2; angle += 0.2) {
+                const px = Math.round(x + Math.cos(angle) * radius / pixelSize) * pixelSize;
+                const py = Math.round(y + Math.sin(angle) * radius / pixelSize) * pixelSize;
+                
+                // Check if this point is already in our list to avoid duplicates
+                if (!points.some(p => p.x === px && p.y === py)) {
+                    points.push({x: px, y: py});
+                }
+            }
+            
+            // Draw the points
+            ctx.fillStyle = color;
+            points.forEach(p => {
+                ctx.fillRect(p.x, p.y, pixelSize, pixelSize);
+            });
+        }
+        
+        // Draw pixel particles
+        function createParticles(x, y, count, color) {
+            const particles = [];
+            
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                const size = 2 + Math.floor(Math.random() * 3);
+                
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: size,
+                    color: color,
+                    life: 20 + Math.floor(Math.random() * 10)
+                });
+            }
+            
+            return particles;
+        }
+        
+        let particles = [];
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+        }
+        
+        // Game Functions
+        function init() {
+            gameActive = true;
+            pulseSize = 0;
+            pulseDirection = 1;
+            pulseSpeed = 0.02;
+            pulseCount = 0;
+            particles = [];
+            restartBtn.style.display = 'none';
+            
+            // Start the game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function gameLoop() {
+            // Clear the canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 16 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            const maxLineWidth = canvas.width * 0.8;
+            const words = question.split(' ');
+            let line = '';
+            let lines = [];
+            
+            // Wrap text if needed
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxLineWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw wrapped text
+            const lineHeight = isMobile ? 24 : 36;
+            let textY = centerY - 150;
+            
+            lines.forEach(line => {
+                ctx.fillText(line, centerX, textY);
+                textY += lineHeight;
+            });
+            
+            if (gameActive) {
+                // Update pulse
+                pulseSize += pulseDirection * pulseSpeed;
+                
+                // Change direction at min/max size
+                if (pulseSize >= 1) {
+                    pulseDirection = -1;
+                    pulseSize = 1;
+                    pulseCount += 0.5;
+                    playPulseSound();
+                    
+                    // Create pulse particles
+                    particles = particles.concat(
+                        createParticles(centerX, centerY, 15, colors.fill)
+                    );
+                } else if (pulseSize <= 0) {
+                    pulseDirection = 1;
+                    pulseSize = 0;
+                    pulseCount += 0.5;
+                }
+                
+                // Increase speed with each pulse
+                if (pulseCount > 0 && pulseCount % 1 === 0) {
+                    pulseSpeed = Math.min(pulseSpeed * 1.1, 0.05);
+                }
+                
+                // Target zone size (where true/false answers are)
+                const minTarget = 0.7;
+                const maxTarget = 0.9;
+                
+                // Draw target zone
+                const baseSize = isMobile ? 120 : 200;
+                drawTargetZone(
+                    centerX, 
+                    centerY, 
+                    minTarget * baseSize, 
+                    maxTarget * baseSize
+                );
+                
+                // Draw heart that pulses
+                const heartSize = baseSize * (0.5 + pulseSize * 0.8);
+                drawHeart(centerX, centerY, heartSize);
+                
+                // Draw true/false text
+                ctx.font = `${isMobile ? 20 : 32}px sans-serif`;
+                ctx.fillStyle = "#FFF";
+                ctx.fillText("TRUE", centerX, centerY + baseSize * 0.6);
+                ctx.fillText("FALSE", centerX, centerY + baseSize * 0.6 + (isMobile ? 30 : 50));
+                
+                // Show which is target (smaller font)
+                ctx.font = `${isMobile ? 14 : 20}px sans-serif`;
+                ctx.fillStyle = "#AAAAAA";
+                ctx.fillText("(tap in target zone)", centerX, centerY + baseSize * 0.6 + (isMobile ? 60 : 100));
+                
+                // Check if max pulse count reached
+                if (pulseCount >= maxPulseCount) {
+                    gameActive = false;
+                    showResult(null); // Time's up, no answer
+                }
+                
+                // Update particles
+                updateParticles();
+                drawParticles();
+                
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        function showResult(userAnswer) {
+            gameActive = false;
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw result text
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            if (userAnswer === null) {
+                ctx.fillStyle = "#FFAA00";
+                ctx.fillText("TIME'S UP!", centerX, centerY - 40);
+                playWrongSound();
+            } else if (userAnswer === answer) {
+                ctx.fillStyle = colors.resultTrue;
+                ctx.fillText("CORRECT!", centerX, centerY - 40);
+                playCorrectSound();
+                
+                // Create success particles
+                particles = particles.concat(
+                    createParticles(centerX, centerY, 50, colors.resultTrue)
+                );
+            } else {
+                ctx.fillStyle = colors.resultFalse;
+                ctx.fillText("WRONG!", centerX, centerY - 40);
+                playWrongSound();
+            }
+            
+            // Draw the correct answer
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillText(`The correct answer is: ${answer ? "TRUE" : "FALSE"}`, centerX, centerY + 20);
+            
+            // Show restart button
+            restartBtn.style.display = 'block';
+            
+            // Continue animation loop for particles
+            function resultLoop() {
+                // Clear the canvas
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw result text
+                ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+                ctx.textAlign = 'center';
+                
+                if (userAnswer === null) {
+                    ctx.fillStyle = "#FFAA00";
+                    ctx.fillText("TIME'S UP!", centerX, centerY - 40);
+                } else if (userAnswer === answer) {
+                    ctx.fillStyle = colors.resultTrue;
+                    ctx.fillText("CORRECT!", centerX, centerY - 40);
+                } else {
+                    ctx.fillStyle = colors.resultFalse;
+                    ctx.fillText("WRONG!", centerX, centerY - 40);
+                }
+                
+                // Draw the correct answer
+                ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+                ctx.fillStyle = "#FFFFFF";
+                ctx.fillText(`The correct answer is: ${answer ? "TRUE" : "FALSE"}`, centerX, centerY + 20);
+                
+                // Update and draw particles
+                updateParticles();
+                drawParticles();
+                
+                if (particles.length > 0) {
+                    requestAnimationFrame(resultLoop);
+                }
+            }
+            
+            requestAnimationFrame(resultLoop);
+        }
+        
+        // Handle user input
+        canvas.addEventListener('click', function(e) {
+            if (!gameActive) return;
+            
+            const baseSize = isMobile ? 120 : 200;
+            const minTarget = 0.7;
+            const maxTarget = 0.9;
+            
+            // Check if heart is in the target zone
+            const normalizedSize = 0.5 + pulseSize * 0.8;
+            
+            if (normalizedSize >= minTarget && normalizedSize <= maxTarget) {
+                // Within target zone, get answer based on pulse direction
+                const userAnswer = (pulseDirection === -1); // TRUE when pulse is expanding
+                showResult(userAnswer);
+            } else {
+                // Outside target zone - create a few "miss" particles
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                particles = particles.concat(
+                    createParticles(x, y, 5, "#888888")
+                );
+                
+                // Small 'miss' sound
+                playSound(110, 0.05);
+            }
+        });
+        
+        // Handle restart
+        restartBtn.addEventListener('click', init);
+        
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>

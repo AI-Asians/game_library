@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Launcher</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            display: flex; 
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+        }
+        canvas { 
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Colors (limited palette)
+        const COLORS = {
+            background: "#000000",
+            stars1: "#444444",
+            stars2: "#AAAAAA",
+            launcher: "#5555FF",
+            rocket: "#FF5555",
+            flame: "#FFAA00",
+            text: "#FFFFFF",
+            correct: "#55FF55",
+            incorrect: "#FF5555",
+            powerMeter: "#55FFFF",
+            powerBg: "#222244"
+        };
+
+        // Game state
+        let gameState = "playing"; // playing, correct, incorrect
+        let rocketX = canvas.width / 2;
+        let rocketY = canvas.height - 100;
+        let rocketVelX = 0;
+        let rocketVelY = 0;
+        let launchPower = 0;
+        let increasingPower = true;
+        let particles = [];
+        let stars = [];
+        
+        // Create stars
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() > 0.8 ? 2 : 1,
+                color: Math.random() > 0.5 ? COLORS.stars1 : COLORS.stars2
+            });
+        }
+
+        // Answers
+        const answers = [
+            { text: "Venus", x: canvas.width * 0.25, y: 150, correct: false },
+            { text: "Mars", x: canvas.width * 0.5, y: 150, correct: true },
+            { text: "Jupiter", x: canvas.width * 0.75, y: 150, correct: false }
+        ];
+        
+        // Sound effects
+        function createBeepSound(freq, duration, type, volumeVal = 0.3) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = volumeVal;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function playLaunchSound() {
+            createBeepSound(400 + launchPower, 0.3, 'triangle');
+        }
+
+        function playCorrectSound() {
+            createBeepSound(523.25, 0.1, 'square'); // C5
+            setTimeout(() => createBeepSound(659.25, 0.2, 'square'), 100); // E5
+            setTimeout(() => createBeepSound(783.99, 0.3, 'square'), 200); // G5
+        }
+
+        function playIncorrectSound() {
+            createBeepSound(369.99, 0.1, 'sawtooth'); // F#4
+            setTimeout(() => createBeepSound(349.23, 0.2, 'sawtooth'), 150); // F4
+            setTimeout(() => createBeepSound(329.63, 0.3, 'sawtooth'), 300); // E4
+        }
+
+        // Drawing functions
+        function drawPixelCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            for (let dx = -radius; dx <= radius; dx++) {
+                for (let dy = -radius; dy <= radius; dy++) {
+                    if (dx*dx + dy*dy <= radius*radius) {
+                        ctx.fillRect(Math.floor(x + dx), Math.floor(y + dy), 1, 1);
+                    }
+                }
+            }
+        }
+
+        function drawPlanet(x, y, radius, color, correct) {
+            // Main planet
+            drawPixelCircle(x, y, radius, color);
+            
+            // Craters or features
+            for (let i = 0; i < 5; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * (radius * 0.7);
+                const featureX = x + Math.cos(angle) * dist;
+                const featureY = y + Math.sin(angle) * dist;
+                const featureSize = radius * 0.2 + Math.random() * radius * 0.2;
+                
+                drawPixelCircle(featureX, featureY, featureSize, correct ? "#AA5533" : "#444444");
+            }
+            
+            // Highlight
+            ctx.fillStyle = "#FFFFFF";
+            drawPixelCircle(x - radius * 0.3, y - radius * 0.3, radius * 0.15, "#FFFFFF33");
+        }
+        
+        function drawRocket() {
+            // Rocket body
+            ctx.fillStyle = COLORS.rocket;
+            ctx.fillRect(rocketX - 4, rocketY - 12, 8, 16);
+            
+            // Rocket tip
+            ctx.beginPath();
+            ctx.moveTo(rocketX - 4, rocketY - 12);
+            ctx.lineTo(rocketX, rocketY - 20);
+            ctx.lineTo(rocketX + 4, rocketY - 12);
+            ctx.fill();
+            
+            // Fins
+            ctx.fillRect(rocketX - 8, rocketY, 4, 8);
+            ctx.fillRect(rocketX + 4, rocketY, 4, 8);
+            
+            // Flame trail when moving
+            if (rocketVelY !== 0) {
+                for (let i = 0; i < 3; i++) {
+                    const flameSize = Math.random() * 5 + 5;
+                    particles.push({
+                        x: rocketX,
+                        y: rocketY + 8,
+                        size: flameSize,
+                        color: Math.random() > 0.5 ? COLORS.flame : "#FFFF00",
+                        vx: (Math.random() - 0.5) * 2,
+                        vy: Math.random() * 2 + 2,
+                        life: 10
+                    });
+                }
+            }
+        }
+        
+        function drawLauncher() {
+            // Base
+            ctx.fillStyle = COLORS.launcher;
+            ctx.fillRect(canvas.width / 2 - 25, canvas.height - 50, 50, 20);
+            
+            // Launch pad
+            ctx.fillRect(canvas.width / 2 - 15, canvas.height - 70, 30, 20);
+            
+            // Power meter background
+            ctx.fillStyle = COLORS.powerBg;
+            ctx.fillRect(canvas.width / 2 - 50, canvas.height - 30, 100, 10);
+            
+            // Power meter
+            ctx.fillStyle = COLORS.powerMeter;
+            ctx.fillRect(canvas.width / 2 - 50, canvas.height - 30, launchPower, 10);
+        }
+
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 50);
+        }
+        
+        function drawAnswers() {
+            answers.forEach(answer => {
+                // Draw planet
+                const planetColor = answer.correct ? "#AA3333" : "#5555AA";
+                drawPlanet(answer.x, answer.y, 30, planetColor, answer.correct);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = "16px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(answer.text, answer.x, answer.y + 60);
+            });
+        }
+        
+        function drawStars() {
+            stars.forEach(star => {
+                ctx.fillStyle = star.color;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+        }
+        
+        function drawParticles() {
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                drawPixelCircle(p.x, p.y, p.size, p.color);
+                
+                // Update particle
+                p.x += p.vx;
+                p.y += p.vy;
+                p.size -= 0.2;
+                p.life--;
+                
+                // Remove dead particles
+                if (p.life <= 0 || p.size <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+        
+        function drawRestartButton() {
+            ctx.fillStyle = "#333355";
+            ctx.fillRect(canvas.width / 2 - 50, canvas.height - 100, 100, 40);
+            ctx.strokeStyle = COLORS.text;
+            ctx.strokeRect(canvas.width / 2 - 50, canvas.height - 100, 100, 40);
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "18px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("Restart", canvas.width / 2, canvas.height - 75);
+        }
+        
+        function updateGame() {
+            if (gameState === "playing") {
+                // Update power meter
+                if (increasingPower) {
+                    launchPower += 2;
+                    if (launchPower >= 100) {
+                        increasingPower = false;
+                    }
+                } else {
+                    launchPower -= 2;
+                    if (launchPower <= 0) {
+                        increasingPower = true;
+                    }
+                }
+                
+                // Update rocket physics
+                if (rocketVelY !== 0) {
+                    rocketX += rocketVelX;
+                    rocketY += rocketVelY;
+                    rocketVelY += 0.2; // Gravity
+                    
+                    // Check for collisions with answers
+                    answers.forEach(answer => {
+                        const dx = rocketX - answer.x;
+                        const dy = rocketY - answer.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < 30) { // Hit a planet
+                            // Create explosion effect
+                            for (let i = 0; i < 30; i++) {
+                                particles.push({
+                                    x: rocketX,
+                                    y: rocketY,
+                                    size: Math.random() * 5 + 3,
+                                    color: answer.correct ? COLORS.correct : COLORS.incorrect,
+                                    vx: (Math.random() - 0.5) * 8,
+                                    vy: (Math.random() - 0.5) * 8,
+                                    life: 20
+                                });
+                            }
+                            
+                            if (answer.correct) {
+                                gameState = "correct";
+                                playCorrectSound();
+                            } else {
+                                gameState = "incorrect";
+                                playIncorrectSound();
+                            }
+                            
+                            // Hide the rocket
+                            rocketX = -100;
+                        }
+                    });
+                    
+                    // Out of bounds
+                    if (rocketY > canvas.height || rocketX < 0 || rocketX > canvas.width) {
+                        resetRocket();
+                    }
+                }
+            }
+        }
+        
+        function resetRocket() {
+            rocketX = canvas.width / 2;
+            rocketY = canvas.height - 100;
+            rocketVelX = 0;
+            rocketVelY = 0;
+        }
+        
+        function resetGame() {
+            gameState = "playing";
+            resetRocket();
+            particles = [];
+            launchPower = 0;
+            increasingPower = true;
+        }
+        
+        function launchRocket() {
+            if (rocketVelY === 0 && gameState === "playing") {
+                // Calculate launch velocity based on power
+                const launchAngle = -Math.PI/2; // Straight up
+                const launchStrength = launchPower / 10 + 5;
+                
+                rocketVelX = Math.cos(launchAngle) * launchStrength;
+                rocketVelY = Math.sin(launchAngle) * launchStrength;
+                
+                playLaunchSound();
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawStars();
+            drawParticles();
+            drawQuestion();
+            drawAnswers();
+            
+            if (gameState === "playing" || rocketVelY !== 0) {
+                drawLauncher();
+                drawRocket();
+            }
+            
+            // Result feedback
+            if (gameState === "correct" || gameState === "incorrect") {
+                ctx.fillStyle = gameState === "correct" ? COLORS.correct : COLORS.incorrect;
+                ctx.font = "30px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    gameState === "correct" ? "Correct!" : "Try Again!", 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+                
+                drawRestartButton();
+            }
+            
+            updateGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener("click", function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            if (gameState === "playing") {
+                launchRocket();
+            } else {
+                // Check if restart button clicked
+                if (
+                    clickX >= canvas.width / 2 - 50 && 
+                    clickX <= canvas.width / 2 + 50 &&
+                    clickY >= canvas.height - 100 && 
+                    clickY <= canvas.height - 60
+                ) {
+                    resetGame();
+                }
+            }
+        });
+        
+        // Touch support
+        canvas.addEventListener("touchstart", function(e) {
+            e.preventDefault();
+            if (gameState === "playing") {
+                launchRocket();
+            } else {
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.touches[0].clientX - rect.left;
+                const touchY = e.touches[0].clientY - rect.top;
+                
+                // Check if restart button touched
+                if (
+                    touchX >= canvas.width / 2 - 50 && 
+                    touchX <= canvas.width / 2 + 50 &&
+                    touchY >= canvas.height - 100 && 
+                    touchY <= canvas.height - 60
+                ) {
+                    resetGame();
+                }
+            }
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

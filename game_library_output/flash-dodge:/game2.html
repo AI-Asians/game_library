@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flash-Dodge TF Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #444;
+            color: white;
+            border: none;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas dimensions based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        const restartBtn = document.getElementById('restart');
+        
+        // Colors (limited 8-bit palette)
+        const COLORS = {
+            background: '#0f380f',
+            grid: '#306230',
+            player: '#8bac0f',
+            playerOutline: '#0f380f',
+            true: '#9bbc0f',
+            trueText: '#0f380f',
+            false: '#d13b27',
+            falseText: '#ffffff',
+            question: '#ffffff',
+            timer: '#9bbc0f'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let timer = 10;
+        let lastTime = 0;
+        let objects = [];
+        let spawnRate = 1500; // Time between spawns in ms
+        let lastSpawn = 0;
+        
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const correctAnswer = "TRUE"; // The correct answer for this question
+        
+        // Player setup
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            width: 32,
+            height: 32,
+            speed: 5,
+            velocityX: 0,
+            velocityY: 0
+        };
+        
+        // Controls
+        const keys = {
+            left: false,
+            right: false,
+            up: false,
+            down: false
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound functions
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 'square', 0.1); // C5
+            setTimeout(() => playSound(659.25, 'square', 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 'square', 0.2), 200); // G5
+        }
+        
+        function playWrongSound() {
+            playSound(311.13, 'square', 0.1); // Eb4
+            setTimeout(() => playSound(233.08, 'square', 0.3), 100); // Bb3
+        }
+        
+        function playSpawnSound() {
+            playSound(440, 'square', 0.05); // A4
+        }
+        
+        // Game objects
+        class TFObject {
+            constructor(isTrue) {
+                this.isTrue = isTrue;
+                this.text = isTrue ? "TRUE" : "FALSE";
+                this.width = 80;
+                this.height = 40;
+                this.speed = 3 + Math.random() * 2;
+                
+                // Random position from the sides
+                const side = Math.floor(Math.random() * 4); // 0: top, 1: right, 2: bottom, 3: left
+                
+                switch (side) {
+                    case 0: // top
+                        this.x = Math.random() * (canvas.width - this.width);
+                        this.y = -this.height;
+                        this.velocityX = (Math.random() - 0.5) * 4;
+                        this.velocityY = this.speed;
+                        break;
+                    case 1: // right
+                        this.x = canvas.width;
+                        this.y = Math.random() * (canvas.height - this.height);
+                        this.velocityX = -this.speed;
+                        this.velocityY = (Math.random() - 0.5) * 4;
+                        break;
+                    case 2: // bottom
+                        this.x = Math.random() * (canvas.width - this.width);
+                        this.y = canvas.height;
+                        this.velocityX = (Math.random() - 0.5) * 4;
+                        this.velocityY = -this.speed;
+                        break;
+                    case 3: // left
+                        this.x = -this.width;
+                        this.y = Math.random() * (canvas.height - this.height);
+                        this.velocityX = this.speed;
+                        this.velocityY = (Math.random() - 0.5) * 4;
+                        break;
+                }
+                
+                // Flash effect initial values
+                this.alpha = 1;
+                this.flashPhase = 0;
+                
+                playSpawnSound();
+            }
+            
+            update() {
+                this.x += this.velocityX;
+                this.y += this.velocityY;
+                
+                // Flash effect
+                this.flashPhase += 0.1;
+                this.alpha = 0.7 + Math.sin(this.flashPhase) * 0.3;
+                
+                // Check if out of bounds
+                return this.x < -this.width || this.x > canvas.width || 
+                       this.y < -this.height || this.y > canvas.height;
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                
+                // Draw TF object with pixelated style
+                ctx.fillStyle = this.isTrue ? COLORS.true : COLORS.false;
+                
+                // Pixelated rectangle with jagged edges
+                const pixelSize = 4;
+                for (let py = 0; py < this.height; py += pixelSize) {
+                    for (let px = 0; px < this.width; px += pixelSize) {
+                        // Skip some pixels on the edges for jagged look
+                        if ((px === 0 || px === this.width - pixelSize || 
+                             py === 0 || py === this.height - pixelSize) && 
+                            Math.random() > 0.85) {
+                            continue;
+                        }
+                        ctx.fillRect(this.x + px, this.y + py, pixelSize, pixelSize);
+                    }
+                }
+                
+                // Text
+                ctx.fillStyle = this.isTrue ? COLORS.trueText : COLORS.falseText;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x + this.width / 2, this.y + this.height / 2);
+                
+                ctx.restore();
+            }
+            
+            checkCollision(player) {
+                return (
+                    player.x < this.x + this.width &&
+                    player.x + player.width > this.x &&
+                    player.y < this.y + this.height &&
+                    player.y + player.height > this.y
+                );
+            }
+        }
+        
+        // Event listeners
+        window.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            
+            switch (e.key) {
+                case 'ArrowLeft':
+                case 'a':
+                    keys.left = true;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    keys.right = true;
+                    break;
+                case 'ArrowUp':
+                case 'w':
+                    keys.up = true;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    keys.down = true;
+                    break;
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            switch (e.key) {
+                case 'ArrowLeft':
+                case 'a':
+                    keys.left = false;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    keys.right = false;
+                    break;
+                case 'ArrowUp':
+                case 'w':
+                    keys.up = false;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    keys.down = false;
+                    break;
+            }
+        });
+
+        // Touch controls for mobile
+        let touchStartX = 0;
+        let touchStartY = 0;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameOver) return;
+            
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            e.preventDefault();
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameOver) return;
+            
+            const touch = e.touches[0];
+            const diffX = touch.clientX - touchStartX;
+            const diffY = touch.clientY - touchStartY;
+            
+            // Update player position directly for touch
+            player.x += diffX * 0.5;
+            player.y += diffY * 0.5;
+            
+            // Keep player within bounds
+            player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+            player.y = Math.max(0, Math.min(canvas.height - player.height, player.y));
+            
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            e.preventDefault();
+        });
+        
+        restartBtn.addEventListener('click', () => {
+            resetGame();
+            restartBtn.style.display = 'none';
+        });
+        
+        // Game functions
+        function spawnObject() {
+            const isTrue = Math.random() > 0.5;
+            objects.push(new TFObject(isTrue));
+        }
+        
+        function drawGrid() {
+            const gridSize = 32;
+            ctx.strokeStyle = COLORS.grid;
+            ctx.lineWidth = 1;
+            
+            // Draw vertical lines
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            // Draw horizontal lines
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+        
+        function drawPlayer() {
+            ctx.fillStyle = COLORS.player;
+            
+            // Draw pixelated player (8-bit style character)
+            const pixelSize = 4;
+            for (let py = 0; py < player.height; py += pixelSize) {
+                for (let px = 0; px < player.width; px += pixelSize) {
+                    // Create a simple character shape (skip corners for rounded look)
+                    if ((px === 0 && py === 0) || 
+                        (px === 0 && py === player.height - pixelSize) ||
+                        (px === player.width - pixelSize && py === 0) ||
+                        (px === player.width - pixelSize && py === player.height - pixelSize)) {
+                        continue;
+                    }
+                    
+                    // Add some pixelated details to the character
+                    if ((py === player.height / 2 - pixelSize && (px === player.width / 3 || px === player.width * 2/3)) ||
+                        (py === player.height * 0.7 && px >= player.width / 3 && px <= player.width * 2/3)) {
+                        ctx.fillStyle = COLORS.playerOutline;
+                    } else {
+                        ctx.fillStyle = COLORS.player;
+                    }
+                    
+                    ctx.fillRect(player.x + px, player.y + py, pixelSize, pixelSize);
+                }
+            }
+            
+            // Draw outline
+            ctx.strokeStyle = COLORS.playerOutline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(player.x, player.y, player.width, player.height);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.question;
+            ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(question, canvas.width / 2, 20);
+        }
+        
+        function drawTimer() {
+            const timerWidth = 200;
+            const timerHeight = 20;
+            const timerX = (canvas.width - timerWidth) / 2;
+            const timerY = 60;
+            
+            // Draw timer background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Draw timer fill
+            const fillWidth = (timer / 10) * timerWidth;
+            ctx.fillStyle = COLORS.timer;
+            ctx.fillRect(timerX, timerY, fillWidth, timerHeight);
+            
+            // Draw timer text
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${timer.toFixed(1)}s`, timerX + timerWidth / 2, timerY + timerHeight / 2);
+        }
+        
+        function endGame(won) {
+            gameOver = true;
+            
+            if (won) {
+                playCorrectSound();
+            } else {
+                playWrongSound();
+            }
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            timer = 10;
+            objects = [];
+            lastSpawn = 0;
+            spawnRate = 1500;
+            
+            player.x = canvas.width / 2;
+            player.y = canvas.height - 100;
+            player.velocityX = 0;
+            player.velocityY = 0;
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            if (!gameOver) {
+                // Clear canvas
+                ctx.fillStyle = COLORS.background;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw background grid
+                drawGrid();
+                
+                // Update timer
+                timer -= deltaTime;
+                if (timer <= 0) {
+                    timer = 0;
+                    endGame(false);
+                }
+                
+                // Spawn objects
+                if (timestamp - lastSpawn > spawnRate) {
+                    spawnObject();
+                    lastSpawn = timestamp;
+                    spawnRate = Math.max(800, spawnRate - 50); // Gradually increase spawn rate
+                }
+                
+                // Update player
+                if (keys.left) player.velocityX = -player.speed;
+                else if (keys.right) player.velocityX = player.speed;
+                else player.velocityX *= 0.8; // Friction
+                
+                if (keys.up) player.velocityY = -player.speed;
+                else if (keys.down) player.velocityY = player.speed;
+                else player.velocityY *= 0.8; // Friction
+                
+                // Apply velocity with 8-bit style movement (less smooth)
+                player.x += Math.round(player.velocityX);
+                player.y += Math.round(player.velocityY);
+                
+                // Keep player within bounds
+                player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+                player.y = Math.max(0, Math.min(canvas.height - player.height, player.y));
+                
+                // Update and draw objects
+                for (let i = objects.length - 1; i >= 0; i--) {
+                    const isOutOfBounds = objects[i].update();
+                    
+                    // Check collision with player
+                    if (objects[i].checkCollision(player)) {
+                        const isAnswerCorrect = 
+                            (objects[i].text === correctAnswer);
+                        endGame(isAnswerCorrect);
+                    }
+                    
+                    // Remove if out of bounds
+                    if (isOutOfBounds) {
+                        objects.splice(i, 1);
+                    } else {
+                        objects[i].draw();
+                    }
+                }
+                
+                // Draw player
+                drawPlayer();
+                
+                // Draw question and timer
+                drawQuestion();
+                drawTimer();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        resetGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

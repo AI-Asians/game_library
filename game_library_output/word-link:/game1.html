@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz - Word Link Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            background-color: #444;
+            color: #fff;
+            border: 4px solid #666;
+            padding: 8px 16px;
+            font-size: 18px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Game state
+        let gameOver = false;
+        let dragging = false;
+        let correctAnswerSelected = false;
+        let startX, startY, endX, endY;
+        let selectedBubble = null;
+
+        // Color palette (16 colors)
+        const colors = [
+            '#000000', '#5e5e5e', '#a1a1a1', '#ffffff',
+            '#934343', '#d86b6b', '#f5a7a7', '#820e0e',
+            '#4b6727', '#7a994e', '#abc678', '#203a08',
+            '#414b73', '#687aac', '#a2b2e0', '#1a2849'
+        ];
+
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(311.13, audioCtx.currentTime); // D#4
+                oscillator.frequency.setValueAtTime(233.08, audioCtx.currentTime + 0.1); // A#3
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+
+        // Answer bubbles
+        const bubbles = [
+            { text: "Paris", x: 300, y: 300, vx: 0.5, vy: 0.3, radius: 40, color: colors[12], correct: true },
+            { text: "London", x: 500, y: 200, vx: -0.4, vy: 0.2, radius: 40, color: colors[8], correct: false },
+            { text: "Berlin", x: 200, y: 400, vx: 0.3, vy: -0.5, radius: 40, color: colors[4], correct: false },
+            { text: "Rome", x: 600, y: 400, vx: -0.2, vy: -0.4, radius: 40, color: colors[10], correct: false }
+        ];
+
+        // Question bubble
+        const question = {
+            text: "What is the capital of France?",
+            x: canvas.width / 2,
+            y: 100,
+            radius: 70,
+            color: colors[14]
+        };
+
+        // Draw pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 3;
+            ctx.fillStyle = color;
+            
+            for (let px = -radius; px <= radius; px += pixelSize) {
+                for (let py = -radius; py <= radius; py += pixelSize) {
+                    if (px*px + py*py <= radius*radius) {
+                        ctx.fillRect(
+                            Math.floor(x + px), 
+                            Math.floor(y + py), 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+
+        // Draw text with pixelated shadow
+        function drawText(text, x, y, fontSize, color) {
+            ctx.font = `${fontSize}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Shadow effect
+            ctx.fillStyle = '#00000050';
+            ctx.fillText(text, x + 2, y + 2);
+            
+            // Main text
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+        }
+
+        // Draw pixelated line
+        function drawPixelatedLine(x1, y1, x2, y2, color, thickness = 4) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const pixelSize = 4;
+            
+            for (let i = 0; i < distance; i += pixelSize) {
+                const ratio = i / distance;
+                const x = x1 + dx * ratio;
+                const y = y1 + dy * ratio;
+                
+                ctx.fillStyle = color;
+                ctx.fillRect(
+                    Math.floor(x - thickness/2), 
+                    Math.floor(y - thickness/2), 
+                    thickness, 
+                    thickness
+                );
+            }
+        }
+
+        // Update bubble positions
+        function updateBubbles() {
+            bubbles.forEach(bubble => {
+                bubble.x += bubble.vx;
+                bubble.y += bubble.vy;
+                
+                // Bounce off walls
+                if (bubble.x < bubble.radius || bubble.x > canvas.width - bubble.radius) {
+                    bubble.vx *= -1;
+                }
+                if (bubble.y < bubble.radius || bubble.y > canvas.height - bubble.radius) {
+                    bubble.vy *= -1;
+                }
+            });
+        }
+
+        // Check if point is inside bubble
+        function isPointInBubble(x, y, bubble) {
+            const dx = x - bubble.x;
+            const dy = y - bubble.y;
+            return dx * dx + dy * dy < bubble.radius * bubble.radius;
+        }
+
+        // Draw game
+        function draw() {
+            // Clear canvas with dark background
+            ctx.fillStyle = colors[1];
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid pattern (optional)
+            ctx.strokeStyle = colors[2] + '30';
+            ctx.lineWidth = 1;
+            const gridSize = 20;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw question bubble
+            drawPixelatedCircle(question.x, question.y, question.radius, question.color);
+            drawText(question.text, question.x, question.y, 18, colors[3]);
+            
+            // Draw answer bubbles
+            bubbles.forEach(bubble => {
+                drawPixelatedCircle(bubble.x, bubble.y, bubble.radius, bubble.color);
+                drawText(bubble.text, bubble.x, bubble.y, 16, colors[3]);
+            });
+            
+            // Draw line while dragging
+            if (dragging && selectedBubble) {
+                drawPixelatedLine(
+                    startX, startY, endX, endY, 
+                    selectedBubble.correct ? colors[11] : colors[7], 6
+                );
+            }
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = correctAnswerSelected ? colors[10] + 'A0' : colors[4] + 'A0';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                drawText(
+                    correctAnswerSelected ? "CORRECT!" : "WRONG!",
+                    canvas.width / 2, canvas.height / 2, 
+                    48, colors[3]
+                );
+                
+                restartBtn.style.display = "block";
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            if (!gameOver) {
+                updateBubbles();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if clicked on question bubble
+            if (isPointInBubble(mouseX, mouseY, question)) {
+                dragging = true;
+                selectedBubble = question;
+                startX = question.x;
+                startY = question.y;
+                endX = mouseX;
+                endY = mouseY;
+                playSound('select');
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!dragging || gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            endX = e.clientX - rect.left;
+            endY = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (!dragging || gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if released on an answer bubble
+            for (const bubble of bubbles) {
+                if (isPointInBubble(mouseX, mouseY, bubble)) {
+                    // Game over logic
+                    gameOver = true;
+                    correctAnswerSelected = bubble.correct;
+                    
+                    // Play appropriate sound
+                    if (bubble.correct) {
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    
+                    break;
+                }
+            }
+            
+            dragging = false;
+        });
+
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            const touchY = e.touches[0].clientY - rect.top;
+            
+            if (isPointInBubble(touchX, touchY, question)) {
+                dragging = true;
+                selectedBubble = question;
+                startX = question.x;
+                startY = question.y;
+                endX = touchX;
+                endY = touchY;
+                playSound('select');
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!dragging || gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            endX = e.touches[0].clientX - rect.left;
+            endY = e.touches[0].clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (!dragging || gameOver) return;
+            
+            // Find which bubble (if any) the touch ended on
+            for (const bubble of bubbles) {
+                if (isPointInBubble(endX, endY, bubble)) {
+                    gameOver = true;
+                    correctAnswerSelected = bubble.correct;
+                    
+                    if (bubble.correct) {
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    
+                    break;
+                }
+            }
+            
+            dragging = false;
+        });
+
+        restartBtn.addEventListener('click', () => {
+            gameOver = false;
+            dragging = false;
+            correctAnswerSelected = false;
+            selectedBubble = null;
+            
+            // Reset bubble positions
+            bubbles[0].x = 300; bubbles[0].y = 300;
+            bubbles[1].x = 500; bubbles[1].y = 200;
+            bubbles[2].x = 200; bubbles[2].y = 400;
+            bubbles[3].x = 600; bubbles[3].y = 400;
+            
+            restartBtn.style.display = "none";
+        });
+
+        // Responsive canvas sizing
+        function resizeCanvas() {
+            if (window.innerWidth < 800) {
+                canvas.width = 360;
+                canvas.height = 640;
+                
+                // Adjust positions for mobile
+                question.x = canvas.width / 2;
+                question.y = 100;
+                
+                bubbles[0].x = 120; bubbles[0].y = 250;
+                bubbles[1].x = 240; bubbles[1].y = 350;
+                bubbles[2].x = 120; bubbles[2].y = 450;
+                bubbles[3].x = 240; bubbles[3].y = 550;
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+                
+                // Adjust positions for desktop
+                question.x = canvas.width / 2;
+                question.y = 100;
+                
+                bubbles[0].x = 300; bubbles[0].y = 300;
+                bubbles[1].x = 500; bubbles[1].y = 200;
+                bubbles[2].x = 200; bubbles[2].y = 400;
+                bubbles[3].x = 600; bubbles[3].y = 400;
+            }
+        }
+
+        // Initialize and start game
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        gameLoop();
+    </script>
+</body>
+</html>

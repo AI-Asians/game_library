@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Path-Paint TF Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        .button-container {
+            position: absolute;
+            bottom: 20px;
+            display: flex;
+            gap: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-family: sans-serif;
+            background-color: #333;
+            color: white;
+            border: 3px solid #666;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const gameColors = {
+            background: '#5C94FC',
+            path: '#8B6914',
+            character: '#FF0000',
+            trueSection: '#00AA00',
+            falseSection: '#CC0000',
+            text: '#FFFFFF',
+            trueBtnInactive: '#006600',
+            trueBtnActive: '#00FF00', 
+            falseBtnInactive: '#660000',
+            falseBtnActive: '#FF0000'
+        };
+        
+        const question = "The Great Wall of China is visible from space.";
+        const correctAnswer = false; // The correct answer is False
+        
+        // Path configuration
+        const pathWidth = isMobile ? 40 : 60;
+        const pathSegments = 12;
+        const pathSegmentLength = canvas.height / pathSegments;
+        
+        // Character configuration
+        const characterSize = isMobile ? 20 : 30;
+        const characterSpeed = canvas.height / 400;
+        const character = {
+            x: canvas.width / 2,
+            y: canvas.height,
+            size: characterSize,
+            speed: characterSpeed,
+            frame: 0
+        };
+        
+        // Game state
+        let gameOver = false;
+        let playerAnswered = false;
+        let playerAnswer = null;
+        let answerY = canvas.height / 2;
+        let paintEffects = [];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound functions
+        function playSound(freq, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 'square', 100);
+            setTimeout(() => playSound(659.25, 'square', 100), 100);
+            setTimeout(() => playSound(783.99, 'square', 150), 200);
+        }
+        
+        function playWrongSound() {
+            playSound(196.00, 'square', 200);
+            setTimeout(() => playSound(185.00, 'square', 300), 200);
+        }
+        
+        function playClickSound() {
+            playSound(440, 'square', 50);
+        }
+        
+        // Create paint splatter effect
+        function createPaintSplatter(x, y, color) {
+            for (let i = 0; i < 8; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * pathWidth * 0.7;
+                
+                paintEffects.push({
+                    x: x + Math.cos(angle) * distance,
+                    y: y + Math.sin(angle) * distance,
+                    size: Math.random() * 8 + 4,
+                    color: color,
+                    alpha: 1,
+                    fade: 0.03
+                });
+            }
+        }
+        
+        // Draw functions
+        function drawPath() {
+            ctx.fillStyle = gameColors.path;
+            ctx.fillRect(canvas.width / 2 - pathWidth / 2, 0, pathWidth, canvas.height);
+            
+            // Draw segment markers
+            for (let i = 0; i < pathSegments; i++) {
+                ctx.fillStyle = "#6B4B0C";
+                ctx.fillRect(
+                    canvas.width / 2 - pathWidth / 2, 
+                    i * pathSegmentLength,
+                    pathWidth, 
+                    3
+                );
+            }
+        }
+        
+        function drawCharacter() {
+            ctx.fillStyle = gameColors.character;
+            
+            // Draw simple 8-bit style character
+            // Body
+            ctx.fillRect(
+                character.x - character.size / 2,
+                character.y - character.size / 2,
+                character.size,
+                character.size
+            );
+            
+            // Eyes
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(
+                character.x - character.size / 4 - 2,
+                character.y - character.size / 4 - 2,
+                4, 4
+            );
+            ctx.fillRect(
+                character.x + character.size / 4 - 2,
+                character.y - character.size / 4 - 2,
+                4, 4
+            );
+            
+            // Add pixel animation (bob up and down)
+            const bobOffset = Math.sin(Date.now() / 100) * 2;
+            ctx.fillStyle = gameColors.character;
+            ctx.fillRect(
+                character.x - character.size / 2,
+                character.y + character.size / 2 + bobOffset,
+                character.size,
+                4
+            );
+        }
+        
+        function drawPaintEffects() {
+            for (let i = paintEffects.length - 1; i >= 0; i--) {
+                const effect = paintEffects[i];
+                
+                ctx.fillStyle = effect.color + Math.floor(effect.alpha * 255).toString(16).padStart(2, '0');
+                ctx.beginPath();
+                ctx.arc(effect.x, effect.y, effect.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                effect.alpha -= effect.fade;
+                
+                if (effect.alpha <= 0) {
+                    paintEffects.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = gameColors.text;
+            ctx.font = isMobile ? '16px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, isMobile ? 50 : 70);
+        }
+        
+        function drawButtons() {
+            const btnWidth = isMobile ? 100 : 150;
+            const btnHeight = isMobile ? 50 : 70;
+            const bottomMargin = isMobile ? 100 : 150;
+            
+            // True button
+            ctx.fillStyle = gameColors.trueBtnInactive;
+            ctx.fillRect(canvas.width / 4 - btnWidth / 2, canvas.height - bottomMargin, btnWidth, btnHeight);
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(canvas.width / 4 - btnWidth / 2, canvas.height - bottomMargin, btnWidth, btnHeight);
+            
+            // False button
+            ctx.fillStyle = gameColors.falseBtnInactive;
+            ctx.fillRect(3 * canvas.width / 4 - btnWidth / 2, canvas.height - bottomMargin, btnWidth, btnHeight);
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(3 * canvas.width / 4 - btnWidth / 2, canvas.height - bottomMargin, btnWidth, btnHeight);
+            
+            // Button text
+            ctx.fillStyle = gameColors.text;
+            ctx.font = isMobile ? '16px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('TRUE', canvas.width / 4, canvas.height - bottomMargin + btnHeight / 2 + 8);
+            ctx.fillText('FALSE', 3 * canvas.width / 4, canvas.height - bottomMargin + btnHeight / 2 + 8);
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = gameColors.text;
+            ctx.font = isMobile ? '12px sans-serif' : '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Click/Tap buttons to paint the path', canvas.width / 2, canvas.height - 30);
+        }
+        
+        function drawRestartButton() {
+            if (gameOver) {
+                const btnWidth = isMobile ? 100 : 150;
+                const btnHeight = isMobile ? 40 : 50;
+                
+                ctx.fillStyle = '#444';
+                ctx.fillRect(canvas.width / 2 - btnWidth / 2, canvas.height / 2 + 50, btnWidth, btnHeight);
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(canvas.width / 2 - btnWidth / 2, canvas.height / 2 + 50, btnWidth, btnHeight);
+                
+                ctx.fillStyle = gameColors.text;
+                ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', canvas.width / 2, canvas.height / 2 + 50 + btnHeight / 2 + 6);
+            }
+        }
+        
+        function drawResult() {
+            if (gameOver) {
+                ctx.fillStyle = playerAnswer === correctAnswer ? gameColors.trueSection : gameColors.falseSection;
+                ctx.font = isMobile ? '24px sans-serif' : '36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    playerAnswer === correctAnswer ? 'CORRECT!' : 'WRONG!',
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Move character
+                character.y -= character.speed;
+                
+                // Check if character reached the answer area
+                if (playerAnswered && Math.abs(character.y - answerY) < 10) {
+                    gameOver = true;
+                    if (playerAnswer === correctAnswer) {
+                        playCorrectSound();
+                    } else {
+                        playWrongSound();
+                    }
+                }
+                
+                // Check if character reached top (no answer given)
+                if (character.y < 0) {
+                    gameOver = true;
+                    playWrongSound();
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = gameColors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawPath();
+            
+            // Draw painted section if answer selected
+            if (playerAnswered) {
+                ctx.fillStyle = playerAnswer ? gameColors.trueSection : gameColors.falseSection;
+                ctx.fillRect(
+                    canvas.width / 2 - pathWidth / 2,
+                    answerY - pathSegmentLength / 2,
+                    pathWidth,
+                    pathSegmentLength
+                );
+            }
+            
+            drawPaintEffects();
+            drawCharacter();
+            drawQuestion();
+            drawButtons();
+            drawInstructions();
+            drawResult();
+            drawRestartButton();
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/touch events
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const btnWidth = isMobile ? 100 : 150;
+                const btnHeight = isMobile ? 40 : 50;
+                
+                if (
+                    x >= canvas.width / 2 - btnWidth / 2 &&
+                    x <= canvas.width / 2 + btnWidth / 2 &&
+                    y >= canvas.height / 2 + 50 &&
+                    y <= canvas.height / 2 + 50 + btnHeight
+                ) {
+                    // Restart game
+                    gameOver = false;
+                    playerAnswered = false;
+                    playerAnswer = null;
+                    character.y = canvas.height;
+                    paintEffects = [];
+                    playClickSound();
+                }
+                return;
+            }
+            
+            if (!playerAnswered) {
+                const btnWidth = isMobile ? 100 : 150;
+                const btnHeight = isMobile ? 50 : 70;
+                const bottomMargin = isMobile ? 100 : 150;
+                
+                // Check if True button was clicked
+                if (
+                    x >= canvas.width / 4 - btnWidth / 2 &&
+                    x <= canvas.width / 4 + btnWidth / 2 &&
+                    y >= canvas.height - bottomMargin &&
+                    y <= canvas.height - bottomMargin + btnHeight
+                ) {
+                    playerAnswered = true;
+                    playerAnswer = true;
+                    playClickSound();
+                    
+                    // Create paint effects
+                    createPaintSplatter(canvas.width / 2, answerY, gameColors.trueSection);
+                }
+                
+                // Check if False button was clicked
+                if (
+                    x >= 3 * canvas.width / 4 - btnWidth / 2 &&
+                    x <= 3 * canvas.width / 4 + btnWidth / 2 &&
+                    y >= canvas.height - bottomMargin &&
+                    y <= canvas.height - bottomMargin + btnHeight
+                ) {
+                    playerAnswered = true;
+                    playerAnswer = false;
+                    playClickSound();
+                    
+                    // Create paint effects
+                    createPaintSplatter(canvas.width / 2, answerY, gameColors.falseSection);
+                }
+            }
+        }
+        
+        // Set up event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            handleClick(e);
+        }, false);
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

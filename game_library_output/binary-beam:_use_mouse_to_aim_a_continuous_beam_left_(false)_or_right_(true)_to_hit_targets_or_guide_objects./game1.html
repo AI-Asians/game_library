@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Binary-Beam: True or False</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #121212;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #333;
+            color: #fff;
+            border: 4px solid #666;
+            font-family: sans-serif;
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors
+        const COLORS = {
+            background: '#111122',
+            beam: '#33ff99',
+            beamCore: '#88ffbb',
+            falseTarget: '#ff6644',
+            trueTarget: '#44aaff',
+            text: '#ffffff',
+            targetGlow: '#ffff00',
+            particles: ['#ffff00', '#ff9900', '#ff0000', '#00ff00', '#0099ff']
+        };
+        
+        // Game state
+        let gameOver = false;
+        let beamAngle = Math.PI / 2; // Start pointing up
+        let beamPulse = 0;
+        let beamCharging = 100; // Initial charging effect
+        let particles = [];
+        let timer = 0;
+        const correctAnswer = false; // The Great Wall is NOT visible from space
+        let proximityLeft = 0;
+        let proximityRight = 0;
+        
+        // Sound contexts
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Target properties
+        const falseTargetX = canvas.width * 0.15;
+        const trueTargetX = canvas.width * 0.85;
+        const targetY = canvas.height * 0.3;
+        const targetRadius = isMobile ? 35 : 60;
+        
+        // Beam source
+        const beamSourceX = canvas.width / 2;
+        const beamSourceY = canvas.height * 0.75;
+        const beamLength = canvas.height;
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            beamAngle = Math.PI / 2;
+            beamPulse = 0;
+            beamCharging = 100;
+            particles = [];
+            timer = 0;
+            restartButton.style.display = 'none';
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Play sound
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.3;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Play charging sound
+        function playChargingSound() {
+            playSound(200 + (100 - beamCharging) * 5, 'square', 0.05);
+        }
+        
+        // Play hit sound
+        function playHitSound(correct) {
+            if (correct) {
+                playSound(660, 'square', 0.1);
+                setTimeout(() => playSound(880, 'square', 0.15), 100);
+                setTimeout(() => playSound(1100, 'square', 0.2), 250);
+            } else {
+                playSound(220, 'sawtooth', 0.1);
+                setTimeout(() => playSound(180, 'sawtooth', 0.3), 100);
+            }
+        }
+        
+        // Check if beam hits targets
+        function checkTargets() {
+            // Calculate beam endpoint
+            const beamEndX = beamSourceX + Math.cos(beamAngle) * beamLength;
+            const beamEndY = beamSourceY - Math.sin(beamAngle) * beamLength;
+            
+            // Line-circle intersection for both targets
+            const dxFalse = beamEndX - beamSourceX;
+            const dyFalse = beamEndY - beamSourceY;
+            
+            // Check false target (left)
+            const a = dxFalse * dxFalse + dyFalse * dyFalse;
+            const bFalse = 2 * (dxFalse * (beamSourceX - falseTargetX) + dyFalse * (beamSourceY - targetY));
+            const cFalse = (beamSourceX - falseTargetX) * (beamSourceX - falseTargetX) + 
+                      (beamSourceY - targetY) * (beamSourceY - targetY) - targetRadius * targetRadius;
+            const discriminantFalse = bFalse * bFalse - 4 * a * cFalse;
+            
+            // Calculate proximity to false target (left)
+            proximityLeft = discriminantFalse > 0 ? 1 : 0;
+            if (discriminantFalse > 0 && beamEndX < beamSourceX) {
+                gameOver = true;
+                createExplosion(falseTargetX, targetY, 30);
+                playHitSound(correctAnswer === false);
+                setTimeout(() => { restartButton.style.display = 'block'; }, 1000);
+                return correctAnswer === false;
+            }
+            
+            // Check true target (right)
+            const bTrue = 2 * (dxFalse * (beamSourceX - trueTargetX) + dyFalse * (beamSourceY - targetY));
+            const cTrue = (beamSourceX - trueTargetX) * (beamSourceX - trueTargetX) + 
+                     (beamSourceY - targetY) * (beamSourceY - targetY) - targetRadius * targetRadius;
+            const discriminantTrue = bTrue * bTrue - 4 * a * cTrue;
+            
+            // Calculate proximity to true target (right)
+            proximityRight = discriminantTrue > 0 ? 1 : 0;
+            if (discriminantTrue > 0 && beamEndX > beamSourceX) {
+                gameOver = true;
+                createExplosion(trueTargetX, targetY, 30);
+                playHitSound(correctAnswer === true);
+                setTimeout(() => { restartButton.style.display = 'block'; }, 1000);
+                return correctAnswer === true;
+            }
+            
+            return false;
+        }
+        
+        // Create explosion particles
+        function createExplosion(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    size: Math.random() * 8 + 2,
+                    color: COLORS.particles[Math.floor(Math.random() * COLORS.particles.length)],
+                    life: Math.random() * 30 + 20
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                ctx.fillStyle = p.color;
+                
+                // Draw pixelated square particles
+                const size = Math.floor(p.size);
+                ctx.fillRect(
+                    Math.floor(p.x - size/2), 
+                    Math.floor(p.y - size/2), 
+                    size, size
+                );
+            }
+        }
+        
+        // Draw beam
+        function drawBeam() {
+            const beamEndX = beamSourceX + Math.cos(beamAngle) * beamLength;
+            const beamEndY = beamSourceY - Math.sin(beamAngle) * beamLength;
+            
+            // Draw beam with pulsing effect
+            beamPulse = (beamPulse + 0.2) % (Math.PI * 2);
+            const pulseWidth = Math.sin(beamPulse) * 3 + 6;
+            
+            // Outer beam
+            ctx.strokeStyle = COLORS.beam;
+            ctx.lineWidth = pulseWidth;
+            ctx.beginPath();
+            ctx.moveTo(beamSourceX, beamSourceY);
+            ctx.lineTo(beamEndX, beamEndY);
+            ctx.stroke();
+            
+            // Inner beam
+            ctx.strokeStyle = COLORS.beamCore;
+            ctx.lineWidth = pulseWidth / 2;
+            ctx.beginPath();
+            ctx.moveTo(beamSourceX, beamSourceY);
+            ctx.lineTo(beamEndX, beamEndY);
+            ctx.stroke();
+            
+            // Beam source (cannon)
+            ctx.fillStyle = '#888888';
+            ctx.beginPath();
+            ctx.arc(beamSourceX, beamSourceY, 20, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#555555';
+            ctx.beginPath();
+            ctx.arc(beamSourceX, beamSourceY, 12, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw direction indicator
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(beamSourceX, beamSourceY);
+            ctx.lineTo(
+                beamSourceX + Math.cos(beamAngle) * 30,
+                beamSourceY - Math.sin(beamAngle) * 30
+            );
+            ctx.stroke();
+        }
+        
+        // Draw targets
+        function drawTargets() {
+            // False target (left)
+            ctx.fillStyle = COLORS.falseTarget;
+            ctx.beginPath();
+            ctx.arc(falseTargetX, targetY, targetRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (proximityLeft > 0) {
+                ctx.strokeStyle = COLORS.targetGlow;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(falseTargetX, targetY, targetRadius + 5, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            // True target (right)
+            ctx.fillStyle = COLORS.trueTarget;
+            ctx.beginPath();
+            ctx.arc(trueTargetX, targetY, targetRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (proximityRight > 0) {
+                ctx.strokeStyle = COLORS.targetGlow;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(trueTargetX, targetY, targetRadius + 5, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            // Target labels
+            ctx.font = isMobile ? '16px sans-serif' : '24px sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('FALSE', falseTargetX, targetY);
+            ctx.fillText('TRUE', trueTargetX, targetY);
+        }
+        
+        // Draw charging effect
+        function drawCharging() {
+            if (beamCharging > 0) {
+                const charge = 100 - beamCharging;
+                ctx.fillStyle = `rgba(255, 255, 255, ${charge/100})`;
+                ctx.beginPath();
+                ctx.arc(beamSourceX, beamSourceY, charge/5 + 10, 0, Math.PI * 2);
+                ctx.fill();
+                
+                if (beamCharging % 10 === 0) {
+                    playChargingSound();
+                }
+            }
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const question = "The Great Wall of China is visible from space.";
+            ctx.fillText(question, canvas.width / 2, canvas.height * 0.15);
+        }
+        
+        // Handle mouse movement
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Calculate angle based on mouse position
+            const dx = mouseX - beamSourceX;
+            const dy = beamSourceY - mouseY;
+            beamAngle = Math.atan2(dy, dx);
+            
+            // Clamp angle to valid range (between 0 and PI)
+            beamAngle = Math.max(0, Math.min(Math.PI, beamAngle));
+        });
+        
+        // Handle touch events for mobile
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            const touchY = e.touches[0].clientY - rect.top;
+            
+            // Calculate angle based on touch position
+            const dx = touchX - beamSourceX;
+            const dy = beamSourceY - touchY;
+            beamAngle = Math.atan2(dy, dx);
+            
+            // Clamp angle to valid range (between 0 and PI)
+            beamAngle = Math.max(0, Math.min(Math.PI, beamAngle));
+        }, { passive: false });
+        
+        // Handle restart button
+        restartButton.addEventListener('click', init);
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Update game state
+            if (!gameOver) {
+                if (beamCharging > 0) {
+                    beamCharging--;
+                } else {
+                    checkTargets();
+                }
+                
+                timer++;
+                
+                // Add small jitter to beam for retro effect
+                if (timer % 5 === 0 && beamCharging <= 0) {
+                    beamAngle += (Math.random() - 0.5) * 0.02;
+                    beamAngle = Math.max(0, Math.min(Math.PI, beamAngle));
+                }
+            }
+            
+            // Update particles
+            updateParticles();
+            
+            // Draw game elements
+            drawQuestion();
+            drawTargets();
+            drawBeam();
+            drawParticles();
+            
+            if (beamCharging > 0) {
+                drawCharging();
+            }
+            
+            // Continue game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

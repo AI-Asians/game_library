@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Connect Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #game-container {
+            position: relative;
+        }
+        #restart {
+            display: none;
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background-color: #333;
+            color: #fff;
+            border: 3px solid #666;
+            font-family: sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restart">Restart</button>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const COLORS = {
+            bg: '#0f380f',         // Dark green (Game Boy style)
+            question: '#8bac0f',   // Light green
+            node: '#306230',       // Medium green
+            nodeActive: '#9bbc0f', // Lighter green
+            line: '#0f8f0f',       // Bright green
+            lineActive: '#e0f8d0', // Pale green
+            correct: '#9bbc0f',    // Light green
+            incorrect: '#8f0f0f'   // Dark red
+        };
+        
+        const question = "What is the capital of France?";
+        const answers = ["Paris", "London", "Berlin", "Madrid"];
+        const correctAnswer = 0; // Paris
+        
+        let nodes = [];
+        let selectedNode = null;
+        let connectedNodes = [];
+        let gameState = 'playing'; // playing, correct, incorrect
+        let particleEffects = [];
+        let pulseAnimation = 0;
+        let countdown = 100; // Visual countdown value
+
+        // Initialize nodes
+        function initNodes() {
+            nodes = [];
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(canvas.width, canvas.height) * 0.35;
+            
+            // Create central question node
+            nodes.push({
+                x: centerX,
+                y: centerY - radius * 0.2,
+                radius: radius * 0.2,
+                text: "?",
+                type: "question",
+                active: false,
+                connected: false
+            });
+            
+            // Create answer nodes in a semi-circle
+            for (let i = 0; i < answers.length; i++) {
+                const angle = Math.PI + (Math.PI * i / (answers.length - 1));
+                nodes.push({
+                    x: centerX + Math.cos(angle) * radius,
+                    y: centerY + Math.sin(angle) * radius * 0.8,
+                    radius: radius * 0.15,
+                    text: answers[i],
+                    type: "answer",
+                    index: i,
+                    active: false,
+                    connected: false
+                });
+            }
+        }
+
+        // Create simple audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function createParticleEffect(x, y, color) {
+            for (let i = 0; i < 8; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                particleEffects.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 3 + Math.random() * 3 | 0,
+                    color: color,
+                    life: 20 + Math.random() * 20 | 0
+                });
+            }
+        }
+
+        function drawPixelatedLine(x1, y1, x2, y2, color, segments = 12) {
+            const dx = (x2 - x1) / segments;
+            const dy = (y2 - y1) / segments;
+            
+            ctx.fillStyle = color;
+            for (let i = 0; i < segments; i++) {
+                const x = x1 + dx * i;
+                const y = y1 + dy * i;
+                const size = 4;
+                ctx.fillRect(Math.round(x - size/2), Math.round(y - size/2), size, size);
+            }
+        }
+
+        function update() {
+            pulseAnimation += 0.05;
+            
+            // Update particles
+            for (let i = particleEffects.length - 1; i >= 0; i--) {
+                const p = particleEffects[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                if (p.life <= 0) {
+                    particleEffects.splice(i, 1);
+                }
+            }
+            
+            // Update countdown
+            if (gameState === 'playing') {
+                countdown -= 0.1;
+                if (countdown <= 0) {
+                    countdown = 100;
+                }
+            }
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw countdown bar
+            const barWidth = canvas.width * 0.8;
+            const barHeight = 8;
+            const barX = (canvas.width - barWidth) / 2;
+            const barY = 30;
+            
+            ctx.fillStyle = '#306230';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            ctx.fillStyle = '#9bbc0f';
+            ctx.fillRect(barX, barY, barWidth * (countdown / 100), barHeight);
+            
+            // Draw question text
+            ctx.fillStyle = COLORS.question;
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 80);
+            
+            // Draw connections
+            if (connectedNodes.length > 0) {
+                for (let i = 0; i < connectedNodes.length - 1; i++) {
+                    const n1 = connectedNodes[i];
+                    const n2 = connectedNodes[i + 1];
+                    drawPixelatedLine(n1.x, n1.y, n2.x, n2.y, COLORS.line);
+                }
+            }
+            
+            // Draw active connection
+            if (selectedNode && connectedNodes.length > 0) {
+                const lastNode = connectedNodes[connectedNodes.length - 1];
+                const mouseX = getMousePos(event).x;
+                const mouseY = getMousePos(event).y;
+                drawPixelatedLine(lastNode.x, lastNode.y, mouseX, mouseY, COLORS.lineActive);
+            }
+            
+            // Draw nodes
+            nodes.forEach(node => {
+                // Calculate pulsing effect
+                const pulseAmount = Math.sin(pulseAnimation) * 0.1 + 1;
+                const displayRadius = node.radius * (node.active ? 1.1 : pulseAmount);
+                
+                // Draw node background
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, displayRadius, 0, Math.PI * 2);
+                ctx.fillStyle = node.active ? COLORS.nodeActive : COLORS.node;
+                ctx.fill();
+                
+                // Draw node border (pixelated)
+                const steps = 16;
+                ctx.fillStyle = '#8bac0f';
+                for (let i = 0; i < steps; i++) {
+                    const angle = (i / steps) * Math.PI * 2;
+                    const borderX = node.x + Math.cos(angle) * displayRadius;
+                    const borderY = node.y + Math.sin(angle) * displayRadius;
+                    ctx.fillRect(borderX - 2, borderY - 2, 4, 4);
+                }
+                
+                // Draw node text
+                ctx.fillStyle = '#e0f8d0';
+                ctx.font = `${node.type === 'question' ? (isMobile ? 28 : 36) : (isMobile ? 18 : 24)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(node.text, node.x, node.y);
+            });
+            
+            // Draw game result
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                ctx.fillStyle = gameState === 'correct' ? COLORS.correct : COLORS.incorrect;
+                ctx.globalAlpha = 0.5;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalAlpha = 1;
+                
+                ctx.fillStyle = '#e0f8d0';
+                ctx.font = `${isMobile ? 32 : 48}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState === 'correct' ? 'Correct!' : 'Try Again!', 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+            
+            // Draw particles
+            particleEffects.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(Math.round(p.x - p.size/2), Math.round(p.y - p.size/2), p.size, p.size);
+            });
+        }
+
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        function checkNodeCollision(x, y) {
+            for (const node of nodes) {
+                const dx = x - node.x;
+                const dy = y - node.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < node.radius * 1.2) {
+                    return node;
+                }
+            }
+            return null;
+        }
+
+        function handleNodeClick(node) {
+            if (gameState !== 'playing') return;
+            
+            // First node must be the question node
+            if (connectedNodes.length === 0 && node.type !== 'question') {
+                return;
+            }
+            
+            // Check if node is already connected
+            if (connectedNodes.includes(node)) {
+                return;
+            }
+            
+            // Add node to connected list
+            node.active = true;
+            connectedNodes.push(node);
+            createParticleEffect(node.x, node.y, COLORS.nodeActive);
+            playSound(200 + connectedNodes.length * 100, 0.2);
+            
+            // If an answer node is selected as the second node, check if it's correct
+            if (connectedNodes.length === 2 && node.type === 'answer') {
+                if (node.index === correctAnswer) {
+                    gameState = 'correct';
+                    playSound(600, 0.5, 'sine');
+                    setTimeout(() => playSound(800, 0.5, 'sine'), 200);
+                } else {
+                    gameState = 'incorrect';
+                    playSound(200, 0.3, 'sawtooth');
+                    setTimeout(() => playSound(150, 0.5, 'sawtooth'), 200);
+                }
+                restartBtn.style.display = 'block';
+            }
+        }
+
+        canvas.addEventListener('mousedown', (event) => {
+            const {x, y} = getMousePos(event);
+            const node = checkNodeCollision(x, y);
+            
+            if (node) {
+                handleNodeClick(node);
+            }
+        });
+
+        canvas.addEventListener('mousemove', (event) => {
+            const {x, y} = getMousePos(event);
+            const hoveredNode = checkNodeCollision(x, y);
+            
+            // Reset all nodes to inactive
+            nodes.forEach(n => {
+                if (!connectedNodes.includes(n)) {
+                    n.active = false;
+                }
+            });
+            
+            // Set hovered node to active
+            if (hoveredNode && !connectedNodes.includes(hoveredNode)) {
+                hoveredNode.active = true;
+            }
+        });
+
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            const touch = event.touches[0];
+            const x = (touch.clientX - canvas.getBoundingClientRect().left) * 
+                     (canvas.width / canvas.getBoundingClientRect().width);
+            const y = (touch.clientY - canvas.getBoundingClientRect().top) * 
+                     (canvas.height / canvas.getBoundingClientRect().height);
+            
+            const node = checkNodeCollision(x, y);
+            if (node) {
+                handleNodeClick(node);
+            }
+        });
+
+        restartBtn.addEventListener('click', () => {
+            gameState = 'playing';
+            connectedNodes = [];
+            nodes.forEach(node => node.active = false);
+            restartBtn.style.display = 'none';
+            particleEffects = [];
+            countdown = 100;
+        });
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize and start the game
+        initNodes();
+        gameLoop();
+    </script>
+</body>
+</html>

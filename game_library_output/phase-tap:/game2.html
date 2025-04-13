@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Phase-Tap True/False Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      image-rendering: pixelated;
+      border: 4px solid #444;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // Canvas setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const colors = {
+      background: '#0f380f',
+      question: '#8bac0f',
+      truePhase: '#9bbc0f',
+      falsePhase: '#306230',
+      text: '#e0f8d0',
+      highlight: '#ffffff',
+      button: '#8bac0f'
+    };
+    
+    let gameState = 'playing'; // 'playing', 'correct', 'incorrect'
+    let phaseTimer = 0;
+    let currentPhase = 'true'; // 'true' or 'false'
+    let phaseDuration = 1.5; // seconds
+    let opacity = 1;
+    let fadeDirection = -1; // -1 = fading out, 1 = fading in
+    
+    // Create audio context for sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Simple function to create retro beep sounds
+    function playSound(frequency, duration, type = 'square') {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      oscillator.start();
+      
+      setTimeout(() => {
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        setTimeout(() => oscillator.stop(), 100);
+      }, duration);
+    }
+    
+    // Pixelated drawing helper functions
+    function pixelRect(x, y, width, height, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+    }
+    
+    function pixelText(text, x, y, size, color) {
+      ctx.fillStyle = color;
+      ctx.font = `${size}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+    }
+    
+    // Draw game elements
+    function drawGame() {
+      // Clear canvas with background
+      pixelRect(0, 0, canvas.width, canvas.height, colors.background);
+      
+      // Draw background pattern that changes with phase
+      const patternSize = 10;
+      const patternColor = currentPhase === 'true' ? '#306230' : '#0f380f';
+      for (let x = 0; x < canvas.width; x += patternSize * 2) {
+        for (let y = 0; y < canvas.height; y += patternSize * 2) {
+          pixelRect(x, y, patternSize, patternSize, patternColor);
+          pixelRect(x + patternSize, y + patternSize, patternSize, patternSize, patternColor);
+        }
+      }
+      
+      // Draw question
+      const questionText = "Water boils at 100 degrees Celsius at sea level.";
+      const questionY = canvas.height * 0.2;
+      const questionSize = isMobile ? 18 : 24;
+      
+      // Draw question background
+      const questionBgHeight = isMobile ? 60 : 80;
+      pixelRect(0, questionY - questionBgHeight/2, canvas.width, questionBgHeight, '#306230');
+      
+      // Draw question text
+      pixelText(questionText, canvas.width / 2, questionY, questionSize, colors.text);
+      
+      // Draw phase indicator
+      const indicatorRadius = 12;
+      const indicatorX = canvas.width / 2;
+      const indicatorY = canvas.height * 0.35;
+      const pulseSize = Math.sin(phaseTimer * 10) * 3;
+      
+      ctx.beginPath();
+      ctx.arc(indicatorX, indicatorY, indicatorRadius + pulseSize, 0, Math.PI * 2);
+      ctx.fillStyle = currentPhase === 'true' ? colors.truePhase : colors.falsePhase;
+      ctx.fill();
+      
+      // Draw phase label (TRUE or FALSE)
+      const labelY = canvas.height * 0.5;
+      const labelSize = isMobile ? 70 : 100;
+      
+      ctx.globalAlpha = opacity;
+      const label = currentPhase.toUpperCase();
+      const bgColor = currentPhase === 'true' ? colors.truePhase : colors.falsePhase;
+      
+      // Draw option background
+      const optionHeight = labelSize * 1.5;
+      pixelRect(canvas.width/2 - canvas.width/3, labelY - optionHeight/2, 
+                canvas.width/1.5, optionHeight, bgColor);
+      
+      pixelText(label, canvas.width / 2, labelY, labelSize, colors.text);
+      ctx.globalAlpha = 1;
+      
+      // Draw rhythm indicator
+      const barWidth = canvas.width * 0.6;
+      const barHeight = 10;
+      const barX = (canvas.width - barWidth) / 2;
+      const barY = canvas.height * 0.65;
+      
+      pixelRect(barX, barY, barWidth, barHeight, '#306230');
+      const progress = (phaseTimer / phaseDuration);
+      pixelRect(barX, barY, barWidth * progress, barHeight, '#8bac0f');
+      
+      // Draw tutorial text
+      if (phaseTimer < 4) {
+        pixelText("Tap when the CORRECT answer appears", 
+                 canvas.width / 2, canvas.height * 0.8, isMobile ? 16 : 20, colors.text);
+      }
+      
+      // Draw result if the game is over
+      if (gameState !== 'playing') {
+        // Overlay
+        ctx.globalAlpha = 0.7;
+        pixelRect(0, 0, canvas.width, canvas.height, gameState === 'correct' ? '#8bac0f' : '#e83028');
+        ctx.globalAlpha = 1;
+        
+        // Result text
+        const resultText = gameState === 'correct' ? "CORRECT!" : "WRONG!";
+        pixelText(resultText, canvas.width / 2, canvas.height * 0.4, isMobile ? 40 : 60, '#ffffff');
+        
+        // Restart button
+        const buttonWidth = canvas.width * 0.4;
+        const buttonHeight = 50;
+        const buttonX = (canvas.width - buttonWidth) / 2;
+        const buttonY = canvas.height * 0.6;
+        
+        pixelRect(buttonX, buttonY, buttonWidth, buttonHeight, colors.button);
+        pixelRect(buttonX + 4, buttonY + 4, buttonWidth - 8, buttonHeight - 8, '#306230');
+        pixelText("RESTART", canvas.width / 2, buttonY + buttonHeight / 2, 20, colors.text);
+      }
+    }
+    
+    // Game loop
+    let lastTime = 0;
+    function gameLoop(timestamp) {
+      const deltaTime = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
+      
+      if (gameState === 'playing') {
+        // Update phase timing
+        phaseTimer += deltaTime;
+        if (phaseTimer >= phaseDuration) {
+          phaseTimer = 0;
+          currentPhase = currentPhase === 'true' ? 'false' : 'true';
+          fadeDirection = 1; // Start fading in
+          opacity = 0;
+          
+          // Play phase change sound
+          playSound(currentPhase === 'true' ? 440 : 330, 100);
+        }
+        
+        // Update opacity for fading effect
+        opacity += fadeDirection * deltaTime * 2;
+        
+        if (opacity >= 1) {
+          opacity = 1;
+          fadeDirection = -1; // Start fading out
+        } else if (opacity <= 0) {
+          opacity = 0;
+          fadeDirection = 1; // Start fading in
+        }
+      }
+      
+      drawGame();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Handle player input
+    canvas.addEventListener('click', function(event) {
+      if (gameState === 'playing') {
+        // Check if answer is correct (TRUE is the correct answer)
+        if (currentPhase === 'true' && opacity > 0.5) {
+          gameState = 'correct';
+          playSound(660, 200);
+          setTimeout(() => playSound(880, 300), 200);
+        } else {
+          gameState = 'incorrect';
+          playSound(220, 300);
+        }
+      } else {
+        // Check if restart button is clicked
+        const buttonWidth = canvas.width * 0.4;
+        const buttonHeight = 50;
+        const buttonX = (canvas.width - buttonWidth) / 2;
+        const buttonY = canvas.height * 0.6;
+        
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        if (x >= buttonX && x <= buttonX + buttonWidth && 
+            y >= buttonY && y <= buttonY + buttonHeight) {
+          gameState = 'playing';
+          phaseTimer = 0;
+          currentPhase = 'true';
+          opacity = 1;
+          fadeDirection = -1;
+          playSound(440, 100);
+        }
+      }
+    });
+    
+    // Start game
+    gameLoop(0);
+  </script>
+</body>
+</html>

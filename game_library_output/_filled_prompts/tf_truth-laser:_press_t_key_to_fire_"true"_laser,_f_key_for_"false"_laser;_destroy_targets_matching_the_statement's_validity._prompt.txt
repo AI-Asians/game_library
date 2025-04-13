@@ -1,0 +1,98 @@
+**UPDATED PROMPT:**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type TF.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ The Great Wall of China is visible from space.
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Truth-Laser: Press T key to fire "True" laser, F key for "False" laser; destroy targets matching the statement's validity.**  
+ Description of mechanic: 
+
+* Player controls a laser cannon at the bottom of the screen
+* Targets (with True/False designations) move across the screen
+* Player must identify whether the statement is true or false
+* Press T key to fire "True" laser beam, F key to fire "False" laser beam
+* Player must hit targets that match the statement's validity (true targets if statement is true, false targets if statement is false)
+* When correct targets are hit, they explode/disappear with retro pixel effects
+* Game ends when player hits the correct type of target
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The laser cannon should be a simple pixelated turret design
+Laser beams should have a distinctive color (bright red for "True", blue for "False")
+Targets should be clearly labeled with "T" or "F" in an 8-bit style
+Explosions should use chunky pixel particles
+Background should have a space/sci-fi theme with a grid or stars
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The laser should have a short cooldown between shots
+Targets should move at variable speeds for challenge
+Clear visual feedback when laser hits targets (explosion animation)
+Brief control instructions should appear on screen ("Press T for True, F for False")
+Game should respond to both keyboard and touch input (tapping left/right sides of screen)
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

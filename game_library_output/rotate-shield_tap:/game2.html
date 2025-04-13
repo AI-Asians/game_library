@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rotate-Shield Tap Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #555;
+            color: white;
+            border: 3px solid #777;
+            font-size: 18px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const colors = ['#2d2d2d', '#5a5a5a', '#8b8b8b', '#777777', '#3b3b3b', '#222222', '#ff0000', '#00ff00', '#0000ff', '#ffff00'];
+        
+        let shieldAngle = 0;
+        let shieldRotationSpeed = 0.03;
+        let shieldDirection = 1;
+        let projectiles = [];
+        let gameActive = true;
+        let gameResult = null;
+        let gameStartTime = Date.now();
+        let spawnDelay = 1500; // Delay before spawning projectiles (1.5 seconds)
+        
+        // Question data - fixed for this assignment
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const correctAnswer = true; // This statement is true
+        
+        // Sound effects using AudioContext
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function createPixelatedCircle(size, color) {
+            const pixelSize = Math.max(2, Math.floor(size / 8));
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = size;
+            tempCanvas.height = size;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            const centerPoint = size / 2;
+            const radius = size / 2 - pixelSize;
+            
+            for (let y = 0; y < size; y += pixelSize) {
+                for (let x = 0; x < size; x += pixelSize) {
+                    const distX = x + pixelSize/2 - centerPoint;
+                    const distY = y + pixelSize/2 - centerPoint;
+                    const distance = Math.sqrt(distX * distX + distY * distY);
+                    
+                    if (distance <= radius) {
+                        tempCtx.fillStyle = color;
+                        tempCtx.fillRect(x, y, pixelSize, pixelSize);
+                    }
+                }
+            }
+            return tempCanvas;
+        }
+        
+        // Create pixelated shapes
+        const trueProjectile = createPixelatedCircle(30, '#00aa00');
+        const falseProjectile = createPixelatedCircle(30, '#aa0000');
+        
+        // Create shield
+        function drawShield() {
+            const shieldWidth = canvas.width / 10;
+            const shieldLength = canvas.width / 5;
+            
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(shieldAngle);
+            
+            // Draw shield
+            ctx.fillStyle = '#4444aa';
+            
+            // Pixelated shield
+            const pixelSize = 4;
+            for (let y = -shieldWidth/2; y < shieldWidth/2; y += pixelSize) {
+                for (let x = 0; x < shieldLength; x += pixelSize) {
+                    // Create a pattern by skipping some pixels
+                    if ((x/pixelSize + y/pixelSize) % 4 !== 0) {
+                        ctx.fillRect(x, y, pixelSize, pixelSize);
+                    }
+                }
+            }
+            
+            // Add "TRUE" label to the shield
+            ctx.save();
+            ctx.rotate(Math.PI);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${Math.floor(shieldWidth/2)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("TRUE", -shieldLength/2, 0);
+            ctx.restore();
+            
+            ctx.restore();
+        }
+        
+        function createParticles(x, y, color, count) {
+            const particles = [];
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                particles.push({
+                    x, y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 3 + Math.random() * 5,
+                    color: color,
+                    life: 30 + Math.random() * 20
+                });
+            }
+            return particles;
+        }
+        
+        let particles = [];
+        
+        function spawnProjectile() {
+            if (!gameActive) return;
+            
+            const angle = Math.random() * Math.PI * 2;
+            const isTrue = Math.random() < 0.5;
+            const speed = 1.5 + Math.random() * 0.5;
+            
+            // Start from outside the visible area
+            const distance = Math.max(canvas.width, canvas.height);
+            const startX = centerX + Math.cos(angle) * distance;
+            const startY = centerY + Math.sin(angle) * distance;
+            
+            projectiles.push({
+                x: startX,
+                y: startY,
+                vx: (centerX - startX) / distance * speed,
+                vy: (centerY - startY) / distance * speed,
+                isTrue: isTrue,
+                size: 30
+            });
+            
+            // Schedule next spawn
+            const nextSpawnTime = 800 + Math.random() * 800;
+            setTimeout(spawnProjectile, nextSpawnTime);
+        }
+        
+        function updateGame() {
+            // Move projectiles
+            for (let i = 0; i < projectiles.length; i++) {
+                const p = projectiles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Check if the projectile is near the center
+                const distToCenter = Math.sqrt(Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2));
+                
+                if (distToCenter < 20) {
+                    // Projectile hit center - check if it matches shield orientation
+                    const projectileAngle = Math.atan2(p.y - centerY, p.x - centerX);
+                    const normalizedShieldAngle = shieldAngle % (Math.PI * 2);
+                    const angleMatch = Math.abs(normalizedShieldAngle - projectileAngle) < Math.PI / 2 || 
+                                      Math.abs(normalizedShieldAngle - projectileAngle) > Math.PI * 1.5;
+                    
+                    // TRUE projectiles should be blocked when shield is showing "TRUE" (shield facing projectile)
+                    // FALSE projectiles should be blocked when shield is NOT showing "TRUE" (shield not facing projectile)
+                    const correctBlock = (p.isTrue && angleMatch) || (!p.isTrue && !angleMatch);
+                    
+                    // Determine if player's action matches the correct answer
+                    const playerAnsweredTrue = angleMatch;
+                    gameResult = (playerAnsweredTrue === correctAnswer);
+                    
+                    // Create particles
+                    particles = particles.concat(createParticles(p.x, p.y, 
+                        gameResult ? '#00ff00' : '#ff0000', 20));
+                    
+                    // Play sound
+                    if (gameResult) {
+                        playSound(440, 0.3);
+                        setTimeout(() => playSound(660, 0.3), 100);
+                    } else {
+                        playSound(220, 0.3);
+                        setTimeout(() => playSound(110, 0.3), 100);
+                    }
+                    
+                    gameActive = false;
+                    restartBtn.style.display = 'block';
+                    projectiles.splice(i, 1);
+                    i--;
+                    
+                    continue;
+                }
+                
+                // Remove projectiles that have gone past the center
+                if (distToCenter > Math.max(canvas.width, canvas.height)) {
+                    projectiles.splice(i, 1);
+                    i--;
+                }
+            }
+            
+            // Update shield rotation
+            if (gameActive) {
+                shieldAngle += shieldRotationSpeed * shieldDirection;
+            }
+            
+            // Update particles
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+        
+        function drawGame() {
+            // Clear canvas with dark background
+            ctx.fillStyle = '#111122';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated background pattern
+            ctx.fillStyle = '#1a1a2a';
+            const gridSize = 20;
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                for (let x = 0; x < canvas.width; x += gridSize) {
+                    if ((x + y) % (gridSize * 2) === 0) {
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    }
+                }
+            }
+            
+            // Draw center target
+            ctx.fillStyle = '#333355';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 15, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw projectiles
+            for (const p of projectiles) {
+                const projectileImg = p.isTrue ? trueProjectile : falseProjectile;
+                ctx.drawImage(projectileImg, p.x - p.size/2, p.y - p.size/2);
+            }
+            
+            // Draw shield
+            drawShield();
+            
+            // Draw particles
+            for (const p of particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+            }
+            
+            // Draw question at the top
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            
+            // Handle text wrapping for different screen sizes
+            const maxWidth = canvas.width * 0.8;
+            const words = question.split(' ');
+            let line = '';
+            let y = 30;
+            
+            for (const word of words) {
+                const testLine = line + word + ' ';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && line !== '') {
+                    ctx.fillText(line, centerX, y);
+                    line = word + ' ';
+                    y += 28;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, centerX, y);
+            
+            // Draw controls hint
+            if (Date.now() - gameStartTime < spawnDelay) {
+                ctx.font = '18px sans-serif';
+                ctx.fillText("Tap to change shield direction", centerX, canvas.height - 40);
+                ctx.fillText("Block TRUE or FALSE projectiles", centerX, canvas.height - 70);
+            }
+            
+            // Draw game result if game is over
+            if (!gameActive) {
+                ctx.font = 'bold 32px sans-serif';
+                ctx.fillStyle = gameResult ? '#00FF00' : '#FF0000';
+                ctx.fillText(gameResult ? "CORRECT!" : "WRONG!", centerX, centerY + 80);
+            }
+        }
+        
+        function gameLoop() {
+            updateGame();
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function startGame() {
+            projectiles = [];
+            particles = [];
+            gameActive = true;
+            gameResult = null;
+            gameStartTime = Date.now();
+            shieldAngle = 0;
+            restartBtn.style.display = 'none';
+            
+            // Schedule first projectile spawn after delay
+            setTimeout(spawnProjectile, spawnDelay);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', function() {
+            // Toggle shield direction on click/tap
+            if (gameActive) {
+                shieldDirection *= -1;
+                playSound(330, 0.1);
+            }
+        });
+        
+        restartBtn.addEventListener('click', startGame);
+        
+        // Start the game
+        startGame();
+        gameLoop();
+    </script>
+</body>
+</html>

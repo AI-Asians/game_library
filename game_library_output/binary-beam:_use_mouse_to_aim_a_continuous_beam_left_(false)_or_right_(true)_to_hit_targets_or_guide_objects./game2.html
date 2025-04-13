@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Binary-Beam: True or False</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      image-rendering: pixelated;
+      border: 4px solid #444;
+    }
+    .restart-btn {
+      position: absolute;
+      bottom: 10px;
+      font-family: sans-serif;
+      padding: 8px 16px;
+      background-color: #333;
+      color: white;
+      border: 2px solid #555;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <button class="restart-btn" id="restartBtn" style="display: none;">Restart</button>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restartBtn');
+    
+    // Game constants
+    const COLORS = {
+      background: '#111122',
+      question: '#FFFFFF',
+      emitter: '#88AAFF',
+      beamCore: '#44CCFF',
+      beamEdge: '#00AAFF',
+      falseZone: '#FF4444',
+      trueZone: '#44FF66',
+      falseSide: '#661111',
+      trueSide: '#116611',
+      meterEmpty: '#444444',
+      meterFill: '#FFCC00',
+      meterBorder: '#888888',
+      particleFalse: '#FF8888',
+      particleTrue: '#88FF88'
+    };
+    
+    // Game state
+    const game = {
+      question: "Water boils at 100 degrees Celsius at sea level.",
+      answer: true, // The correct answer
+      beamAngle: 0, // 0 = center, -1 = full left, 1 = full right
+      meterFill: 0, // 0 to 1, how full the answer meter is
+      gameOver: false,
+      playerChoice: null,
+      particles: [],
+      lastTime: 0
+    };
+    
+    // Sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    function playBeep(freq, duration, type = 'square') {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    function playChargeSound() {
+      playBeep(200 + game.meterFill * 300, 0.05, 'square');
+    }
+    
+    function playCorrectSound() {
+      for (let i = 0; i < 3; i++) {
+        setTimeout(() => {
+          playBeep(300 + i * 200, 0.1, 'square');
+        }, i * 100);
+      }
+    }
+    
+    function playIncorrectSound() {
+      for (let i = 0; i < 2; i++) {
+        setTimeout(() => {
+          playBeep(200 - i * 50, 0.2, 'sawtooth');
+        }, i * 200);
+      }
+    }
+    
+    // Handle mouse movement
+    canvas.addEventListener('mousemove', (e) => {
+      if (game.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const center = canvas.width / 2;
+      // Calculate angle from -1 (full left) to 1 (full right)
+      game.beamAngle = Math.max(-1, Math.min(1, (x - center) / (center * 0.8)));
+    });
+    
+    // Handle touch movement for mobile
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (game.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = e.touches[0].clientX - rect.left;
+      const center = canvas.width / 2;
+      game.beamAngle = Math.max(-1, Math.min(1, (x - center) / (center * 0.8)));
+    });
+    
+    // Handle restart button
+    restartBtn.addEventListener('click', () => {
+      game.gameOver = false;
+      game.meterFill = 0;
+      game.playerChoice = null;
+      game.particles = [];
+      restartBtn.style.display = 'none';
+    });
+    
+    // Draw functions
+    function drawBackground() {
+      // Sky background
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Answer zones (left = FALSE, right = TRUE)
+      ctx.fillStyle = COLORS.falseSide;
+      ctx.fillRect(0, 0, canvas.width / 2, canvas.height);
+      ctx.fillStyle = COLORS.trueSide;
+      ctx.fillRect(canvas.width / 2, 0, canvas.width / 2, canvas.height);
+      
+      // Target zones
+      const zoneHeight = 100;
+      const zoneY = canvas.height / 2 - zoneHeight / 2;
+      
+      // FALSE zone (left)
+      ctx.fillStyle = COLORS.falseZone;
+      ctx.fillRect(50, zoneY, 150, zoneHeight);
+      
+      // TRUE zone (right)
+      ctx.fillStyle = COLORS.trueZone;
+      ctx.fillRect(canvas.width - 200, zoneY, 150, zoneHeight);
+      
+      // Zone labels
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText('FALSE', 125, zoneY + zoneHeight / 2 + 8);
+      ctx.fillText('TRUE', canvas.width - 125, zoneY + zoneHeight / 2 + 8);
+    }
+    
+    function drawQuestion() {
+      ctx.font = '24px sans-serif';
+      ctx.fillStyle = COLORS.question;
+      ctx.textAlign = 'center';
+      ctx.fillText(game.question, canvas.width / 2, 80);
+    }
+    
+    function drawEmitter() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height - 100;
+      const size = 30;
+      
+      // Base
+      ctx.fillStyle = '#555555';
+      ctx.fillRect(centerX - 20, centerY + 10, 40, 20);
+      
+      // Emitter with rotation
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(game.beamAngle * 0.5); // Rotate based on beam angle
+      
+      // Emitter body
+      ctx.fillStyle = COLORS.emitter;
+      ctx.fillRect(-size/2, -size/2, size, size);
+      
+      // Emitter nozzle
+      ctx.fillStyle = COLORS.beamCore;
+      ctx.fillRect(-size/4, -size/4 - 10, size/2, 10);
+      
+      ctx.restore();
+    }
+    
+    function drawBeam() {
+      if (Math.abs(game.beamAngle) < 0.2) return; // Don't draw beam if too centered
+      
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height - 100;
+      const beamDirection = game.beamAngle < 0 ? -1 : 1;
+      const beamLength = beamDirection === -1 ? centerX : (canvas.width - centerX);
+      const beamWidth = 10 + (game.meterFill * 10);
+      
+      // Main beam
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(game.beamAngle * 0.5);
+      
+      // Draw pixelated beam segments
+      const segmentLength = 8;
+      const segments = Math.floor(beamLength / segmentLength);
+      
+      for (let i = 0; i < segments; i++) {
+        const opacity = 1 - (i / segments) * 0.7;
+        const width = beamWidth * (1 - (i / segments) * 0.5);
+        
+        if (i % 2 === 0) {
+          ctx.fillStyle = `rgba(${parseInt(COLORS.beamCore.substr(1, 2), 16)}, 
+                              ${parseInt(COLORS.beamCore.substr(3, 2), 16)}, 
+                              ${parseInt(COLORS.beamCore.substr(5, 2), 16)}, 
+                              ${opacity})`;
+        } else {
+          ctx.fillStyle = `rgba(${parseInt(COLORS.beamEdge.substr(1, 2), 16)}, 
+                              ${parseInt(COLORS.beamEdge.substr(3, 2), 16)}, 
+                              ${parseInt(COLORS.beamEdge.substr(5, 2), 16)}, 
+                              ${opacity})`;
+        }
+        
+        ctx.fillRect(i * segmentLength, -width / 2, segmentLength, width);
+      }
+      
+      ctx.restore();
+    }
+    
+    function drawMeter() {
+      const meterWidth = 300;
+      const meterHeight = 30;
+      const meterX = (canvas.width - meterWidth) / 2;
+      const meterY = canvas.height - 50;
+      
+      // Outer border
+      ctx.fillStyle = COLORS.meterBorder;
+      ctx.fillRect(meterX - 4, meterY - 4, meterWidth + 8, meterHeight + 8);
+      
+      // Empty meter
+      ctx.fillStyle = COLORS.meterEmpty;
+      ctx.fillRect(meterX, meterY, meterWidth, meterHeight);
+      
+      // Fill meter
+      ctx.fillStyle = COLORS.meterFill;
+      ctx.fillRect(meterX, meterY, meterWidth * game.meterFill, meterHeight);
+      
+      // Pixelated segments
+      const segmentWidth = 10;
+      const segments = Math.floor(meterWidth / segmentWidth);
+      for (let i = 0; i < segments; i++) {
+        if (i % 2 === 0) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+          ctx.fillRect(meterX + i * segmentWidth, meterY, segmentWidth, meterHeight);
+        }
+      }
+    }
+    
+    function createParticles(isTrue) {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height - 100;
+      const targetX = isTrue ? canvas.width - 125 : 125;
+      const targetY = canvas.height / 2;
+      
+      for (let i = 0; i < 40; i++) {
+        const angle = Math.atan2(targetY - centerY, targetX - centerX);
+        const speed = 2 + Math.random() * 5;
+        
+        game.particles.push({
+          x: targetX + (Math.random() * 100 - 50),
+          y: targetY + (Math.random() * 80 - 40),
+          vx: Math.cos(angle + (Math.random() * 1 - 0.5)) * speed,
+          vy: Math.sin(angle + (Math.random() * 1 - 0.5)) * speed,
+          size: 3 + Math.random() * 8,
+          color: isTrue ? COLORS.particleTrue : COLORS.particleFalse,
+          life: 30 + Math.random() * 30
+        });
+      }
+    }
+    
+    function updateParticles() {
+      for (let i = game.particles.length - 1; i >= 0; i--) {
+        const p = game.particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        
+        if (p.life <= 0) {
+          game.particles.splice(i, 1);
+        }
+      }
+    }
+    
+    function drawParticles() {
+      for (const p of game.particles) {
+        const alpha = Math.min(1, p.life / 20);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = alpha;
+        ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+      }
+      ctx.globalAlpha = 1;
+    }
+    
+    function drawGameOver() {
+      if (!game.gameOver) return;
+      
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      ctx.font = '36px sans-serif';
+      ctx.fillStyle = game.playerChoice === game.answer ? '#44FF44' : '#FF4444';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        game.playerChoice === game.answer ? 'CORRECT!' : 'INCORRECT!', 
+        canvas.width / 2, 
+        canvas.height / 2
+      );
+      
+      restartBtn.style.display = 'block';
+    }
+    
+    function update(timestamp) {
+      const deltaTime = timestamp - game.lastTime;
+      game.lastTime = timestamp;
+      
+      if (!game.gameOver) {
+        // Update meter based on beam direction
+        if (Math.abs(game.beamAngle) > 0.5) {
+          const direction = game.beamAngle < 0 ? 'left' : 'right';
+          
+          // Only fill meter if consistently pointing in one direction
+          if (!game.currentDirection || game.currentDirection === direction) {
+            game.currentDirection = direction;
+            game.meterFill += deltaTime * 0.001; // Fill meter over time
+            
+            // Play charge sound at intervals as the meter fills
+            if (Math.floor(game.meterFill * 10) > Math.floor((game.meterFill - deltaTime * 0.001) * 10)) {
+              playChargeSound();
+            }
+            
+            // Check for answer selection
+            if (game.meterFill >= 1) {
+              game.gameOver = true;
+              game.playerChoice = direction === 'right'; // right = true, left = false
+              
+              // Create particles for feedback
+              createParticles(game.playerChoice);
+              
+              // Play appropriate sound
+              if (game.playerChoice === game.answer) {
+                playCorrectSound();
+              } else {
+                playIncorrectSound();
+              }
+            }
+          }
+        } else {
+          // Reset direction and slowly drain meter when not clearly pointing
+          game.currentDirection = null;
+          game.meterFill = Math.max(0, game.meterFill - deltaTime * 0.0005);
+        }
+      }
+      
+      // Update particles
+      updateParticles();
+      
+      // Draw everything
+      drawBackground();
+      drawQuestion();
+      drawEmitter();
+      drawBeam();
+      drawMeter();
+      drawParticles();
+      drawGameOver();
+      
+      requestAnimationFrame(update);
+    }
+    
+    // Start the game
+    update(0);
+  </script>
+</body>
+</html>

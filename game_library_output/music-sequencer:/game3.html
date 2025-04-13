@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capital Sequencer</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 4px solid #333;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game colors (retro palette)
+    const COLORS = {
+      background: '#111122',
+      grid: '#334466',
+      text: '#FFFFFF',
+      highlight: '#FFAA33',
+      correct: '#66FF66',
+      incorrect: '#FF6666',
+      paris: '#55AAFF',
+      london: '#FF55AA',
+      berlin: '#FFFF55',
+      madrid: '#55FF55',
+      button: '#9966FF',
+      buttonHover: '#BB88FF'
+    };
+    
+    // Game state
+    let sequence = [null, null, null, null]; // Player's selected answers
+    let currentStep = -1; // Current step being played
+    let isPlaying = false;
+    let isGameOver = false;
+    let isCorrect = false;
+    
+    // Answer options
+    const answers = [
+      { text: "Paris", isCorrect: true, color: COLORS.paris, sound: 523.25 }, // C5
+      { text: "London", isCorrect: false, color: COLORS.london, sound: 392.00 }, // G4
+      { text: "Berlin", isCorrect: false, color: COLORS.berlin, sound: 329.63 }, // E4
+      { text: "Madrid", isCorrect: false, color: COLORS.madrid, sound: 440.00 }  // A4
+    ];
+    
+    // Audio context for sound
+    let audioCtx;
+    
+    // Initialize audio context on first user interaction
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+    }
+    
+    // Play a note with the given frequency
+    function playNote(frequency, duration = 0.2) {
+      if (!audioCtx) return;
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.value = frequency;
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    // Success melody
+    function playSuccessMelody() {
+      if (!audioCtx) return;
+      
+      const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+      const duration = 0.15;
+      
+      notes.forEach((note, i) => {
+        setTimeout(() => playNote(note, duration), i * duration * 1000);
+      });
+    }
+    
+    // Failure sound
+    function playFailSound() {
+      if (!audioCtx) return;
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+      oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.3);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    // Click sound
+    function playClickSound() {
+      if (!audioCtx) return;
+      playNote(880, 0.05);
+    }
+    
+    // Play the current sequence
+    function playSequence() {
+      if (isPlaying) return;
+      
+      isPlaying = true;
+      currentStep = -1;
+      
+      function playStep() {
+        currentStep++;
+        
+        if (currentStep >= sequence.length) {
+          // Sequence finished
+          currentStep = -1;
+          isPlaying = false;
+          
+          // Check if sequence is complete and correct
+          const correctAnswer = answers.find(a => a.isCorrect);
+          const isComplete = sequence.every(s => s !== null);
+          const hasCorrectAnswer = sequence.includes(correctAnswer);
+          
+          if (isComplete) {
+            isGameOver = true;
+            isCorrect = hasCorrectAnswer;
+            
+            if (isCorrect) {
+              playSuccessMelody();
+            } else {
+              playFailSound();
+            }
+          }
+          return;
+        }
+        
+        // Play current step
+        if (sequence[currentStep] !== null) {
+          playNote(sequence[currentStep].sound);
+        }
+        
+        // Schedule next step
+        setTimeout(playStep, 400);
+      }
+      
+      playStep();
+    }
+    
+    // UI Elements
+    const sequencerArea = {
+      x: 150,
+      y: 250,
+      width: 500,
+      height: 120,
+      cellWidth: 125,
+      cellHeight: 120
+    };
+    
+    const answerArea = {
+      x: 150,
+      y: 400,
+      width: 500,
+      height: 80,
+      cellWidth: 125,
+      cellHeight: 80
+    };
+    
+    const playButton = {
+      x: 350,
+      y: 160,
+      width: 100,
+      height: 60,
+      text: "PLAY",
+      isHovered: false
+    };
+    
+    const resetButton = {
+      x: 350,
+      y: 500,
+      width: 100,
+      height: 40,
+      text: "RESTART",
+      isHovered: false
+    };
+    
+    // Handle mouse movement
+    function handleMouseMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Check play button hover
+      playButton.isHovered = mouseX >= playButton.x && 
+                           mouseX <= playButton.x + playButton.width && 
+                           mouseY >= playButton.y && 
+                           mouseY <= playButton.y + playButton.height;
+      
+      // Check reset button hover
+      resetButton.isHovered = mouseX >= resetButton.x && 
+                           mouseX <= resetButton.x + resetButton.width && 
+                           mouseY >= resetButton.y && 
+                           mouseY <= resetButton.y + resetButton.height;
+    }
+    
+    // Handle mouse clicks
+    function handleMouseClick(e) {
+      initAudio();
+      
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Handle play button
+      if (mouseX >= playButton.x && 
+          mouseX <= playButton.x + playButton.width && 
+          mouseY >= playButton.y && 
+          mouseY <= playButton.y + playButton.height) {
+        playClickSound();
+        playSequence();
+        return;
+      }
+      
+      // Handle reset button
+      if (mouseX >= resetButton.x && 
+          mouseX <= resetButton.x + resetButton.width && 
+          mouseY >= resetButton.y && 
+          mouseY <= resetButton.y + resetButton.height) {
+        playClickSound();
+        sequence = [null, null, null, null];
+        isGameOver = false;
+        isCorrect = false;
+        return;
+      }
+      
+      // If game is over, don't allow further interactions with sequencer
+      if (isGameOver) return;
+      
+      // Handle sequencer cells
+      for (let i = 0; i < 4; i++) {
+        const cellX = sequencerArea.x + i * sequencerArea.cellWidth;
+        if (mouseX >= cellX && 
+            mouseX <= cellX + sequencerArea.cellWidth && 
+            mouseY >= sequencerArea.y && 
+            mouseY <= sequencerArea.y + sequencerArea.cellHeight) {
+          // Toggle cell empty or set new value
+          sequence[i] = null;
+          playClickSound();
+          return;
+        }
+      }
+      
+      // Handle answer selection
+      for (let i = 0; i < 4; i++) {
+        const cellX = answerArea.x + i * answerArea.cellWidth;
+        if (mouseX >= cellX && 
+            mouseX <= cellX + answerArea.cellWidth && 
+            mouseY >= answerArea.y && 
+            mouseY <= answerArea.y + answerArea.cellHeight) {
+          // Find empty slot for the answer
+          for (let j = 0; j < 4; j++) {
+            if (sequence[j] === null) {
+              sequence[j] = answers[i];
+              playNote(answers[i].sound);
+              break;
+            }
+          }
+          return;
+        }
+      }
+    }
+    
+    // Draw the game
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw title and question
+      ctx.fillStyle = COLORS.text;
+      ctx.font = "bold 28px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("What is the capital of France?", canvas.width / 2, 80);
+      
+      // Draw instructions
+      ctx.font = "16px sans-serif";
+      ctx.fillText("Arrange notes to create the correct answer", canvas.width / 2, 120);
+      
+      // Draw play button
+      ctx.fillStyle = playButton.isHovered ? COLORS.buttonHover : COLORS.button;
+      ctx.fillRect(playButton.x, playButton.y, playButton.width, playButton.height);
+      ctx.fillStyle = COLORS.text;
+      ctx.font = "bold 24px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(playButton.text, playButton.x + playButton.width / 2, playButton.y + playButton.height / 2);
+      
+      // Draw sequencer grid
+      for (let i = 0; i < 4; i++) {
+        const cellX = sequencerArea.x + i * sequencerArea.cellWidth;
+        
+        // Draw cell background
+        ctx.fillStyle = COLORS.grid;
+        ctx.fillRect(cellX, sequencerArea.y, sequencerArea.cellWidth - 10, sequencerArea.cellHeight);
+        
+        // Draw selected answer in this cell
+        if (sequence[i] !== null) {
+          ctx.fillStyle = sequence[i].color;
+          ctx.fillRect(cellX + 10, sequencerArea.y + 10, sequencerArea.cellWidth - 30, sequencerArea.cellHeight - 20);
+          
+          ctx.fillStyle = COLORS.text;
+          ctx.font = "bold 20px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(sequence[i].text, cellX + sequencerArea.cellWidth / 2, sequencerArea.y + sequencerArea.cellHeight / 2);
+        }
+        
+        // Highlight currently playing cell
+        if (currentStep === i) {
+          ctx.strokeStyle = COLORS.highlight;
+          ctx.lineWidth = 6;
+          ctx.strokeRect(cellX + 3, sequencerArea.y + 3, sequencerArea.cellWidth - 16, sequencerArea.cellHeight - 6);
+        }
+      }
+      
+      // Draw answer options
+      for (let i = 0; i < 4; i++) {
+        const cellX = answerArea.x + i * answerArea.cellWidth;
+        
+        ctx.fillStyle = answers[i].color;
+        ctx.fillRect(cellX, answerArea.y, answerArea.cellWidth - 10, answerArea.cellHeight);
+        
+        ctx.fillStyle = COLORS.text;
+        ctx.font = "bold 20px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(answers[i].text, cellX + answerArea.cellWidth / 2, answerArea.y + answerArea.cellHeight / 2);
+      }
+      
+      // Draw game result if game is over
+      if (isGameOver) {
+        ctx.fillStyle = isCorrect ? COLORS.correct : COLORS.incorrect;
+        ctx.font = "bold 32px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(isCorrect ? "CORRECT!" : "INCORRECT!", canvas.width / 2, 200);
+        
+        // Draw reset button
+        ctx.fillStyle = resetButton.isHovered ? COLORS.buttonHover : COLORS.button;
+        ctx.fillRect(resetButton.x, resetButton.y, resetButton.width, resetButton.height);
+        ctx.fillStyle = COLORS.text;
+        ctx.font = "bold 16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(resetButton.text, resetButton.x + resetButton.width / 2, resetButton.y + resetButton.height / 2);
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Set up event listeners
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('click', handleMouseClick);
+    
+    // Start game loop
+    gameLoop();
+    
+    // Add responsive resizing
+    window.addEventListener('resize', function() {
+      // Adjust for mobile if needed
+      if (window.innerWidth < 800) {
+        canvas.width = 360;
+        canvas.height = 640;
+        
+        // Adjust UI positions for mobile
+        sequencerArea.x = 10;
+        sequencerArea.width = 340;
+        sequencerArea.cellWidth = 85;
+        
+        answerArea.x = 10;
+        answerArea.width = 340;
+        answerArea.cellWidth = 85;
+        
+        playButton.x = 130;
+        resetButton.x = 130;
+      } else {
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Reset to original positions
+        sequencerArea.x = 150;
+        sequencerArea.width = 500;
+        sequencerArea.cellWidth = 125;
+        
+        answerArea.x = 150;
+        answerArea.width = 500;
+        answerArea.cellWidth = 125;
+        
+        playButton.x = 350;
+        resetButton.x = 350;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Conveyor</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+        @media (max-width: 800px) {
+            canvas {
+                width: 360px;
+                height: 640px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - limited 8-bit style palette
+        const colors = {
+            background: '#5D94FB',
+            conveyor: '#333333',
+            conveyorRoller: '#666666',
+            correctBin: '#77DD77',
+            incorrectBin: '#FF6961',
+            itemBase: '#F5DEB3',
+            correct: '#77DD77',
+            incorrect: '#FF6961',
+            text: '#222222',
+            highlight: '#FFFF00'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 50,
+            width: 120,
+            height: 40
+        };
+        
+        // Answer options
+        const answers = [
+            { text: 'Paris', correct: true },
+            { text: 'London', correct: false },
+            { text: 'Berlin', correct: false },
+            { text: 'Rome', correct: false },
+            { text: 'Madrid', correct: false }
+        ];
+        
+        // Items on conveyor
+        const items = [];
+        const itemWidth = 80;
+        const itemHeight = 40;
+        const conveyorSpeed = 2;
+        const spawnInterval = isMobile ? 1600 : 1200;
+        let lastSpawnTime = 0;
+        
+        // Bins
+        const binWidth = canvas.width * 0.3;
+        const binHeight = canvas.height * 0.15;
+        const topBin = {
+            x: canvas.width / 2 - binWidth / 2,
+            y: canvas.height * 0.15,
+            width: binWidth,
+            height: binHeight,
+            correct: true
+        };
+        const bottomBin = {
+            x: canvas.width / 2 - binWidth / 2,
+            y: canvas.height * 0.75,
+            width: binWidth,
+            height: binHeight,
+            correct: false
+        };
+        
+        // Conveyor belt properties
+        const conveyorY = canvas.height / 2 - 20;
+        const conveyorHeight = 40;
+        const rollerWidth = 15;
+        const rollerGap = 50;
+        let rollerOffset = 0;
+        
+        // Button states for sorting items
+        const upButton = {
+            x: canvas.width - 80,
+            y: canvas.height / 2 - 100,
+            width: 60,
+            height: 60,
+            pressed: false
+        };
+        
+        const downButton = {
+            x: canvas.width - 80,
+            y: canvas.height / 2 + 40,
+            width: 60,
+            height: 60,
+            pressed: false
+        };
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(110, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'click') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.05);
+            }
+        }
+        
+        // Create a new item on the conveyor
+        function createItem() {
+            // Shuffle and pick a random answer
+            const shuffledAnswers = [...answers].sort(() => 0.5 - Math.random());
+            const answer = shuffledAnswers[0];
+            
+            items.push({
+                x: -itemWidth,
+                y: conveyorY - itemHeight / 2,
+                width: itemWidth,
+                height: itemHeight,
+                text: answer.text,
+                correct: answer.correct,
+                sorted: false,
+                direction: null,
+                yVelocity: 0
+            });
+        }
+        
+        // Draw the conveyor belt
+        function drawConveyor() {
+            // Draw the main conveyor belt
+            ctx.fillStyle = colors.conveyor;
+            ctx.fillRect(0, conveyorY, canvas.width, conveyorHeight);
+            
+            // Draw conveyor belt rollers
+            ctx.fillStyle = colors.conveyorRoller;
+            rollerOffset = (rollerOffset + conveyorSpeed) % rollerGap;
+            
+            for (let x = -rollerGap + rollerOffset; x < canvas.width + rollerGap; x += rollerGap) {
+                ctx.fillRect(x, conveyorY, rollerWidth, conveyorHeight);
+            }
+            
+            // Draw belt seams (dashed line)
+            ctx.strokeStyle = '#222';
+            ctx.setLineDash([5, 10]);
+            ctx.beginPath();
+            ctx.moveTo(0, conveyorY + conveyorHeight / 2);
+            ctx.lineTo(canvas.width, conveyorY + conveyorHeight / 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+        
+        // Draw the sorting bins
+        function drawBins() {
+            // Draw top bin (correct answers)
+            ctx.fillStyle = colors.correctBin;
+            ctx.fillRect(topBin.x, topBin.y, topBin.width, topBin.height);
+            
+            // Draw bottom bin (incorrect answers)
+            ctx.fillStyle = colors.incorrectBin;
+            ctx.fillRect(bottomBin.x, bottomBin.y, bottomBin.width, bottomBin.height);
+            
+            // Draw bin labels
+            ctx.fillStyle = '#000';
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('CORRECT', topBin.x + topBin.width / 2, topBin.y + 25);
+            ctx.fillText('INCORRECT', bottomBin.x + bottomBin.width / 2, bottomBin.y + 25);
+        }
+        
+        // Draw items on the conveyor
+        function drawItems() {
+            items.forEach(item => {
+                // Draw item base
+                ctx.fillStyle = colors.itemBase;
+                ctx.fillRect(item.x, item.y, item.width, item.height);
+                
+                // Draw item border
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(item.x, item.y, item.width, item.height);
+                
+                // Draw item text
+                ctx.fillStyle = colors.text;
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(item.text, item.x + item.width / 2, item.y + item.height / 2 + 5);
+            });
+        }
+        
+        // Draw the sorting buttons
+        function drawButtons() {
+            // Up button
+            ctx.fillStyle = upButton.pressed ? '#AAA' : '#DDD';
+            ctx.fillRect(upButton.x, upButton.y, upButton.width, upButton.height);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(upButton.x, upButton.y, upButton.width, upButton.height);
+            
+            // Up arrow
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.moveTo(upButton.x + upButton.width / 2, upButton.y + 10);
+            ctx.lineTo(upButton.x + upButton.width - 10, upButton.y + upButton.height - 10);
+            ctx.lineTo(upButton.x + 10, upButton.y + upButton.height - 10);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Down button
+            ctx.fillStyle = downButton.pressed ? '#AAA' : '#DDD';
+            ctx.fillRect(downButton.x, downButton.y, downButton.width, downButton.height);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(downButton.x, downButton.y, downButton.width, downButton.height);
+            
+            // Down arrow
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.moveTo(downButton.x + upButton.width / 2, downButton.y + upButton.height - 10);
+            ctx.lineTo(downButton.x + upButton.width - 10, downButton.y + 10);
+            ctx.lineTo(downButton.x + 10, downButton.y + 10);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = '#FFF';
+            ctx.fillRect(0, 0, canvas.width, 50);
+            ctx.fillStyle = '#000';
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 30);
+        }
+        
+        // Draw game over screen
+        function drawGameOver(result) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = result ? colors.correct : colors.incorrect;
+            ctx.font = '30px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(result ? 'CORRECT!' : 'INCORRECT!', canvas.width / 2, canvas.height / 2 - 20);
+            
+            // Draw restart button
+            ctx.fillStyle = '#DDD';
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            
+            ctx.fillStyle = '#000';
+            ctx.font = '16px sans-serif';
+            ctx.fillText('Restart', restartButton.x + restartButton.width / 2, restartButton.y + restartButton.height / 2 + 5);
+        }
+        
+        // Update game logic
+        function update(timestamp) {
+            if (!gameOver) {
+                // Spawn new item at intervals
+                if (timestamp - lastSpawnTime > spawnInterval && items.length < 5) {
+                    createItem();
+                    lastSpawnTime = timestamp;
+                }
+                
+                // Update items
+                for (let i = items.length - 1; i >= 0; i--) {
+                    const item = items[i];
+                    
+                    // Move item along conveyor if not sorted
+                    if (!item.direction) {
+                        item.x += conveyorSpeed;
+                        
+                        // Remove if offscreen
+                        if (item.x > canvas.width) {
+                            items.splice(i, 1);
+                        }
+                    } else {
+                        // Item is being sorted
+                        item.y += item.yVelocity;
+                        item.yVelocity += (item.direction === 'up' ? -0.5 : 0.5);
+                        
+                        // Check if item reached a bin
+                        if (item.direction === 'up' && 
+                            item.y + item.height / 2 < topBin.y + topBin.height && 
+                            item.x + item.width / 2 > topBin.x && 
+                            item.x + item.width / 2 < topBin.x + topBin.width) {
+                            
+                            gameOver = true;
+                            playSound(item.correct ? 'correct' : 'incorrect');
+                            
+                        } else if (item.direction === 'down' && 
+                                 item.y + item.height / 2 > bottomBin.y && 
+                                 item.x + item.width / 2 > bottomBin.x && 
+                                 item.x + item.width / 2 < bottomBin.x + bottomBin.width) {
+                            
+                            gameOver = true;
+                            playSound(!item.correct ? 'correct' : 'incorrect');
+                        }
+                        
+                        // Remove if offscreen
+                        if (item.y < -item.height || item.y > canvas.height) {
+                            items.splice(i, 1);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawConveyor();
+            drawBins();
+            drawItems();
+            drawButtons();
+            drawQuestion();
+            
+            // Draw game over if needed
+            if (gameOver) {
+                // Check if any sorted item exists to determine the result
+                const sortedItem = items.find(item => item.direction);
+                if (sortedItem) {
+                    const result = (sortedItem.direction === 'up' && sortedItem.correct) || 
+                                  (sortedItem.direction === 'down' && !sortedItem.correct);
+                    drawGameOver(result);
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            update(timestamp);
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle item sorting
+        function sortItem(direction) {
+            if (gameOver) return;
+            
+            // Find the first item in the center zone that's not yet sorted
+            const centerX = canvas.width / 2;
+            const sortingZone = 100;
+            const itemToSort = items.find(item => 
+                !item.direction && 
+                item.x + item.width / 2 > centerX - sortingZone / 2 && 
+                item.x + item.width / 2 < centerX + sortingZone / 2
+            );
+            
+            if (itemToSort) {
+                itemToSort.direction = direction;
+                itemToSort.yVelocity = direction === 'up' ? -5 : 5;
+                playSound('click');
+            }
+        }
+        
+        // Handle mouse/touch events
+        function handlePointerDown(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                // Check if restart button clicked
+                if (x > restartButton.x && x < restartButton.x + restartButton.width &&
+                    y > restartButton.y && y < restartButton.y + restartButton.height) {
+                    // Reset game
+                    gameOver = false;
+                    items.length = 0;
+                    lastSpawnTime = 0;
+                    playSound('click');
+                }
+                return;
+            }
+            
+            // Check if up button clicked
+            if (x > upButton.x && x < upButton.x + upButton.width &&
+                y > upButton.y && y < upButton.y + upButton.height) {
+                upButton.pressed = true;
+                sortItem('up');
+                setTimeout(() => { upButton.pressed = false; }, 100);
+                return;
+            }
+            
+            // Check if down button clicked
+            if (x > downButton.x && x < downButton.x + downButton.width &&
+                y > downButton.y && y < downButton.y + downButton.height) {
+                downButton.pressed = true;
+                sortItem('down');
+                setTimeout(() => { downButton.pressed = false; }, 100);
+                return;
+            }
+            
+            // Allow sorting by clicking/tapping left or right side of screen
+            if (y > conveyorY - 100 && y < conveyorY + 100) {
+                if (y < conveyorY) {
+                    sortItem('up');
+                } else {
+                    sortItem('down');
+                }
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handlePointerDown);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            handlePointerDown(e.touches[0]);
+        });
+        
+        // Handle keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'w') {
+                upButton.pressed = true;
+                sortItem('up');
+                setTimeout(() => { upButton.pressed = false; }, 100);
+            } else if (e.key === 'ArrowDown' || e.key === 's') {
+                downButton.pressed = true;
+                sortItem('down');
+                setTimeout(() => { downButton.pressed = false; }, 100);
+            } else if (e.key === 'r' && gameOver) {
+                // Reset game
+                gameOver = false;
+                items.length = 0;
+                lastSpawnTime = 0;
+            }
+        });
+        
+        // Start the game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

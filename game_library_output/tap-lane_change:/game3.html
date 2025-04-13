@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>True or False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #fff;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #ff5555;
+            color: white;
+            border: 2px solid white;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        const gameWidth = canvas.width;
+        const gameHeight = canvas.height;
+        
+        // Game constants
+        const LANE_COUNT = 3;
+        const LANE_WIDTH = gameWidth / LANE_COUNT;
+        const PLAYER_SIZE = Math.floor(gameWidth / 14);
+        const OBSTACLE_WIDTH = Math.floor(gameWidth / 4);
+        const OBSTACLE_HEIGHT = Math.floor(gameHeight / 8);
+        const QUESTION = "The Great Wall of China is visible from space.";
+        const CORRECT_ANSWER = false; // This is the correct answer
+        
+        // Game variables
+        let playerLane = 1;
+        let obstacles = [];
+        let gameOver = false;
+        let gameResult = null;
+        let obstacleSpeed = gameHeight * 0.002;
+        let lastObstacleTime = 0;
+        let restartBtn = document.getElementById('restart');
+        
+        // Color palette (16 colors)
+        const COLORS = {
+            background: '#0f380f',
+            player: '#8bac0f',
+            playerOutline: '#0f380f',
+            lanes: '#306230',
+            obstacleTrue: '#9bbc0f',
+            obstacleFalse: '#8e8b6d',
+            textLight: '#e0f8d0',
+            textDark: '#0f380f',
+            correct: '#8bac0f',
+            incorrect: '#e83000'
+        };
+        
+        // Sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gain);
+            gain.connect(audioContext.destination);
+            
+            oscillator.start();
+            gain.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playLaneChangeSound() {
+            playSound(300, 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1, 'sine');
+            setTimeout(() => playSound(659.25, 0.1, 'sine'), 100);
+            setTimeout(() => playSound(783.99, 0.2, 'sine'), 200);
+        }
+        
+        function playIncorrectSound() {
+            playSound(196.00, 0.2, 'sawtooth');
+            setTimeout(() => playSound(146.83, 0.3, 'sawtooth'), 150);
+        }
+        
+        // Initialize obstacles
+        function initObstacles() {
+            // Distribute true/false answers randomly among lanes
+            const trueLane = CORRECT_ANSWER ? Math.floor(Math.random() * LANE_COUNT) : null;
+            const falseLane = !CORRECT_ANSWER ? Math.floor(Math.random() * LANE_COUNT) : null;
+            
+            for (let i = 0; i < LANE_COUNT; i++) {
+                if (i === trueLane) {
+                    obstacles.push({
+                        x: i * LANE_WIDTH + (LANE_WIDTH - OBSTACLE_WIDTH) / 2,
+                        y: -OBSTACLE_HEIGHT - 30,
+                        width: OBSTACLE_WIDTH,
+                        height: OBSTACLE_HEIGHT,
+                        lane: i,
+                        value: true,
+                        text: "TRUE"
+                    });
+                } else if (i === falseLane) {
+                    obstacles.push({
+                        x: i * LANE_WIDTH + (LANE_WIDTH - OBSTACLE_WIDTH) / 2,
+                        y: -OBSTACLE_HEIGHT - 30,
+                        width: OBSTACLE_WIDTH,
+                        height: OBSTACLE_HEIGHT,
+                        lane: i,
+                        value: false,
+                        text: "FALSE"
+                    });
+                }
+            }
+        }
+        
+        // Player with retro pixel style
+        function drawPlayer() {
+            const x = playerLane * LANE_WIDTH + (LANE_WIDTH - PLAYER_SIZE) / 2;
+            const y = gameHeight - PLAYER_SIZE * 2;
+            
+            // Draw pixelated player character (simple 8-bit style)
+            ctx.fillStyle = COLORS.player;
+            
+            // Body (square base)
+            ctx.fillRect(x, y, PLAYER_SIZE, PLAYER_SIZE);
+            
+            // Head (smaller square on top)
+            ctx.fillRect(x + PLAYER_SIZE/4, y - PLAYER_SIZE/2, PLAYER_SIZE/2, PLAYER_SIZE/2);
+            
+            // Outline
+            ctx.strokeStyle = COLORS.playerOutline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, PLAYER_SIZE, PLAYER_SIZE);
+            ctx.strokeRect(x + PLAYER_SIZE/4, y - PLAYER_SIZE/2, PLAYER_SIZE/2, PLAYER_SIZE/2);
+            
+            // Simple eyes
+            ctx.fillStyle = COLORS.playerOutline;
+            ctx.fillRect(x + PLAYER_SIZE/3, y - PLAYER_SIZE/3, PLAYER_SIZE/8, PLAYER_SIZE/8);
+            ctx.fillRect(x + 2*PLAYER_SIZE/3 - PLAYER_SIZE/8, y - PLAYER_SIZE/3, PLAYER_SIZE/8, PLAYER_SIZE/8);
+        }
+        
+        // Draw game board with pixelated lanes
+        function drawBoard() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            
+            // Draw lanes
+            for (let i = 1; i < LANE_COUNT; i++) {
+                const x = i * LANE_WIDTH;
+                
+                // Dotted pixel line effect
+                ctx.strokeStyle = COLORS.lanes;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                
+                for (let y = 0; y < gameHeight; y += 20) {
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x, y + 10);
+                }
+                
+                ctx.stroke();
+            }
+            
+            // Display question at top
+            ctx.fillStyle = COLORS.textLight;
+            ctx.font = `${Math.floor(gameWidth/25)}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            // Handle text wrapping for small screens
+            const maxLineWidth = gameWidth - 20;
+            let words = QUESTION.split(' ');
+            let line = '';
+            let lines = [];
+            
+            for (let i = 0; i < words.length; i++) {
+                let testLine = line + words[i] + ' ';
+                let metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxLineWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw text
+            let yPos = 30;
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(lines[i], gameWidth/2, yPos);
+                yPos += 30;
+            }
+        }
+        
+        // Draw obstacles with pixel style
+        function drawObstacles() {
+            obstacles.forEach(obstacle => {
+                // Main block
+                ctx.fillStyle = obstacle.value ? COLORS.obstacleTrue : COLORS.obstacleFalse;
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                
+                // Pixelated border
+                ctx.strokeStyle = COLORS.textDark;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                
+                // Text label
+                ctx.fillStyle = COLORS.textDark;
+                ctx.font = `bold ${Math.floor(obstacle.height/2)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(obstacle.text, obstacle.x + obstacle.width/2, obstacle.y + obstacle.height/2);
+            });
+        }
+        
+        // Check for collision between player and obstacles
+        function checkCollisions() {
+            const playerX = playerLane * LANE_WIDTH + (LANE_WIDTH - PLAYER_SIZE) / 2;
+            const playerY = gameHeight - PLAYER_SIZE * 2;
+            
+            obstacles.forEach(obstacle => {
+                if (
+                    playerX < obstacle.x + obstacle.width &&
+                    playerX + PLAYER_SIZE > obstacle.x &&
+                    playerY < obstacle.y + obstacle.height &&
+                    playerY + PLAYER_SIZE > obstacle.y
+                ) {
+                    gameOver = true;
+                    gameResult = (obstacle.value === CORRECT_ANSWER);
+                    
+                    if (gameResult) {
+                        playCorrectSound();
+                    } else {
+                        playIncorrectSound();
+                    }
+                    
+                    restartBtn.style.display = 'block';
+                }
+            });
+        }
+        
+        // Draw game over screen
+        function drawGameOver() {
+            // Darken the screen
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            
+            // Display result
+            ctx.fillStyle = gameResult ? COLORS.correct : COLORS.incorrect;
+            ctx.font = `bold ${Math.floor(gameWidth/15)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const resultText = gameResult ? "CORRECT!" : "INCORRECT!";
+            ctx.fillText(resultText, gameWidth/2, gameHeight/2);
+            
+            // Correct answer notification if wrong
+            if (!gameResult) {
+                ctx.fillStyle = COLORS.textLight;
+                ctx.font = `${Math.floor(gameWidth/25)}px sans-serif`;
+                ctx.fillText("The correct answer is: " + (CORRECT_ANSWER ? "TRUE" : "FALSE"), 
+                    gameWidth/2, gameHeight/2 + 50);
+            }
+        }
+        
+        // Create particle effect
+        function createParticles(x, y, color, count) {
+            let particles = [];
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 6 + 2,
+                    speedX: (Math.random() - 0.5) * 5,
+                    speedY: (Math.random() - 0.5) * 5,
+                    color: color,
+                    life: 20
+                });
+            }
+            return particles;
+        }
+        
+        // Update and draw particles
+        function updateParticles() {
+            particles = particles.filter(p => p.life > 0);
+            
+            particles.forEach(p => {
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+        }
+        
+        // Initialize game
+        let particles = [];
+        
+        function init() {
+            gameOver = false;
+            gameResult = null;
+            playerLane = 1;
+            obstacles = [];
+            obstacleSpeed = gameHeight * 0.002;
+            particles = [];
+            initObstacles();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameOver) {
+                // Increase obstacle speed gradually
+                obstacleSpeed += gameHeight * 0.00001;
+                
+                // Move obstacles
+                obstacles.forEach(obstacle => {
+                    obstacle.y += obstacleSpeed;
+                });
+                
+                // Check for collisions
+                checkCollisions();
+                
+                // Generate more obstacles if needed
+                const currentTime = Date.now();
+                if (currentTime - lastObstacleTime > 3000 && obstacles.length === 0) {
+                    initObstacles();
+                    lastObstacleTime = currentTime;
+                }
+            }
+        }
+        
+        // Render game
+        function render() {
+            drawBoard();
+            drawObstacles();
+            drawPlayer();
+            updateParticles();
+            
+            if (gameOver) {
+                drawGameOver();
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        init();
+        gameLoop();
+        
+        // Event listeners
+        canvas.addEventListener('click', function(e) {
+            if (!gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                
+                // Determine which lane was clicked
+                const laneClicked = Math.floor(clickX / LANE_WIDTH);
+                
+                if (laneClicked !== playerLane && laneClicked >= 0 && laneClicked < LANE_COUNT) {
+                    // Create particles when changing lanes
+                    const oldX = playerLane * LANE_WIDTH + LANE_WIDTH/2;
+                    const y = gameHeight - PLAYER_SIZE * 1.5;
+                    particles = particles.concat(createParticles(oldX, y, COLORS.player, 10));
+                    
+                    playerLane = laneClicked;
+                    playLaneChangeSound();
+                }
+            }
+        });
+        
+        // Touch event for mobile
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if (!gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.touches[0].clientX - rect.left;
+                
+                // Determine which lane was touched
+                const laneTouched = Math.floor(touchX / LANE_WIDTH);
+                
+                if (laneTouched !== playerLane && laneTouched >= 0 && laneTouched < LANE_COUNT) {
+                    // Create particles when changing lanes
+                    const oldX = playerLane * LANE_WIDTH + LANE_WIDTH/2;
+                    const y = gameHeight - PLAYER_SIZE * 1.5;
+                    particles = particles.concat(createParticles(oldX, y, COLORS.player, 10));
+                    
+                    playerLane = laneTouched;
+                    playLaneChangeSound();
+                }
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', init);
+    </script>
+</body>
+</html>

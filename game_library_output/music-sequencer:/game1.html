@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Music Sequencer MCQ Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        let gameState = {
+            question: "What is the capital of France?",
+            options: [
+                { text: "London", isCorrect: false, sequence: [1, 3, 2, 4] },
+                { text: "Paris", isCorrect: true, sequence: [1, 3, 5, 7] },
+                { text: "Berlin", isCorrect: false, sequence: [5, 4, 2, 1] },
+                { text: "Rome", isCorrect: false, sequence: [2, 2, 4, 4] }
+            ],
+            selectedOption: null,
+            gameOver: false,
+            playingSequence: null,
+            currentNoteIndex: -1,
+            sequencers: [],
+            restartBtn: { x: 350, y: 470, width: 100, height: 40 }
+        };
+
+        // Color palette
+        const colors = {
+            background: "#222034",
+            question: "#8bac0f",
+            optionBackground: "#306082",
+            optionText: "#e0f8cf",
+            selectedOption: "#9bbc0f",
+            correctOption: "#0f380f",
+            incorrectOption: "#8b2914",
+            highlight: "#ffbc42",
+            button: "#306082",
+            buttonText: "#e0f8cf",
+            grid: "#0f2030",
+            note: "#9bbc0f",
+            playingNote: "#ffbc42",
+            border: "#8bac0f"
+        };
+
+        // Set up sequencers
+        function setupSequencers() {
+            const sequencerWidth = 150;
+            const sequencerHeight = 60;
+            const startX = 120;
+            const startY = 180;
+            const spacing = 160;
+            
+            gameState.options.forEach((option, index) => {
+                const row = Math.floor(index / 2);
+                const col = index % 2;
+                const x = startX + col * spacing * 2;
+                const y = startY + row * spacing;
+                
+                gameState.sequencers.push({
+                    x: x,
+                    y: y,
+                    width: sequencerWidth,
+                    height: sequencerHeight,
+                    option: option,
+                    playButton: {
+                        x: x + sequencerWidth + 20,
+                        y: y + 10,
+                        width: 40,
+                        height: 40
+                    }
+                });
+            });
+        }
+        
+        // Initialize game
+        function init() {
+            setupSequencers();
+        }
+
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playNote(frequency, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.3;
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.start();
+
+            setTimeout(() => {
+                gainNode.gain.setValueAtTime(gainNode.gain.value, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+
+        // Generate frequencies based on sequence numbers
+        function getFrequency(note) {
+            const baseFreq = 220;
+            const scales = [1, 1.125, 1.25, 1.333, 1.5, 1.667, 1.875, 2];
+            return baseFreq * scales[note - 1];
+        }
+
+        function playSequence(sequence) {
+            if (gameState.playingSequence) return;
+            
+            gameState.playingSequence = sequence;
+            gameState.currentNoteIndex = 0;
+            
+            const noteDuration = 300;
+            const playNote = () => {
+                if (gameState.currentNoteIndex < sequence.length) {
+                    const note = sequence[gameState.currentNoteIndex];
+                    const freq = getFrequency(note);
+                    playNote(freq, noteDuration * 0.8);
+                    
+                    setTimeout(() => {
+                        gameState.currentNoteIndex++;
+                        playNote();
+                    }, noteDuration);
+                } else {
+                    setTimeout(() => {
+                        gameState.playingSequence = null;
+                        gameState.currentNoteIndex = -1;
+                    }, 100);
+                }
+            };
+            
+            playNote();
+        }
+        
+        function playCorrectSound() {
+            const notes = [4, 5, 6];
+            notes.forEach((note, i) => {
+                setTimeout(() => {
+                    playNote(getFrequency(note), 150);
+                }, i * 200);
+            });
+        }
+        
+        function playIncorrectSound() {
+            const notes = [4, 3, 2];
+            notes.forEach((note, i) => {
+                setTimeout(() => {
+                    playNote(getFrequency(note), 150);
+                }, i * 200);
+            });
+        }
+
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+
+        function drawPixelText(text, x, y, color, size = 20) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, Math.floor(x), Math.floor(y));
+        }
+
+        function drawQuestion() {
+            drawPixelRect(200, 80, 400, 60, colors.optionBackground);
+            drawPixelRect(202, 82, 396, 56, colors.background);
+            drawPixelText(gameState.question, canvas.width / 2, 110, colors.question, 24);
+        }
+
+        function drawSequencer(sequencer) {
+            const { x, y, width, height, option } = sequencer;
+            const noteWidth = width / option.sequence.length;
+            const selectedClass = gameState.selectedOption === option ? colors.selectedOption : colors.optionBackground;
+            
+            // Draw label
+            drawPixelText(option.text, x + width / 2, y - 25, colors.optionText);
+
+            // Draw sequencer background
+            if (gameState.gameOver) {
+                if (option.isCorrect) {
+                    drawPixelRect(x - 5, y - 45, width + 50, height + 55, colors.correctOption);
+                } else if (gameState.selectedOption === option) {
+                    drawPixelRect(x - 5, y - 45, width + 50, height + 55, colors.incorrectOption);
+                }
+            }
+            
+            drawPixelRect(x, y, width, height, selectedClass);
+            drawPixelRect(x + 2, y + 2, width - 4, height - 4, colors.grid);
+            
+            // Draw notes
+            option.sequence.forEach((note, i) => {
+                const noteX = x + i * noteWidth + 5;
+                const noteHeight = (note / 7) * (height - 20);
+                const noteY = y + height - 10 - noteHeight;
+                
+                let noteColor = colors.note;
+                if (gameState.playingSequence === option.sequence && gameState.currentNoteIndex === i) {
+                    noteColor = colors.playingNote;
+                    
+                    // Draw visualization effect
+                    ctx.beginPath();
+                    ctx.arc(noteX + noteWidth/2 - 5, noteY + noteHeight/2, noteHeight * 0.6, 0, Math.PI * 2);
+                    ctx.fillStyle = colors.highlight + '80'; // Semi-transparent
+                    ctx.fill();
+                }
+                
+                drawPixelRect(noteX, noteY, noteWidth - 10, noteHeight, noteColor);
+            });
+            
+            // Draw play button
+            const { playButton } = sequencer;
+            drawPixelRect(playButton.x, playButton.y, playButton.width, playButton.height, colors.button);
+            drawPixelRect(playButton.x + 2, playButton.y + 2, playButton.width - 4, playButton.height - 4, colors.background);
+            
+            // Play triangle
+            ctx.beginPath();
+            ctx.moveTo(playButton.x + 12, playButton.y + 10);
+            ctx.lineTo(playButton.x + 12, playButton.y + 30);
+            ctx.lineTo(playButton.x + 32, playButton.y + 20);
+            ctx.closePath();
+            ctx.fillStyle = colors.buttonText;
+            ctx.fill();
+        }
+        
+        function drawRestartButton() {
+            if (gameState.gameOver) {
+                const button = gameState.restartBtn;
+                drawPixelRect(button.x, button.y, button.width, button.height, colors.button);
+                drawPixelRect(button.x + 2, button.y + 2, button.width - 4, button.height - 4, colors.background);
+                drawPixelText("Restart", button.x + button.width / 2, button.y + button.height / 2, colors.buttonText);
+            }
+        }
+        
+        function drawResult() {
+            if (gameState.gameOver) {
+                const resultText = gameState.selectedOption.isCorrect ? "Correct!" : "Incorrect!";
+                const resultColor = gameState.selectedOption.isCorrect ? colors.correctOption : colors.incorrectOption;
+                drawPixelText(resultText, canvas.width / 2, 400, resultColor, 32);
+            }
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawQuestion();
+            
+            // Draw sequencers
+            gameState.sequencers.forEach(sequencer => {
+                drawSequencer(sequencer);
+            });
+            
+            drawResult();
+            drawRestartButton();
+            
+            // Pixelate rendering effect
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            ctx.putImageData(imageData, 0, 0);
+            
+            requestAnimationFrame(draw);
+        }
+
+        // Handle input
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState.gameOver) {
+                const button = gameState.restartBtn;
+                if (x >= button.x && x <= button.x + button.width &&
+                    y >= button.y && y <= button.y + button.height) {
+                    gameState.gameOver = false;
+                    gameState.selectedOption = null;
+                }
+                return;
+            }
+            
+            // Check for sequencer and play button clicks
+            for (const sequencer of gameState.sequencers) {
+                const { playButton, option } = sequencer;
+                
+                // Check play button click
+                if (x >= playButton.x && x <= playButton.x + playButton.width &&
+                    y >= playButton.y && y <= playButton.y + playButton.height) {
+                    playSequence(option.sequence);
+                    return;
+                }
+                
+                // Check sequencer selection
+                if (x >= sequencer.x && x <= sequencer.x + sequencer.width &&
+                    y >= sequencer.y && y <= sequencer.y + sequencer.height) {
+                    gameState.selectedOption = option;
+                    playSequence(option.sequence);
+                    
+                    // Check answer after playing
+                    setTimeout(() => {
+                        gameState.gameOver = true;
+                        if (option.isCorrect) {
+                            playCorrectSound();
+                        } else {
+                            playIncorrectSound();
+                        }
+                    }, option.sequence.length * 300 + 100);
+                    return;
+                }
+            }
+        });
+
+        // Start the game
+        init();
+        draw();
+    </script>
+</body>
+</html>

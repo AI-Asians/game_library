@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Sorting Factory</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        const planets = [
+            { name: 'Mars', color: '#D13B27', isCorrect: true },
+            { name: 'Earth', color: '#3B88C3', isCorrect: false },
+            { name: 'Venus', color: '#E9C62E', isCorrect: false },
+            { name: 'Mercury', color: '#A37C5B', isCorrect: false },
+            { name: 'Jupiter', color: '#C17F43', isCorrect: false }
+        ];
+        
+        let gameState = 'playing'; // 'playing', 'correct', 'incorrect'
+        let planetSize = 40;
+        let conveyorSpeed = 2;
+        let currentPlanets = [];
+        let conveyor = { x: 0, y: 380, width: 800, height: 60 };
+        let binMars = { x: 150, y: 450, width: 100, height: 120, label: 'MARS' };
+        let binOther = { x: 550, y: 450, width: 100, height: 120, label: 'NOT MARS' };
+        let timer = 0;
+        let spawnTimer = 0;
+        
+        // Color palette (16 colors)
+        const colors = {
+            darkBg: '#0D1B2A',
+            lightBg: '#1B263B',
+            conveyor: '#415A77',
+            conveyorDark: '#344966',
+            textLight: '#E0E1DD',
+            textDark: '#2B2B2B',
+            correct: '#2B9348',
+            incorrect: '#D00000',
+            highlight: '#FF9E00',
+            machine1: '#5F7D95',
+            machine2: '#3E5C76',
+            gears: '#778DA9',
+            pipes: '#564138',
+            buttons: '#E63946'
+        };
+        
+        // Initialize the game
+        function init() {
+            currentPlanets = [];
+            gameState = 'playing';
+            spawnPlanet();
+            
+            // Add event listener for clicking
+            canvas.addEventListener('click', handleClick);
+        }
+        
+        // Create a new planet
+        function spawnPlanet() {
+            const randomPlanet = planets[Math.floor(Math.random() * planets.length)];
+            currentPlanets.push({
+                x: -planetSize,
+                y: conveyor.y - planetSize/2,
+                size: planetSize,
+                planet: randomPlanet,
+                sorted: false
+            });
+        }
+        
+        // Handle mouse clicks
+        function handleClick(e) {
+            if (gameState !== 'playing') {
+                // Reset game if clicked after game over
+                init();
+                return;
+            }
+            
+            // Get mouse position
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if a bin was clicked
+            let binClicked = null;
+            if (pointInRect(mouseX, mouseY, binMars)) {
+                binClicked = 'mars';
+            } else if (pointInRect(mouseX, mouseY, binOther)) {
+                binClicked = 'other';
+            }
+            
+            // Check if a planet was clicked
+            for (let i = 0; i < currentPlanets.length; i++) {
+                const planet = currentPlanets[i];
+                if (planet.sorted) continue;
+                
+                // If a planet was clicked directly
+                if (distance(mouseX, mouseY, planet.x, planet.y) < planet.size/2) {
+                    sortPlanet(planet, planet.planet.isCorrect ? 'mars' : 'other');
+                    return;
+                }
+                
+                // If a bin was clicked, sort the nearest unsorted planet
+                if (binClicked && planet.x > 0 && planet.x < canvas.width) {
+                    sortPlanet(planet, binClicked);
+                    return;
+                }
+            }
+        }
+        
+        // Sort a planet to a bin
+        function sortPlanet(planet, bin) {
+            planet.sorted = true;
+            
+            // Check if sorting was correct
+            if ((bin === 'mars' && planet.planet.isCorrect) || 
+                (bin === 'other' && !planet.planet.isCorrect)) {
+                planet.target = bin === 'mars' ? binMars : binOther;
+                playSound(220, 'correct');
+                
+                if (bin === 'mars') {
+                    gameState = 'correct';
+                    setTimeout(() => {
+                        showRestartButton();
+                    }, 1000);
+                }
+            } else {
+                planet.target = bin === 'mars' ? binMars : binOther;
+                playSound(110, 'incorrect');
+                
+                gameState = 'incorrect';
+                setTimeout(() => {
+                    showRestartButton();
+                }, 1000);
+            }
+        }
+        
+        // Show restart button
+        function showRestartButton() {
+            const restartButton = {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 40,
+                width: 120,
+                height: 40,
+                text: 'RESTART'
+            };
+            
+            // Draw button
+            ctx.fillStyle = colors.buttons;
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            ctx.fillStyle = colors.darkBg;
+            ctx.strokeStyle = colors.textLight;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            
+            // Draw text
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(restartButton.text, restartButton.x + restartButton.width/2, restartButton.y + restartButton.height/2);
+        }
+        
+        // Update game state
+        function update() {
+            timer++;
+            
+            if (gameState === 'playing') {
+                // Spawn new planets periodically
+                spawnTimer++;
+                if (spawnTimer > 120 && currentPlanets.length < 3) {
+                    spawnPlanet();
+                    spawnTimer = 0;
+                }
+                
+                // Update planet positions
+                for (let i = 0; i < currentPlanets.length; i++) {
+                    const planet = currentPlanets[i];
+                    
+                    if (planet.sorted && planet.target) {
+                        // Move sorted planets to their target bins
+                        const targetX = planet.target.x + planet.target.width/2;
+                        const targetY = planet.target.y + planet.size;
+                        
+                        // Calculate direction vector
+                        const dx = targetX - planet.x;
+                        const dy = targetY - planet.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance > 5) {
+                            planet.x += dx * 0.1;
+                            planet.y += dy * 0.1;
+                        }
+                    } else {
+                        // Move unsorted planets along conveyor
+                        planet.x += conveyorSpeed;
+                    }
+                    
+                    // Remove planets that go off screen
+                    if (planet.x > canvas.width + planetSize && !planet.sorted) {
+                        currentPlanets.splice(i, 1);
+                        i--;
+                    }
+                }
+            }
+        }
+        
+        // Render the game
+        function draw() {
+            // Clear the canvas with background color
+            ctx.fillStyle = colors.darkBg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw factory background elements
+            drawFactoryBackground();
+            
+            // Draw the conveyor belt
+            drawConveyor();
+            
+            // Draw sorting bins
+            drawBins();
+            
+            // Draw planets
+            drawPlanets();
+            
+            // Draw the question
+            drawQuestion();
+            
+            // Draw game over message if needed
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                drawGameOver();
+            }
+        }
+        
+        // Draw factory background with pipes and machinery
+        function drawFactoryBackground() {
+            // Draw background machinery
+            ctx.fillStyle = colors.machine1;
+            ctx.fillRect(50, 100, 150, 200);
+            ctx.fillRect(600, 100, 150, 200);
+            
+            // Draw pipes
+            ctx.fillStyle = colors.pipes;
+            ctx.fillRect(100, 50, 30, 100);
+            ctx.fillRect(670, 50, 30, 100);
+            ctx.fillRect(200, 180, 400, 20);
+            
+            // Draw gears
+            drawGear(50, 150, 30, timer * 0.01);
+            drawGear(750, 150, 30, -timer * 0.01);
+            drawGear(400, 170, 20, timer * 0.02);
+            
+            // Draw control panels
+            ctx.fillStyle = colors.machine2;
+            ctx.fillRect(250, 120, 100, 60);
+            ctx.fillRect(450, 120, 100, 60);
+            
+            // Draw control panel buttons
+            for (let i = 0; i < 3; i++) {
+                ctx.fillStyle = colors.buttons;
+                ctx.fillRect(260 + i * 30, 130, 20, 20);
+                ctx.fillRect(460 + i * 30, 130, 20, 20);
+            }
+            
+            // Draw flashing lights
+            if (timer % 60 < 30) {
+                ctx.fillStyle = '#FF0000';
+                ctx.beginPath();
+                ctx.arc(300, 165, 8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#00FF00';
+                ctx.beginPath();
+                ctx.arc(500, 165, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // Draw a gear
+        function drawGear(x, y, radius, rotation) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+            
+            ctx.fillStyle = colors.gears;
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = colors.conveyor;
+            ctx.beginPath();
+            ctx.arc(0, 0, radius - 10, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw gear teeth
+            ctx.fillStyle = colors.gears;
+            for (let i = 0; i < 8; i++) {
+                ctx.save();
+                ctx.rotate(i * Math.PI / 4);
+                ctx.fillRect(-5, -radius - 10, 10, 15);
+                ctx.restore();
+            }
+            
+            // Draw center hole
+            ctx.fillStyle = colors.darkBg;
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        // Draw the conveyor belt
+        function drawConveyor() {
+            // Main conveyor
+            ctx.fillStyle = colors.conveyor;
+            ctx.fillRect(conveyor.x, conveyor.y, conveyor.width, conveyor.height);
+            
+            // Conveyor belt pattern
+            ctx.fillStyle = colors.conveyorDark;
+            for (let i = 0; i < 40; i++) {
+                const offset = (timer * conveyorSpeed) % 40;
+                ctx.fillRect(i * 40 - offset, conveyor.y, 5, conveyor.height);
+            }
+            
+            // Conveyor rollers
+            for (let i = 0; i < 20; i++) {
+                ctx.fillStyle = colors.gears;
+                ctx.beginPath();
+                ctx.arc(i * 40 + 20, conveyor.y, 10, 0, Math.PI);
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.arc(i * 40 + 20, conveyor.y + conveyor.height, 10, Math.PI, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // Draw sorting bins
+        function drawBins() {
+            // Mars bin
+            ctx.fillStyle = colors.machine1;
+            ctx.fillRect(binMars.x, binMars.y, binMars.width, binMars.height);
+            
+            // Mars bin label
+            ctx.fillStyle = '#D13B27'; // Mars red
+            ctx.fillRect(binMars.x, binMars.y - 30, binMars.width, 30);
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(binMars.label, binMars.x + binMars.width/2, binMars.y - 8);
+            
+            // Other planets bin
+            ctx.fillStyle = colors.machine1;
+            ctx.fillRect(binOther.x, binOther.y, binOther.width, binOther.height);
+            
+            // Other planets bin label
+            ctx.fillStyle = colors.machine2;
+            ctx.fillRect(binOther.x, binOther.y - 30, binOther.width, 30);
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(binOther.label, binOther.x + binOther.width/2, binOther.y - 8);
+            
+            // Draw arrows pointing to bins
+            drawArrow(binMars.x + binMars.width/2, binMars.y - 50, 30, true);
+            drawArrow(binOther.x + binOther.width/2, binOther.y - 50, 30, true);
+            
+            // Draw bin openings
+            ctx.fillStyle = colors.darkBg;
+            ctx.fillRect(binMars.x + 15, binMars.y, binMars.width - 30, 20);
+            ctx.fillRect(binOther.x + 15, binOther.y, binOther.width - 30, 20);
+        }
+        
+        // Draw an arrow
+        function drawArrow(x, y, size, pointDown) {
+            ctx.fillStyle = colors.highlight;
+            ctx.beginPath();
+            if (pointDown) {
+                ctx.moveTo(x, y + size);
+                ctx.lineTo(x - size/2, y);
+                ctx.lineTo(x + size/2, y);
+            } else {
+                ctx.moveTo(x, y - size);
+                ctx.lineTo(x - size/2, y);
+                ctx.lineTo(x + size/2, y);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        // Draw planets on the conveyor
+        function drawPlanets() {
+            for (let i = 0; i < currentPlanets.length; i++) {
+                const planet = currentPlanets[i];
+                
+                // Draw planet circle
+                ctx.fillStyle = planet.planet.color;
+                ctx.beginPath();
+                ctx.arc(planet.x, planet.y, planet.size/2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Add pixelated detail
+                ctx.fillStyle = "#00000033"; // Semi-transparent dark
+                ctx.beginPath();
+                ctx.arc(planet.x + 5, planet.y + 5, planet.size/3, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Add highlight
+                ctx.fillStyle = "#FFFFFF55"; // Semi-transparent white
+                ctx.beginPath();
+                ctx.arc(planet.x - 8, planet.y - 8, planet.size/6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw planet name
+                ctx.fillStyle = colors.textLight;
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(planet.planet.name, planet.x, planet.y + planet.size/2 + 15);
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            // Background panel for question
+            ctx.fillStyle = colors.lightBg;
+            ctx.fillRect(150, 20, 500, 60);
+            ctx.strokeStyle = colors.highlight;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(150, 20, 500, 60);
+            
+            // Question text
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width/2, 50);
+        }
+        
+        // Draw game over message
+        function drawGameOver() {
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Outcome message
+            ctx.font = '36px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (gameState === 'correct') {
+                ctx.fillStyle = colors.correct;
+                ctx.fillText('CORRECT!', canvas.width/2, canvas.height/2 - 20);
+            } else {
+                ctx.fillStyle = colors.incorrect;
+                ctx.fillText('INCORRECT!', canvas.width/2, canvas.height/2 - 20);
+            }
+        }
+        
+        // Helper function: Check if point is inside rectangle
+        function pointInRect(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+        
+        // Helper function: Calculate distance between two points
+        function distance(x1, y1, x2, y2) {
+            return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+        }
+        
+        // Simple sound effect
+        function playSound(frequency, type) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            if (type === 'correct') {
+                oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(frequency * 1.5, audioCtx.currentTime + 0.1);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                setTimeout(() => {
+                    oscillator.stop();
+                }, 300);
+            } else {
+                oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(frequency * 0.5, audioCtx.currentTime + 0.2);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                setTimeout(() => {
+                    oscillator.stop();
+                }, 300);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Check for mobile device and resize canvas if needed
+        function resizeCanvas() {
+            if (window.innerWidth <= 600) { // Mobile detection
+                canvas.width = 360;
+                canvas.height = 640;
+                
+                // Adjust game elements for mobile
+                planetSize = 30;
+                conveyor = { x: 0, y: 380, width: 360, height: 50 };
+                binMars = { x: 60, y: 450, width: 80, height: 100, label: 'MARS' };
+                binOther = { x: 220, y: 450, width: 80, height: 100, label: 'NOT MARS' };
+            }
+        }
+        
+        // Initialize and start the game
+        resizeCanvas();
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

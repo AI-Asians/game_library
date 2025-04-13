@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Great Wall Parry Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 3px solid #555;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restartButton">Restart</button>
+    <script>
+        // Game Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Colors
+        const COLORS = {
+            background: '#0f0f3d',
+            player: '#c0c0c0',
+            trueObj: '#2bce2b',
+            falseObj: '#ce2b2b',
+            text: '#ffffff',
+            parryFlash: '#f7f754',
+            shield: '#4287f5',
+            parryZone: '#3a3a5e'
+        };
+
+        // Game state
+        let gameOver = false;
+        let playerParried = false;
+        let flashEffect = 0;
+        let questionText = "The Great Wall of China is visible from space.";
+        let correctAnswer = false; // The correct answer is "False"
+        
+        // Player (shield position)
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            radius: 30,
+            parryRadius: 60,
+            readyToParry: true,
+            parryAnimTimer: 0
+        };
+
+        // Objects (True/False)
+        const objects = [
+            {
+                text: "TRUE",
+                x: 0,
+                y: canvas.height / 3,
+                speed: 3.5,
+                size: 40,
+                color: COLORS.trueObj,
+                direction: { x: 1, y: 0.2 },
+                isCorrect: false,
+                pattern: "zigzag",
+                patternTimer: 0,
+                active: true
+            },
+            {
+                text: "FALSE",
+                x: canvas.width,
+                y: canvas.height / 2,
+                speed: 3,
+                size: 40,
+                color: COLORS.falseObj,
+                direction: { x: -1, y: 0.1 },
+                isCorrect: true,
+                pattern: "straight",
+                active: true
+            }
+        ];
+
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function playParrySound() {
+            playSound(880, 0.1);
+            setTimeout(() => playSound(1320, 0.1), 100);
+        }
+
+        function playMissSound() {
+            playSound(220, 0.3);
+        }
+
+        function playSuccessSound() {
+            playSound(440, 0.1, 'sine');
+            setTimeout(() => playSound(660, 0.1, 'sine'), 150);
+            setTimeout(() => playSound(880, 0.2, 'sine'), 300);
+        }
+
+        function playFailSound() {
+            playSound(330, 0.1, 'sawtooth');
+            setTimeout(() => playSound(220, 0.3, 'sawtooth'), 150);
+        }
+
+        // Draw functions
+        function drawBackground() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated grid pattern
+            ctx.fillStyle = '#0a0a25';
+            for (let x = 0; x < canvas.width; x += 20) {
+                for (let y = 0; y < canvas.height; y += 20) {
+                    if ((x + y) % 40 === 0) {
+                        ctx.fillRect(x, y, 10, 10);
+                    }
+                }
+            }
+            
+            // Draw parry zone
+            ctx.fillStyle = COLORS.parryZone;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.parryRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw question text
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText(questionText, canvas.width / 2, 50);
+            
+            // Draw instructions
+            ctx.font = '16px sans-serif';
+            ctx.fillText("Tap/click when the correct answer reaches the circle!", canvas.width / 2, 80);
+        }
+
+        function drawPlayer() {
+            // Draw shield/sword
+            ctx.save();
+            
+            // Draw parry circle
+            ctx.strokeStyle = player.parryAnimTimer > 0 ? COLORS.parryFlash : COLORS.shield;
+            ctx.lineWidth = player.parryAnimTimer > 0 ? 4 : 2;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.parryRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Draw shield
+            ctx.fillStyle = COLORS.player;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw shield details (pixelated style)
+            const shieldSize = 5;
+            ctx.fillStyle = COLORS.shield;
+            for (let i = -4; i <= 4; i++) {
+                for (let j = -4; j <= 4; j++) {
+                    if (i*i + j*j <= 16) {
+                        ctx.fillRect(
+                            player.x + i * shieldSize, 
+                            player.y + j * shieldSize, 
+                            shieldSize, shieldSize);
+                    }
+                }
+            }
+            
+            ctx.restore();
+        }
+
+        function drawObjects() {
+            objects.forEach(obj => {
+                if (!obj.active) return;
+                
+                // Draw pixel-style object
+                ctx.fillStyle = obj.color;
+                
+                // Draw pixelated square
+                const pixelSize = 4;
+                for (let i = -obj.size/2; i < obj.size/2; i += pixelSize) {
+                    for (let j = -obj.size/2; j < obj.size/2; j += pixelSize) {
+                        if (i*i + j*j <= (obj.size/2)*(obj.size/2)) {
+                            ctx.fillRect(obj.x + i, obj.y + j, pixelSize, pixelSize);
+                        }
+                    }
+                }
+                
+                // Draw text
+                ctx.font = 'bold 16px sans-serif';
+                ctx.fillStyle = COLORS.text;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(obj.text, obj.x, obj.y);
+            });
+        }
+
+        function drawFlashEffect() {
+            if (flashEffect > 0) {
+                ctx.globalAlpha = flashEffect;
+                ctx.fillStyle = COLORS.parryFlash;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalAlpha = 1;
+                flashEffect -= 0.05;
+            }
+        }
+
+        function drawGameOverScreen(success) {
+            ctx.fillStyle = success ? 'rgba(0, 100, 0, 0.7)' : 'rgba(100, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '40px sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (success) {
+                ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2 - 40);
+                ctx.font = '24px sans-serif';
+                ctx.fillText('The Great Wall of China is NOT visible from space', canvas.width / 2, canvas.height / 2 + 20);
+            } else {
+                ctx.fillText('Incorrect!', canvas.width / 2, canvas.height / 2 - 40);
+                ctx.font = '24px sans-serif';
+                ctx.fillText('The Great Wall of China is NOT visible from space', canvas.width / 2, canvas.height / 2 + 20);
+            }
+            
+            restartButton.style.display = 'block';
+        }
+
+        // Update functions
+        function updateObjects() {
+            objects.forEach(obj => {
+                if (!obj.active) return;
+                
+                // Update pattern movement
+                if (obj.pattern === "zigzag") {
+                    obj.patternTimer += 0.05;
+                    obj.direction.y = Math.sin(obj.patternTimer) * 0.5;
+                }
+                
+                // Move object
+                obj.x += obj.direction.x * obj.speed;
+                obj.y += obj.direction.y * obj.speed;
+                
+                // Check if object is in parry zone
+                const dist = Math.sqrt(Math.pow(obj.x - player.x, 2) + Math.pow(obj.y - player.y, 2));
+                
+                // Add visual cue when object is close to parry zone
+                if (dist < player.parryRadius + 40 && dist > player.parryRadius) {
+                    // Make object pulse slightly to indicate it's about to enter parry zone
+                    obj.size = 40 + 5 * Math.sin(Date.now() / 100);
+                }
+                
+                // Check if object has left the screen (miss)
+                if (obj.x < -obj.size || obj.x > canvas.width + obj.size || 
+                    obj.y < -obj.size || obj.y > canvas.height + obj.size) {
+                    // If correct object was missed
+                    if (obj.isCorrect && !gameOver) {
+                        gameOver = true;
+                        playFailSound();
+                        drawGameOverScreen(false);
+                    }
+                }
+            });
+        }
+
+        function checkParry() {
+            if (playerParried && player.readyToParry) {
+                playerParried = false;
+                player.readyToParry = false;
+                player.parryAnimTimer = 10;
+                
+                let parrySuccess = false;
+                let correctParry = false;
+                
+                objects.forEach(obj => {
+                    if (!obj.active) return;
+                    
+                    const dist = Math.sqrt(Math.pow(obj.x - player.x, 2) + Math.pow(obj.y - player.y, 2));
+                    if (dist <= player.parryRadius + obj.size/2) {
+                        parrySuccess = true;
+                        obj.active = false;
+                        
+                        if (obj.isCorrect) {
+                            correctParry = true;
+                            flashEffect = 1;
+                            playSuccessSound();
+                        } else {
+                            playFailSound();
+                        }
+                    }
+                });
+                
+                if (parrySuccess) {
+                    playParrySound();
+                    gameOver = true;
+                    drawGameOverScreen(correctParry);
+                } else {
+                    playMissSound();
+                    setTimeout(() => {
+                        player.readyToParry = true;
+                    }, 500);
+                }
+            }
+            
+            // Update parry animation timer
+            if (player.parryAnimTimer > 0) {
+                player.parryAnimTimer--;
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            if (gameOver) return;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background and game elements
+            drawBackground();
+            drawPlayer();
+            drawObjects();
+            drawFlashEffect();
+            
+            // Update game state
+            updateObjects();
+            checkParry();
+            
+            // Continue loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('click', function(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Scale coordinates if canvas is resized
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            // Check if click is near player (parry action)
+            playerParried = true;
+        });
+
+        restartButton.addEventListener('click', function() {
+            // Reset game state
+            gameOver = false;
+            playerParried = false;
+            flashEffect = 0;
+            player.readyToParry = true;
+            player.parryAnimTimer = 0;
+            
+            // Reset objects
+            objects[0].x = 0;
+            objects[0].y = canvas.height / 3;
+            objects[0].active = true;
+            
+            objects[1].x = canvas.width;
+            objects[1].y = canvas.height / 2;
+            objects[1].active = true;
+            
+            // Hide restart button
+            restartButton.style.display = 'none';
+            
+            // Start game loop
+            gameLoop();
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

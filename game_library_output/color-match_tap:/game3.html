@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Capital Quiz - Color Match</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      border: 4px solid #333;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // Set up canvas
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Detect if mobile
+    const isMobile = window.innerWidth <= 600;
+    
+    // Set canvas size based on device
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game constants
+    const COLORS = ['#FF4444', '#44FF44', '#4444FF', '#FFFF44'];
+    const COLOR_NAMES = ['RED', 'GREEN', 'BLUE', 'YELLOW'];
+    const ANSWERS = ['Paris', 'London', 'Berlin', 'Madrid'];
+    const CORRECT_ANSWER = 0; // Paris is correct (index 0)
+    
+    // Game state
+    let gameOver = false;
+    let shapes = [];
+    let targetColorIndex = 0;
+    let lastSwapTime = 0;
+    let timeRemaining = 100; // percentage
+    let restartBtn = {
+      x: canvas.width / 2 - 60,
+      y: canvas.height / 2 + 40,
+      width: 120,
+      height: 40
+    };
+    
+    // Sound generators
+    function beepCorrect() {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    function beepWrong() {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+      oscillator.frequency.setValueAtTime(100, audioCtx.currentTime + 0.2);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.4);
+    }
+    
+    function beepClick() {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+      
+      gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.1);
+    }
+    
+    // Initialize game
+    function initGame() {
+      gameOver = false;
+      timeRemaining = 100;
+      targetColorIndex = Math.floor(Math.random() * COLORS.length);
+      
+      // Create shapes
+      shapes = [];
+      const indices = [0, 1, 2, 3];
+      
+      // Calculate shape size and positions based on canvas
+      const shapeSize = isMobile ? 80 : 120;
+      const gap = isMobile ? 15 : 30;
+      const startY = canvas.height / 2 - gap / 2 - shapeSize;
+      
+      // Position shapes in a 2x2 grid
+      for (let i = 0; i < 4; i++) {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        
+        shapes.push({
+          x: canvas.width / 2 + (col === 0 ? -shapeSize - gap/2 : gap/2),
+          y: startY + (row === 0 ? 0 : shapeSize + gap),
+          size: shapeSize,
+          colorIndex: i,
+          answerIndex: indices[i],
+          flash: 0
+        });
+      }
+      
+      lastSwapTime = Date.now();
+    }
+    
+    // Draw a pixelated rectangle
+    function drawPixelRect(x, y, width, height, color) {
+      const pixelSize = 4;
+      ctx.fillStyle = color;
+      
+      for (let i = 0; i < width; i += pixelSize) {
+        for (let j = 0; j < height; j += pixelSize) {
+          ctx.fillRect(Math.floor(x + i), Math.floor(y + j), pixelSize, pixelSize);
+        }
+      }
+    }
+    
+    // Draw a shape with shimmer effect
+    function drawShape(shape) {
+      const shimmerIntensity = 30;
+      const baseColor = COLORS[shape.colorIndex];
+      
+      // Base shape
+      drawPixelRect(shape.x, shape.y, shape.size, shape.size, baseColor);
+      
+      // Add text
+      ctx.fillStyle = '#FFF';
+      ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ANSWERS[shape.answerIndex], shape.x + shape.size/2, shape.y + shape.size/2);
+      
+      // Add shimmer effect (random pixels)
+      ctx.fillStyle = '#FFFFFF';
+      for (let i = 0; i < 20; i++) {
+        const shimmerX = shape.x + Math.random() * shape.size;
+        const shimmerY = shape.y + Math.random() * shape.size;
+        ctx.fillRect(Math.floor(shimmerX), Math.floor(shimmerY), 4, 4);
+      }
+      
+      // Add flash effect if needed
+      if (shape.flash > 0) {
+        ctx.globalAlpha = shape.flash;
+        ctx.fillStyle = '#FFFFFF';
+        drawPixelRect(shape.x, shape.y, shape.size, shape.size, '#FFFFFF');
+        ctx.globalAlpha = 1.0;
+        shape.flash -= 0.05;
+      }
+    }
+    
+    // Draw the game
+    function draw() {
+      // Clear canvas with dark background
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw pixelated border
+      const borderWidth = 8;
+      drawPixelRect(0, 0, canvas.width, borderWidth, '#444'); // top
+      drawPixelRect(0, canvas.height - borderWidth, canvas.width, borderWidth, '#444'); // bottom
+      drawPixelRect(0, 0, borderWidth, canvas.height, '#444'); // left
+      drawPixelRect(canvas.width - borderWidth, 0, borderWidth, canvas.height, '#444'); // right
+      
+      if (!gameOver) {
+        // Draw question
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = `${isMobile ? 20 : 28}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('What is the capital of France?', canvas.width / 2, 60);
+        
+        // Draw target color instruction
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+        ctx.fillText(`Find the correct answer in ${COLOR_NAMES[targetColorIndex]}`, canvas.width / 2, 100);
+        
+        // Draw color example
+        const exampleSize = isMobile ? 30 : 40;
+        drawPixelRect(canvas.width / 2 - exampleSize / 2, 120, exampleSize, exampleSize, COLORS[targetColorIndex]);
+        
+        // Draw timer bar
+        const timerWidth = canvas.width - 40;
+        const timerHeight = 15;
+        drawPixelRect(20, 160, timerWidth, timerHeight, '#333');
+        drawPixelRect(20, 160, timerWidth * (timeRemaining / 100), timerHeight, '#888');
+        
+        // Draw shapes
+        shapes.forEach(shape => drawShape(shape));
+      } else {
+        // Game over screen
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = `${isMobile ? 28 : 36}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(lastResult, canvas.width / 2, canvas.height / 2 - 40);
+        
+        // Draw restart button
+        drawPixelRect(restartBtn.x, restartBtn.y, restartBtn.width, restartBtn.height, '#444');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+        ctx.fillText('Restart', canvas.width / 2, restartBtn.y + restartBtn.height / 2 + 6);
+      }
+    }
+    
+    // Update game logic
+    let lastResult = '';
+    function update() {
+      if (!gameOver) {
+        // Decrease time
+        timeRemaining -= 0.2;
+        if (timeRemaining <= 0) {
+          gameOver = true;
+          lastResult = 'Time\'s Up!';
+          beepWrong();
+        }
+        
+        // Swap shapes periodically
+        const currentTime = Date.now();
+        if (currentTime - lastSwapTime > 1500) { // swap every 1.5 seconds
+          const idx1 = Math.floor(Math.random() * shapes.length);
+          let idx2 = Math.floor(Math.random() * shapes.length);
+          while (idx1 === idx2) {
+            idx2 = Math.floor(Math.random() * shapes.length);
+          }
+          
+          // Swap positions
+          const tempX = shapes[idx1].x;
+          const tempY = shapes[idx1].y;
+          shapes[idx1].x = shapes[idx2].x;
+          shapes[idx1].y = shapes[idx2].y;
+          shapes[idx2].x = tempX;
+          shapes[idx2].y = tempY;
+          
+          beepClick();
+          lastSwapTime = currentTime;
+        }
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Handle clicks/taps
+    function handleClick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      if (!gameOver) {
+        // Check if a shape was clicked
+        for (let i = 0; i < shapes.length; i++) {
+          const shape = shapes[i];
+          if (clickX >= shape.x && clickX <= shape.x + shape.size &&
+              clickY >= shape.y && clickY <= shape.y + shape.size) {
+            
+            // Flash effect
+            shape.flash = 1.0;
+            
+            // Check if correct (both color and answer match)
+            if (shape.colorIndex === targetColorIndex && shape.answerIndex === CORRECT_ANSWER) {
+              gameOver = true;
+              lastResult = 'Correct!';
+              beepCorrect();
+            } else {
+              gameOver = true;
+              lastResult = 'Wrong!';
+              beepWrong();
+            }
+          }
+        }
+      } else {
+        // Check if restart button was clicked
+        if (clickX >= restartBtn.x && clickX <= restartBtn.x + restartBtn.width &&
+            clickY >= restartBtn.y && clickY <= restartBtn.y + restartBtn.height) {
+          beepClick();
+          initGame();
+        }
+      }
+    }
+    
+    // Event listeners
+    canvas.addEventListener('click', handleClick);
+    canvas.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      handleClick(e.touches[0]);
+    }, { passive: false });
+    
+    // Start the game
+    initGame();
+    gameLoop();
+  </script>
+</body>
+</html>

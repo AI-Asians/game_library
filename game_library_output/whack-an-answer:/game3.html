@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whack-An-Answer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            cursor: none;
+        }
+        #gameCanvas {
+            display: block;
+            background-color: #538d4e;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #ff6b6b;
+            color: white;
+            border: none;
+            font-family: sans-serif;
+            font-size: 16px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas dimensions based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        let gameOver = false;
+        let timeLeft = 10;
+        let holes = [];
+        let activeAnswers = [];
+        let cursorX = 0;
+        let cursorY = 0;
+        let cursorDown = false;
+        let lastSpawnTime = 0;
+        let particles = [];
+        let hammer = { x: 0, y: 0, swinging: false, angle: 0 };
+        
+        // Sound effects (simple beep sounds using AudioContext)
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(freq, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function playHitSound() {
+            playSound(220, 'square', 0.1);
+        }
+
+        function playCorrectSound() {
+            playSound(880, 'square', 0.2);
+            setTimeout(() => playSound(1320, 'square', 0.2), 100);
+        }
+
+        function playWrongSound() {
+            playSound(150, 'sawtooth', 0.3);
+        }
+
+        // Create holes
+        function setupHoles() {
+            const rows = isMobile ? 4 : 3;
+            const cols = isMobile ? 2 : 3;
+            const holeSize = isMobile ? 60 : 90;
+            const spacing = {
+                x: canvas.width / (cols + 1),
+                y: canvas.height / (rows + 2)
+            };
+            
+            holes = [];
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    holes.push({
+                        x: spacing.x * (col + 1),
+                        y: spacing.y * (row + 2),
+                        size: holeSize,
+                        active: false,
+                        cooldown: 0
+                    });
+                }
+            }
+        }
+
+        // Add a new active answer to a random vacant hole
+        function spawnAnswer() {
+            const vacantHoles = holes.filter(hole => !hole.active && hole.cooldown <= 0);
+            if (vacantHoles.length === 0) return;
+            
+            const randomHole = vacantHoles[Math.floor(Math.random() * vacantHoles.length)];
+            const randomAnswer = answers[Math.floor(Math.random() * answers.length)];
+            const difficulty = 1 - (timeLeft / 10); // Gets harder as time passes
+            const duration = 0.8 - (difficulty * 0.4); // Between 0.8 and 0.4 seconds
+            
+            randomHole.active = true;
+            
+            activeAnswers.push({
+                hole: randomHole,
+                answer: randomAnswer,
+                state: 0, // 0: rising, 1: visible, 2: going down
+                timer: 0,
+                maxTimer: duration * 60, // Convert seconds to frames at 60 FPS
+                hitEffectTimer: 0
+            });
+        }
+
+        // Create particles when an answer is hit
+        function createHitParticles(x, y, correct) {
+            const color = correct ? "#ffcc00" : "#ff6666";
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6 - 2,
+                    size: Math.random() * 6 + 2,
+                    color: color,
+                    life: Math.random() * 30 + 30
+                });
+            }
+        }
+
+        // Draw pixelated rounded rectangle
+        function drawPixelatedRoundRect(x, y, width, height, radius, color) {
+            ctx.fillStyle = color;
+            
+            // Main rectangle
+            ctx.fillRect(x + radius, y, width - radius * 2, height);
+            ctx.fillRect(x, y + radius, width, height - radius * 2);
+            
+            // Corners (simplified pixel art style)
+            ctx.fillRect(x, y + radius - 2, 2, 2);
+            ctx.fillRect(x + width - 2, y + radius - 2, 2, 2);
+            ctx.fillRect(x, y + height - radius, 2, 2);
+            ctx.fillRect(x + width - 2, y + height - radius, 2, 2);
+        }
+
+        // Draw a hole
+        function drawHole(hole) {
+            // Outer rim
+            ctx.fillStyle = "#3a2b1a";
+            ctx.beginPath();
+            ctx.ellipse(hole.x, hole.y, hole.size/1.5, hole.size/3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Inner hole
+            ctx.fillStyle = "#1a1410";
+            ctx.beginPath();
+            ctx.ellipse(hole.x, hole.y, hole.size/1.7, hole.size/3.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw an answer creature
+        function drawAnswerCreature(answer, x, y, size, progress) {
+            const centerX = x;
+            const visibleHeight = size * progress;
+            const centerY = y - visibleHeight/3;
+            
+            // Only draw the visible part based on progress
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(centerX - size/1.5, y - visibleHeight, size*1.5, visibleHeight);
+            ctx.clip();
+            
+            // Body
+            const bodyColor = answer.answer.correct ? "#4fbe6c" : "#d14f69";
+            ctx.fillStyle = bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(centerX, centerY, size/1.5, size/2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eyes
+            ctx.fillStyle = "#fff";
+            ctx.beginPath();
+            ctx.ellipse(centerX - size/4, centerY - size/8, size/8, size/8, 0, 0, Math.PI * 2);
+            ctx.ellipse(centerX + size/4, centerY - size/8, size/8, size/8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pupils
+            ctx.fillStyle = "#000";
+            ctx.beginPath();
+            ctx.ellipse(centerX - size/4, centerY - size/8, size/16, size/16, 0, 0, Math.PI * 2);
+            ctx.ellipse(centerX + size/4, centerY - size/8, size/16, size/16, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Mouth
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(centerX, centerY + size/6, size/4, size/8, 0, 0, Math.PI);
+            ctx.stroke();
+            
+            // Text background
+            const textWidth = ctx.measureText(answer.answer.text).width;
+            drawPixelatedRoundRect(
+                centerX - textWidth/2 - 10, 
+                centerY - size/2 - 30, 
+                textWidth + 20, 
+                30, 
+                5, 
+                bodyColor
+            );
+            
+            // Text
+            ctx.fillStyle = "#fff";
+            ctx.font = "16px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(answer.answer.text, centerX, centerY - size/2 - 15);
+            
+            ctx.restore();
+            
+            // Hit effect (when clicked)
+            if (answer.hitEffectTimer > 0) {
+                const effectSize = size * (1 + (1 - answer.hitEffectTimer / 20) * 0.5);
+                ctx.strokeStyle = answer.answer.correct ? "#ffcc00" : "#ff3333";
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, effectSize, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+
+        // Draw pixelated hammer cursor
+        function drawHammer() {
+            ctx.save();
+            
+            if (hammer.swinging) {
+                ctx.translate(hammer.x, hammer.y);
+                ctx.rotate(hammer.angle);
+                ctx.translate(-15, -40);
+            } else {
+                ctx.translate(cursorX - 15, cursorY - 15);
+            }
+            
+            // Handle
+            ctx.fillStyle = "#8B4513";
+            ctx.fillRect(10, 10, 8, 30);
+            
+            // Hammer head
+            ctx.fillStyle = "#444";
+            ctx.fillRect(2, 2, 24, 18);
+            ctx.fillStyle = "#777";
+            ctx.fillRect(4, 4, 20, 14);
+            
+            ctx.restore();
+        }
+
+        // Draw particles
+        function drawParticles() {
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            }
+        }
+
+        // Update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.1; // Gravity
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = "#538d4e";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid pattern
+            ctx.strokeStyle = "#4a8045";
+            ctx.lineWidth = 2;
+            const gridSize = 40;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw holes
+            for (let hole of holes) {
+                drawHole(hole);
+            }
+            
+            // Draw question box
+            ctx.fillStyle = "#333";
+            const questionY = isMobile ? 40 : 60;
+            drawPixelatedRoundRect(canvas.width/2 - 250, questionY, 500, 50, 10, "#333");
+            
+            // Draw question text
+            ctx.fillStyle = "#fff";
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(question, canvas.width/2, questionY + 25);
+            
+            // Draw timer box
+            drawPixelatedRoundRect(canvas.width - 80, 20, 60, 30, 5, "#333");
+            
+            // Draw timer
+            ctx.fillStyle = timeLeft <= 3 ? "#ff6666" : "#fff";
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(Math.ceil(timeLeft), canvas.width - 50, 35);
+            
+            // Draw active answers
+            for (const answer of activeAnswers) {
+                let progress = 0;
+                if (answer.state === 0) {
+                    // Rising animation
+                    progress = answer.timer / (answer.maxTimer * 0.3);
+                } else if (answer.state === 1) {
+                    // Fully visible
+                    progress = 1;
+                } else if (answer.state === 2) {
+                    // Going down animation
+                    progress = 1 - (answer.timer / (answer.maxTimer * 0.3));
+                }
+                drawAnswerCreature(answer, answer.hole.x, answer.hole.y, answer.hole.size, progress);
+            }
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw hammer cursor
+            drawHammer();
+            
+            // Draw game over message if applicable
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = "#fff";
+                ctx.font = "30px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText("Game Over", canvas.width/2, canvas.height/2 - 20);
+            }
+        }
+
+        // Update the game
+        function update() {
+            if (gameOver) return;
+            
+            // Update timer
+            timeLeft -= 1/60; // Assuming 60 FPS
+            if (timeLeft <= 0) {
+                timeLeft = 0;
+                endGame(false);
+                return;
+            }
+            
+            // Update hole cooldowns
+            for (let hole of holes) {
+                if (hole.cooldown > 0) {
+                    hole.cooldown--;
+                }
+            }
+            
+            // Spawn new answers
+            const now = Date.now();
+            const difficulty = 1 - (timeLeft / 10); // Gets harder as time passes
+            const spawnInterval = 1000 - (difficulty * 500); // Between 1000ms and 500ms
+            
+            if (now - lastSpawnTime > spawnInterval && activeAnswers.length < 3) {
+                lastSpawnTime = now;
+                spawnAnswer();
+            }
+            
+            // Update active answers
+            for (let i = activeAnswers.length - 1; i >= 0; i--) {
+                const answer = activeAnswers[i];
+                answer.timer++;
+                
+                if (answer.hitEffectTimer > 0) {
+                    answer.hitEffectTimer--;
+                }
+                
+                // State transitions
+                if (answer.state === 0 && answer.timer >= answer.maxTimer * 0.3) {
+                    answer.state = 1;
+                    answer.timer = 0;
+                } else if (answer.state === 1 && answer.timer >= answer.maxTimer * 0.4) {
+                    answer.state = 2;
+                    answer.timer = 0;
+                } else if (answer.state === 2 && answer.timer >= answer.maxTimer * 0.3) {
+                    answer.hole.active = false;
+                    answer.hole.cooldown = 30;
+                    activeAnswers.splice(i, 1);
+                }
+            }
+            
+            // Update hammer animation
+            if (hammer.swinging) {
+                hammer.angle += 0.2;
+                if (hammer.angle >= Math.PI/2) {
+                    hammer.swinging = false;
+                    hammer.angle = 0;
+                }
+            }
+            
+            // Update particles
+            updateParticles();
+        }
+
+        // Main game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle mouse/touch movement
+        function handlePointerMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            cursorX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            cursorY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        }
+
+        // Handle mouse/touch press
+        function handlePointerDown(e) {
+            if (gameOver) return;
+            
+            cursorDown = true;
+            
+            // Start hammer swing animation
+            hammer.x = cursorX;
+            hammer.y = cursorY;
+            hammer.swinging = true;
+            hammer.angle = 0;
+            
+            playHitSound();
+            
+            // Check if any answer was hit
+            for (const answer of activeAnswers) {
+                if (answer.state !== 1) continue; // Only fully visible answers can be hit
+                
+                const hole = answer.hole;
+                const dx = cursorX - hole.x;
+                const dy = cursorY - (hole.y - hole.size/3);
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                
+                if (distance < hole.size/1.5) {
+                    answer.hitEffectTimer = 20;
+                    createHitParticles(hole.x, hole.y - hole.size/3, answer.answer.correct);
+                    
+                    if (answer.answer.correct) {
+                        playCorrectSound();
+                        endGame(true);
+                    } else {
+                        playWrongSound();
+                        endGame(false);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Handle mouse/touch release
+        function handlePointerUp() {
+            cursorDown = false;
+        }
+
+        // End the game
+        function endGame(won) {
+            gameOver = true;
+            restartBtn.style.display = "block";
+        }
+
+        // Restart the game
+        function restartGame() {
+            gameOver = false;
+            timeLeft = 10;
+            activeAnswers = [];
+            particles = [];
+            lastSpawnTime = Date.now();
+            restartBtn.style.display = "none";
+            hammer.swinging = false;
+            hammer.angle = 0;
+            
+            setupHoles();
+        }
+
+        // Initialize the game
+        function init() {
+            setupHoles();
+            
+            // Event listeners
+            canvas.addEventListener('mousemove', handlePointerMove);
+            canvas.addEventListener('mousedown', handlePointerDown);
+            canvas.addEventListener('mouseup', handlePointerUp);
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                handlePointerMove(e.touches[0]);
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handlePointerDown(e.touches[0]);
+            });
+            canvas.addEventListener('touchend', handlePointerUp);
+            
+            restartBtn.addEventListener('click', restartGame);
+            
+            // Start game loop
+            gameLoop();
+        }
+
+        // Start the game when the page loads
+        window.onload = init;
+    </script>
+</body>
+</html>

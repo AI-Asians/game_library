@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Mixer Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #000;
+        }
+        canvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Sound effects
+        function beep(freq, duration, vol = 0.5) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = vol;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        }
+        
+        // Game colors (16 color palette)
+        const colors = {
+            background: '#222034',
+            text: '#ffffff',
+            cauldron: '#5a6988',
+            cauldronHighlight: '#8b9bb4',
+            cauldronShadow: '#323c50',
+            redDust: '#d95763',
+            iceCaps: '#c0cbdc',
+            rocks: '#8f563b',
+            gas: '#63c74d',
+            rings: '#ffe762',
+            blue: '#2ce8f5',
+            correctText: '#63c74d',
+            incorrectText: '#d95763',
+            buttonBg: '#5a6988',
+            buttonHover: '#8b9bb4',
+            buttonText: '#ffffff'
+        };
+        
+        // Game state
+        const state = {
+            ingredients: [
+                { id: 'redDust', name: 'Red Dust', color: colors.redDust, x: 100, y: 200, width: 60, height: 60, isDragging: false, inCauldron: false, correct: true },
+                { id: 'iceCaps', name: 'Ice Caps', color: colors.iceCaps, x: 200, y: 200, width: 60, height: 60, isDragging: false, inCauldron: false, correct: true },
+                { id: 'rocks', name: 'Rocky Terrain', color: colors.rocks, x: 300, y: 200, width: 60, height: 60, isDragging: false, inCauldron: false, correct: true },
+                { id: 'gas', name: 'Gas Clouds', color: colors.gas, x: 400, y: 200, width: 60, height: 60, isDragging: false, inCauldron: false, correct: false },
+                { id: 'rings', name: 'Rings', color: colors.rings, x: 500, y: 200, width: 60, height: 60, isDragging: false, inCauldron: false, correct: false },
+                { id: 'blue', name: 'Blue Water', color: colors.blue, x: 600, y: 200, width: 60, height: 60, isDragging: false, inCauldron: false, correct: false }
+            ],
+            cauldron: { x: 400, y: 400, width: 120, height: 100, bubbles: [] },
+            mixButton: { x: 400, y: 520, width: 120, height: 40, text: 'MIX', visible: false, hovered: false },
+            restartButton: { x: 400, y: 520, width: 120, height: 40, text: 'RESTART', visible: false, hovered: false },
+            mixing: false,
+            mixResult: null, // 'correct' or 'incorrect'
+            particles: [],
+            gameOver: false,
+            frames: 0
+        };
+        
+        // Mouse state
+        const mouse = {
+            x: 0,
+            y: 0,
+            dragging: false,
+            dragTarget: null
+        };
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+        }
+        
+        // Draw pixelated circle
+        function drawPixelCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            for(let dy = -radius; dy <= radius; dy++) {
+                for(let dx = -radius; dx <= radius; dx++) {
+                    if(dx*dx + dy*dy <= radius*radius) {
+                        ctx.fillRect(Math.round(x + dx), Math.round(y + dy), 1, 1);
+                    }
+                }
+            }
+        }
+        
+        // Draw pixelated text
+        function drawText(text, x, y, color, size = 24, align = 'center') {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = align;
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw ingredient
+        function drawIngredient(ingredient) {
+            drawPixelRect(ingredient.x - ingredient.width/2, ingredient.y - ingredient.height/2, 
+                          ingredient.width, ingredient.height, ingredient.color);
+            
+            // Draw ingredient icon details (pixelated style)
+            if (ingredient.id === 'redDust') {
+                for(let i = 0; i < 8; i++) {
+                    drawPixelCircle(
+                        ingredient.x - 15 + Math.random() * 30, 
+                        ingredient.y - 15 + Math.random() * 30, 
+                        2 + Math.random() * 3, 
+                        '#ff8977'
+                    );
+                }
+            } else if (ingredient.id === 'iceCaps') {
+                drawPixelRect(ingredient.x - 20, ingredient.y - 15, 40, 10, '#ffffff');
+                drawPixelRect(ingredient.x - 15, ingredient.y + 5, 30, 10, '#ffffff');
+            } else if (ingredient.id === 'rocks') {
+                drawPixelRect(ingredient.x - 15, ingredient.y - 10, 12, 10, '#a67c52');
+                drawPixelRect(ingredient.x + 5, ingredient.y - 5, 10, 15, '#a67c52');
+                drawPixelRect(ingredient.x - 5, ingredient.y + 5, 8, 8, '#a67c52');
+            } else if (ingredient.id === 'gas') {
+                for(let i = 0; i < 5; i++) {
+                    drawPixelCircle(
+                        ingredient.x - 15 + Math.random() * 30, 
+                        ingredient.y - 15 + Math.random() * 30, 
+                        5 + Math.random() * 3, 
+                        '#80e061'
+                    );
+                }
+            } else if (ingredient.id === 'rings') {
+                ctx.strokeStyle = '#ffeb8a';
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.ellipse(ingredient.x, ingredient.y, 25, 10, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            } else if (ingredient.id === 'blue') {
+                drawPixelCircle(ingredient.x, ingredient.y, 20, '#2ce8f5');
+                drawPixelCircle(ingredient.x - 10, ingredient.y - 5, 5, '#65faff');
+            }
+            
+            // Draw name below
+            drawText(ingredient.name, ingredient.x, ingredient.y + ingredient.height/2 + 20, colors.text, 12);
+        }
+        
+        // Draw cauldron
+        function drawCauldron() {
+            const c = state.cauldron;
+            
+            // Base cauldron
+            drawPixelRect(c.x - c.width/2, c.y - c.height/2, c.width, c.height, colors.cauldronShadow);
+            
+            // Highlight
+            ctx.fillStyle = colors.cauldronHighlight;
+            ctx.fillRect(c.x - c.width/2 + 5, c.y - c.height/2 + 5, c.width - 10, 15);
+            
+            // Draw contents if ingredients are in
+            const ingredientsInCauldron = state.ingredients.filter(i => i.inCauldron);
+            if (ingredientsInCauldron.length > 0) {
+                // Color blend based on ingredients
+                let redAmount = 0, greenAmount = 0, blueAmount = 0;
+                ingredientsInCauldron.forEach(ing => {
+                    if (ing.id === 'redDust') redAmount = 200;
+                    if (ing.id === 'gas') greenAmount = 200;
+                    if (ing.id === 'blue') blueAmount = 200;
+                    if (ing.id === 'iceCaps') { redAmount += 50; greenAmount += 50; blueAmount += 50; }
+                    if (ing.id === 'rings') { redAmount += 100; greenAmount += 100; }
+                    if (ing.id === 'rocks') { redAmount += 80; greenAmount += 50; }
+                });
+                
+                // Cap values
+                redAmount = Math.min(255, redAmount);
+                greenAmount = Math.min(255, greenAmount);
+                blueAmount = Math.min(255, blueAmount);
+                
+                const mixColor = `rgb(${redAmount}, ${greenAmount}, ${blueAmount})`;
+                ctx.fillStyle = mixColor;
+                ctx.fillRect(c.x - c.width/2 + 10, c.y - c.height/2 + 25, c.width - 20, c.height - 35);
+                
+                // Add bubbles
+                if (Math.random() < 0.2) {
+                    state.cauldron.bubbles.push({
+                        x: c.x - c.width/3 + Math.random() * (c.width - 20),
+                        y: c.y + c.height/4,
+                        radius: 2 + Math.random() * 5,
+                        speed: 0.5 + Math.random() * 2,
+                        color: mixColor
+                    });
+                }
+                
+                // Update and draw bubbles
+                for (let i = 0; i < state.cauldron.bubbles.length; i++) {
+                    const bubble = state.cauldron.bubbles[i];
+                    bubble.y -= bubble.speed;
+                    
+                    // Remove bubbles that exit the cauldron
+                    if (bubble.y < c.y - c.height/2 + 20) {
+                        state.cauldron.bubbles.splice(i, 1);
+                        i--;
+                        continue;
+                    }
+                    
+                    drawPixelCircle(bubble.x, bubble.y, bubble.radius, bubble.color);
+                }
+            }
+            
+            // Draw cauldron rim (after contents)
+            ctx.strokeStyle = colors.cauldron;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.ellipse(c.x, c.y - c.height/2 + 10, c.width/2, 15, 0, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        
+        // Draw button
+        function drawButton(button) {
+            if (!button.visible) return;
+            
+            const color = button.hovered ? colors.buttonHover : colors.buttonBg;
+            drawPixelRect(button.x - button.width/2, button.y - button.height/2, 
+                         button.width, button.height, color);
+            drawText(button.text, button.x, button.y + 8, colors.buttonText, 20);
+        }
+        
+        // Draw mix particles
+        function drawParticles() {
+            for (let i = 0; i < state.particles.length; i++) {
+                const p = state.particles[i];
+                drawPixelCircle(p.x, p.y, p.size, p.color);
+                
+                // Update particle
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                // Remove dead particles
+                if (p.life <= 0) {
+                    state.particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+        
+        // Draw result
+        function drawResult() {
+            if (state.mixResult === 'correct') {
+                // Draw Mars
+                drawPixelCircle(400, 300, 80, colors.redDust);
+                
+                // Simple crater details
+                drawPixelCircle(370, 270, 15, '#ba4a56');
+                drawPixelCircle(430, 330, 20, '#ba4a56');
+                
+                // Ice caps
+                drawPixelCircle(400, 230, 15, colors.iceCaps);
+                drawPixelCircle(400, 370, 15, colors.iceCaps);
+                
+                drawText("Correct! That's Mars, the Red Planet!", 400, 150, colors.correctText, 24);
+            } else if (state.mixResult === 'incorrect') {
+                // Draw unknown planet
+                const c = state.cauldron;
+                const ingredientsInCauldron = state.ingredients.filter(i => i.inCauldron);
+                
+                // Color blend based on ingredients
+                let redAmount = 0, greenAmount = 0, blueAmount = 0;
+                ingredientsInCauldron.forEach(ing => {
+                    if (ing.id === 'redDust') redAmount = 200;
+                    if (ing.id === 'gas') greenAmount = 200;
+                    if (ing.id === 'blue') blueAmount = 200;
+                    if (ing.id === 'iceCaps') { redAmount += 50; greenAmount += 50; blueAmount += 50; }
+                    if (ing.id === 'rings') { redAmount += 100; greenAmount += 100; }
+                    if (ing.id === 'rocks') { redAmount += 80; greenAmount += 50; }
+                });
+                
+                // Cap values
+                redAmount = Math.min(255, redAmount);
+                greenAmount = Math.min(255, greenAmount);
+                blueAmount = Math.min(255, blueAmount);
+                
+                const mixColor = `rgb(${redAmount}, ${greenAmount}, ${blueAmount})`;
+                drawPixelCircle(400, 300, 80, mixColor);
+                
+                drawText("Incorrect! That's not Mars!", 400, 150, colors.incorrectText, 24);
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawText("Which planet is known as the Red Planet?", 400, 60, colors.text, 24);
+            drawText("Drag ingredients to the mixing pot", 400, 90, colors.text, 18);
+            
+            // Draw cauldron
+            drawCauldron();
+            
+            // Draw ingredients
+            state.ingredients.forEach(ingredient => {
+                if (!ingredient.inCauldron) {
+                    drawIngredient(ingredient);
+                }
+            });
+            
+            // Draw mix button
+            drawButton(state.mixButton);
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw result if mixing is complete
+            if (state.mixResult) {
+                drawResult();
+                drawButton(state.restartButton);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            state.frames++;
+            
+            // Update mix button visibility
+            const ingredientsInCauldron = state.ingredients.filter(i => i.inCauldron);
+            state.mixButton.visible = !state.mixResult && ingredientsInCauldron.length > 0;
+            
+            // If mixing, create particles
+            if (state.mixing) {
+                for (let i = 0; i < 3; i++) {
+                    const c = state.cauldron;
+                    state.particles.push({
+                        x: c.x - c.width/3 + Math.random() * c.width/1.5,
+                        y: c.y - c.height/3 + Math.random() * c.height/1.5,
+                        vx: -2 + Math.random() * 4,
+                        vy: -4 + Math.random() * 2,
+                        size: 2 + Math.random() * 4,
+                        color: `hsl(${Math.random() * 360}, 80%, 60%)`,
+                        life: 30 + Math.random() * 30
+                    });
+                }
+                
+                // End mixing after 1 second
+                if (state.frames % 60 === 0) {
+                    state.mixing = false;
+                    
+                    // Check ingredients for correct mix
+                    const correctIngredients = state.ingredients.filter(i => i.inCauldron && i.correct);
+                    const incorrectIngredients = state.ingredients.filter(i => i.inCauldron && !i.correct);
+                    
+                    if (correctIngredients.length >= 3 && incorrectIngredients.length === 0) {
+                        state.mixResult = 'correct';
+                        beep(330, 100, 0.3);
+                        beep(392, 100, 0.3);
+                        beep(523, 200, 0.3);
+                    } else {
+                        state.mixResult = 'incorrect';
+                        beep(330, 100, 0.3);
+                        beep(262, 300, 0.3);
+                    }
+                    
+                    // Show restart button
+                    state.restartButton.visible = true;
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize
+        function init() {
+            // Start game loop
+            gameLoop();
+            
+            // Add event listeners
+            canvas.addEventListener('mousedown', onMouseDown);
+            canvas.addEventListener('mousemove', onMouseMove);
+            canvas.addEventListener('mouseup', onMouseUp);
+            
+            // For mobile
+            canvas.addEventListener('touchstart', onTouchStart);
+            canvas.addEventListener('touchmove', onTouchMove);
+            canvas.addEventListener('touchend', onTouchEnd);
+        }
+        
+        // Mouse/Touch handlers
+        function onMouseDown(e) {
+            updateMousePosition(e);
+            
+            // Check for button click
+            if (isInside(mouse, state.mixButton) && state.mixButton.visible) {
+                startMixing();
+                return;
+            }
+            
+            if (isInside(mouse, state.restartButton) && state.restartButton.visible) {
+                restartGame();
+                return;
+            }
+            
+            // Check if clicking on an ingredient
+            for (let i = state.ingredients.length - 1; i >= 0; i--) {
+                const ingredient = state.ingredients[i];
+                if (!ingredient.inCauldron && isInside(mouse, ingredient)) {
+                    ingredient.isDragging = true;
+                    mouse.dragging = true;
+                    mouse.dragTarget = ingredient;
+                    
+                    // Move selected ingredient to end of array to draw on top
+                    state.ingredients.splice(i, 1);
+                    state.ingredients.push(ingredient);
+                    
+                    beep(200, 50, 0.2);
+                    return;
+                }
+            }
+        }
+        
+        function onMouseMove(e) {
+            updateMousePosition(e);
+            
+            // Update button hover states
+            state.mixButton.hovered = isInside(mouse, state.mixButton) && state.mixButton.visible;
+            state.restartButton.hovered = isInside(mouse, state.restartButton) && state.restartButton.visible;
+            
+            // Move dragged ingredient
+            if (mouse.dragging && mouse.dragTarget) {
+                mouse.dragTarget.x = mouse.x;
+                mouse.dragTarget.y = mouse.y;
+            }
+        }
+        
+        function onMouseUp() {
+            if (mouse.dragging && mouse.dragTarget) {
+                // Check if ingredient is over cauldron
+                if (isOverCauldron(mouse.dragTarget)) {
+                    mouse.dragTarget.inCauldron = true;
+                    beep(300, 100, 0.3);
+                } else {
+                    // Put back to original position
+                    const idx = state.ingredients.indexOf(mouse.dragTarget);
+                    if (idx !== -1) {
+                        mouse.dragTarget.x = 100 + (idx * 100);
+                        mouse.dragTarget.y = 200;
+                    }
+                }
+                
+                mouse.dragTarget.isDragging = false;
+                mouse.dragging = false;
+                mouse.dragTarget = null;
+            }
+        }
+        
+        // Touch handlers
+        function onTouchStart(e) {
+            e.preventDefault();
+            if (e.touches.length > 0) {
+                convertTouchToMouse(e.touches[0]);
+                onMouseDown(e);
+            }
+        }
+        
+        function onTouchMove(e) {
+            e.preventDefault();
+            if (e.touches.length > 0) {
+                convertTouchToMouse(e.touches[0]);
+                onMouseMove(e);
+            }
+        }
+        
+        function onTouchEnd(e) {
+            e.preventDefault();
+            onMouseUp();
+        }
+        
+        // Helper functions
+        function updateMousePosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        }
+        
+        function convertTouchToMouse(touch) {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = touch.clientX - rect.left;
+            mouse.y = touch.clientY - rect.top;
+        }
+        
+        function isInside(pos, rect) {
+            return pos.x > rect.x - rect.width/2 && 
+                   pos.x < rect.x + rect.width/2 && 
+                   pos.y > rect.y - rect.height/2 && 
+                   pos.y < rect.y + rect.height/2;
+        }
+        
+        function isOverCauldron(ingredient) {
+            const c = state.cauldron;
+            return Math.abs(ingredient.x - c.x) < c.width/2 && 
+                   Math.abs(ingredient.y - c.y) < c.height/2;
+        }
+        
+        function startMixing() {
+            state.mixing = true;
+            state.mixButton.visible = false;
+            beep(262, 100, 0.3);
+            beep(330, 100, 0.3);
+        }
+        
+        function restartGame() {
+            // Reset all ingredients
+            state.ingredients.forEach((ingredient, idx) => {
+                ingredient.x = 100 + (idx * 100);
+                ingredient.y = 200;
+                ingredient.isDragging = false;
+                ingredient.inCauldron = false;
+            });
+            
+            // Reset state
+            state.cauldron.bubbles = [];
+            state.mixing = false;
+            state.mixResult = null;
+            state.particles = [];
+            state.restartButton.visible = false;
+            
+            beep(330, 100, 0.3);
+        }
+        
+        // Auto-adjust canvas size for mobile
+        function adjustCanvasSize() {
+            if (window.innerWidth <= 600) {
+                canvas.width = 360;
+                canvas.height = 640;
+                
+                // Reposition elements for mobile
+                state.cauldron.x = 180;
+                state.mixButton.x = 180;
+                state.restartButton.x = 180;
+                
+                // Rearrange ingredients in 2 rows
+                state.ingredients.forEach((ingredient, idx) => {
+                    const row = Math.floor(idx / 3);
+                    const col = idx % 3;
+                    ingredient.x = 90 + (col * 90);
+                    ingredient.y = 200 + (row * 80);
+                });
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+                
+                // Reset positions for web
+                state.cauldron.x = 400;
+                state.mixButton.x = 400;
+                state.restartButton.x = 400;
+                
+                // Reset ingredient positions
+                state.ingredients.forEach((ingredient, idx) => {
+                    ingredient.x = 100 + (idx * 100);
+                    ingredient.y = 200;
+                });
+            }
+        }
+        
+        // Initial adjustment and listener for resize
+        adjustCanvasSize();
+        window.addEventListener('resize', adjustCanvasSize);
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

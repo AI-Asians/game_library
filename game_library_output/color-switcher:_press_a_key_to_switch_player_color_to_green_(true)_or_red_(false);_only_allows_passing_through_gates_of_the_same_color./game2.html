@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Color Switcher - True or False?</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        .container {
+            position: relative;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background: #333;
+            color: white;
+            border: none;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <button id="restartButton">Restart</button>
+    </div>
+
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Colors
+        const colors = {
+            bg: '#0f0f2d',
+            player: {
+                true: '#3adb76',  // Green for True
+                false: '#db3a3a', // Red for False
+                outline: '#ffffff'
+            },
+            gates: {
+                true: '#32b964',  // Green for True
+                false: '#b93232', // Red for False
+                outline: '#ffffff'
+            },
+            text: '#ffffff',
+            textShadow: '#000000'
+        };
+
+        // Game state
+        let gameState = {
+            player: {
+                x: 100,
+                y: canvas.height / 2,
+                size: 30,
+                speed: 4,
+                isTrue: true, // Start with true state
+                particles: []
+            },
+            gates: {
+                trueGate: {
+                    x: canvas.width - 200,
+                    y: canvas.height / 3,
+                    width: 60,
+                    height: 150
+                },
+                falseGate: {
+                    x: canvas.width - 200,
+                    y: canvas.height * 2/3,
+                    width: 60,
+                    height: 150
+                }
+            },
+            question: "Water boils at 100 degrees Celsius at sea level.",
+            answer: true, // The correct answer is true
+            gameOver: false,
+            result: null // true for correct, false for incorrect
+        };
+
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'switch':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(260, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(520, audioContext.currentTime + 0.15);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'bounce':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+            }
+        }
+
+        // Create particles
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                gameState.player.particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 6 + 2,
+                    speedX: (Math.random() - 0.5) * 6,
+                    speedY: (Math.random() - 0.5) * 6,
+                    color: color,
+                    life: 20
+                });
+            }
+        }
+
+        // Update particles
+        function updateParticles() {
+            for (let i = gameState.player.particles.length - 1; i >= 0; i--) {
+                const p = gameState.player.particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    gameState.player.particles.splice(i, 1);
+                }
+            }
+        }
+
+        // Draw particles
+        function drawParticles() {
+            gameState.player.particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.round(p.x - p.size/2),
+                    Math.round(p.y - p.size/2),
+                    Math.round(p.size),
+                    Math.round(p.size)
+                );
+            });
+        }
+
+        // Draw player
+        function drawPlayer() {
+            const playerColor = gameState.player.isTrue ? colors.player.true : colors.player.false;
+            
+            // Main body (pixelated square)
+            ctx.fillStyle = playerColor;
+            ctx.fillRect(
+                Math.round(gameState.player.x - gameState.player.size/2),
+                Math.round(gameState.player.y - gameState.player.size/2),
+                gameState.player.size,
+                gameState.player.size
+            );
+            
+            // Pixel outline
+            ctx.strokeStyle = colors.player.outline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                Math.round(gameState.player.x - gameState.player.size/2),
+                Math.round(gameState.player.y - gameState.player.size/2),
+                gameState.player.size,
+                gameState.player.size
+            );
+            
+            // Eyes (simple pixel dots)
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(
+                Math.round(gameState.player.x - gameState.player.size/4),
+                Math.round(gameState.player.y - gameState.player.size/6),
+                4,
+                4
+            );
+            ctx.fillRect(
+                Math.round(gameState.player.x + gameState.player.size/8),
+                Math.round(gameState.player.y - gameState.player.size/6),
+                4,
+                4
+            );
+        }
+
+        // Draw gates
+        function drawGates() {
+            // True gate
+            ctx.fillStyle = colors.gates.true;
+            ctx.fillRect(
+                gameState.gates.trueGate.x,
+                gameState.gates.trueGate.y,
+                gameState.gates.trueGate.width,
+                gameState.gates.trueGate.height
+            );
+            
+            // Pixel outline for true gate
+            ctx.strokeStyle = colors.gates.outline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                gameState.gates.trueGate.x,
+                gameState.gates.trueGate.y,
+                gameState.gates.trueGate.width,
+                gameState.gates.trueGate.height
+            );
+            
+            // True text
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('TRUE', 
+                gameState.gates.trueGate.x + gameState.gates.trueGate.width/2,
+                gameState.gates.trueGate.y + gameState.gates.trueGate.height/2 + 6
+            );
+            
+            // False gate
+            ctx.fillStyle = colors.gates.false;
+            ctx.fillRect(
+                gameState.gates.falseGate.x,
+                gameState.gates.falseGate.y,
+                gameState.gates.falseGate.width,
+                gameState.gates.falseGate.height
+            );
+            
+            // Pixel outline for false gate
+            ctx.strokeStyle = colors.gates.outline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                gameState.gates.falseGate.x,
+                gameState.gates.falseGate.y,
+                gameState.gates.falseGate.width,
+                gameState.gates.falseGate.height
+            );
+            
+            // False text
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('FALSE', 
+                gameState.gates.falseGate.x + gameState.gates.falseGate.width/2,
+                gameState.gates.falseGate.y + gameState.gates.falseGate.height/2 + 6
+            );
+        }
+
+        // Draw UI and text
+        function drawUI() {
+            // Question
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // Text shadow for better readability
+            ctx.fillStyle = colors.textShadow;
+            ctx.fillText(gameState.question, canvas.width/2 + 2, 50 + 2);
+            
+            ctx.fillStyle = colors.text;
+            ctx.fillText(gameState.question, canvas.width/2, 50);
+            
+            // Instructions
+            ctx.font = '18px sans-serif';
+            ctx.fillStyle = colors.textShadow;
+            ctx.fillText('Press SPACE to switch colors', canvas.width/2 + 1, canvas.height - 30 + 1);
+            
+            ctx.fillStyle = colors.text;
+            ctx.fillText('Press SPACE to switch colors', canvas.width/2, canvas.height - 30);
+            
+            // Current state indicator
+            ctx.font = '22px sans-serif';
+            ctx.fillStyle = gameState.player.isTrue ? colors.player.true : colors.player.false;
+            ctx.fillText(`Current: ${gameState.player.isTrue ? 'TRUE' : 'FALSE'}`, 120, 30);
+            
+            // Game over message
+            if (gameState.gameOver) {
+                ctx.font = '36px sans-serif';
+                ctx.fillStyle = gameState.result ? '#3adb76' : '#db3a3a';
+                ctx.fillText(
+                    gameState.result ? 'CORRECT!' : 'WRONG!', 
+                    canvas.width/2, 
+                    canvas.height/2 - 50
+                );
+                
+                restartButton.style.display = 'block';
+            }
+        }
+
+        // Check collision between two rectangles
+        function checkCollision(rect1, rect2) {
+            return (
+                rect1.x < rect2.x + rect2.width &&
+                rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height &&
+                rect1.y + rect1.height > rect2.y
+            );
+        }
+
+        // Check gate collisions
+        function checkGateCollisions() {
+            // Create player hitbox
+            const playerHitbox = {
+                x: gameState.player.x - gameState.player.size/2,
+                y: gameState.player.y - gameState.player.size/2,
+                width: gameState.player.size,
+                height: gameState.player.size
+            };
+            
+            // Check true gate collision
+            if (checkCollision(playerHitbox, gameState.gates.trueGate)) {
+                if (gameState.player.isTrue) {
+                    // Correct passage through true gate
+                    gameState.gameOver = true;
+                    gameState.result = gameState.answer === true;
+                    createParticles(gameState.player.x, gameState.player.y, colors.player.true, 30);
+                    playSound('correct');
+                } else {
+                    // Bounce off the gate
+                    gameState.player.x -= gameState.player.speed * 3;
+                    createParticles(gameState.player.x + gameState.player.size/2, gameState.player.y, colors.player.false, 10);
+                    playSound('bounce');
+                }
+            }
+            
+            // Check false gate collision
+            if (checkCollision(playerHitbox, gameState.gates.falseGate)) {
+                if (!gameState.player.isTrue) {
+                    // Correct passage through false gate
+                    gameState.gameOver = true;
+                    gameState.result = gameState.answer === false;
+                    createParticles(gameState.player.x, gameState.player.y, colors.player.false, 30);
+                    playSound(gameState.result ? 'correct' : 'wrong');
+                } else {
+                    // Bounce off the gate
+                    gameState.player.x -= gameState.player.speed * 3;
+                    createParticles(gameState.player.x + gameState.player.size/2, gameState.player.y, colors.player.true, 10);
+                    playSound('bounce');
+                }
+            }
+        }
+
+        // Update function
+        function update() {
+            if (!gameState.gameOver) {
+                // Move player
+                gameState.player.x += gameState.player.speed;
+                
+                // Check for gate collisions
+                checkGateCollisions();
+            }
+            
+            // Update particles
+            updateParticles();
+        }
+
+        // Render function
+        function render() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawGates();
+            drawPlayer();
+            drawParticles();
+            drawUI();
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Key handler
+        function handleKeyDown(e) {
+            if (e.code === 'Space' && !gameState.gameOver) {
+                gameState.player.isTrue = !gameState.player.isTrue;
+                createParticles(
+                    gameState.player.x,
+                    gameState.player.y,
+                    gameState.player.isTrue ? colors.player.true : colors.player.false,
+                    15
+                );
+                playSound('switch');
+            }
+        }
+
+        // Restart game
+        function restartGame() {
+            gameState.player.x = 100;
+            gameState.player.y = canvas.height / 2;
+            gameState.player.isTrue = true;
+            gameState.player.particles = [];
+            gameState.gameOver = false;
+            gameState.result = null;
+            restartButton.style.display = 'none';
+        }
+
+        // Event Listeners
+        window.addEventListener('keydown', handleKeyDown);
+        restartButton.addEventListener('click', restartGame);
+
+        // Check if we need to resize for mobile
+        function checkMobileSize() {
+            if (window.innerWidth <= 500) {
+                canvas.width = 360;
+                canvas.height = 640;
+                
+                // Adjust game elements for mobile
+                gameState.player.y = canvas.height / 2;
+                gameState.gates.trueGate.x = canvas.width - 100;
+                gameState.gates.trueGate.y = canvas.height / 3;
+                gameState.gates.falseGate.x = canvas.width - 100;
+                gameState.gates.falseGate.y = canvas.height * 2/3;
+            }
+        }
+
+        // Initialize game
+        window.onload = function() {
+            checkMobileSize();
+            gameLoop();
+        };
+    </script>
+</body>
+</html>

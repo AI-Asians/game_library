@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Defense</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background: #555;
+            color: white;
+            border: 4px solid #777;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">RESTART</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        let towerHealth = 3;
+        
+        // Colors - limited 8-bit palette
+        const COLORS = {
+            bg: '#538d6f',
+            path: '#a28569',
+            tower: '#6d7eaf',
+            towerDamaged: '#af6d6d',
+            towerRoof: '#d13636',
+            question: '#ffffff',
+            correctEnemy: '#37946e',
+            wrongEnemy1: '#b55088',
+            wrongEnemy2: '#764abc',
+            wrongEnemy3: '#bc4a4a',
+            textBg: '#333333',
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.5);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4
+                oscillator.frequency.setValueAtTime(415.3, audioCtx.currentTime + 0.1); // Ab4
+                oscillator.frequency.setValueAtTime(392, audioCtx.currentTime + 0.2); // G4
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'damage') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(110, audioCtx.currentTime); // A2
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+        
+        // Enemy class
+        class Enemy {
+            constructor(x, y, text, isCorrect, color) {
+                this.x = x;
+                this.y = y;
+                this.width = 50;
+                this.height = 50;
+                this.text = text;
+                this.isCorrect = isCorrect;
+                this.color = color;
+                this.speed = 1.5;
+                this.path = generatePath();
+                this.pathIndex = 0;
+                this.frame = 0;
+                this.frameCount = 0;
+                this.selected = false;
+            }
+            
+            update() {
+                if (this.selected) return;
+                
+                // Animation frame counter
+                this.frameCount++;
+                if (this.frameCount > 10) {
+                    this.frame = (this.frame + 1) % 4;
+                    this.frameCount = 0;
+                }
+                
+                // Follow path
+                if (this.pathIndex < this.path.length - 1) {
+                    const targetX = this.path[this.pathIndex + 1].x;
+                    const targetY = this.path[this.pathIndex + 1].y;
+                    
+                    const dx = targetX - this.x;
+                    const dy = targetY - this.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < this.speed) {
+                        this.pathIndex++;
+                    } else {
+                        this.x += (dx / distance) * this.speed;
+                        this.y += (dy / distance) * this.speed;
+                    }
+                } else {
+                    // Reached the tower
+                    if (this.isCorrect) {
+                        towerHealth = 0;
+                        gameOver = true;
+                        playSound('damage');
+                    }
+                }
+            }
+            
+            draw() {
+                // Draw enemy as 8-bit character
+                ctx.fillStyle = this.color;
+                
+                // Basic enemy shape with animation
+                ctx.fillRect(this.x - this.width/2, this.y - this.height/2, this.width, this.height);
+                
+                // Eyes
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(this.x - 15, this.y - 10, 8, 8);
+                ctx.fillRect(this.x + 7, this.y - 10, 8, 8);
+                
+                // Legs with walking animation
+                const legOffset = [0, 4, 0, -4][this.frame];
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(this.x - 15, this.y + 25 + legOffset, 10, 10);
+                ctx.fillRect(this.x + 5, this.y + 25 - legOffset, 10, 10);
+                
+                // Add answer text
+                ctx.fillStyle = COLORS.textBg;
+                ctx.fillRect(this.x - 30, this.y - this.height/2 - 25, 60, 20);
+                
+                ctx.fillStyle = 'white';
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.text, this.x, this.y - this.height/2 - 10);
+                
+                // Show selection effect
+                if (this.selected) {
+                    ctx.strokeStyle = this.isCorrect ? '#00ff00' : '#ff0000';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(this.x - this.width/2 - 5, this.y - this.height/2 - 5, this.width + 10, this.height + 10);
+                }
+            }
+            
+            contains(x, y) {
+                return x >= this.x - this.width/2 && 
+                       x <= this.x + this.width/2 && 
+                       y >= this.y - this.height/2 && 
+                       y <= this.y + this.height/2;
+            }
+        }
+        
+        // Generate path from start to tower
+        function generatePath() {
+            const path = [];
+            const startX = 0;
+            const startY = canvas.height / 2;
+            const endX = canvas.width - 80;
+            const endY = canvas.height / 2;
+            
+            // Simple zigzag path
+            path.push({x: startX, y: startY});
+            path.push({x: canvas.width * 0.25, y: canvas.height * 0.3});
+            path.push({x: canvas.width * 0.5, y: canvas.height * 0.7});
+            path.push({x: canvas.width * 0.75, y: canvas.height * 0.4});
+            path.push({x: endX, y: endY});
+            
+            return path;
+        }
+        
+        // Create enemies with answer options
+        const enemies = [
+            new Enemy(-150, canvas.height / 2, 'Paris', true, COLORS.correctEnemy),
+            new Enemy(-300, canvas.height / 2, 'London', false, COLORS.wrongEnemy1),
+            new Enemy(-450, canvas.height / 2, 'Berlin', false, COLORS.wrongEnemy2),
+            new Enemy(-600, canvas.height / 2, 'Rome', false, COLORS.wrongEnemy3)
+        ];
+        
+        // Draw tower at end of path
+        function drawTower() {
+            const towerX = canvas.width - 50;
+            const towerY = canvas.height / 2;
+            const towerWidth = 80;
+            const towerHeight = 120;
+            
+            // Tower base
+            ctx.fillStyle = towerHealth === 3 ? COLORS.tower : COLORS.towerDamaged;
+            ctx.fillRect(towerX - towerWidth/2, towerY - towerHeight/2, towerWidth, towerHeight);
+            
+            // Tower roof
+            ctx.fillStyle = COLORS.towerRoof;
+            ctx.beginPath();
+            ctx.moveTo(towerX - towerWidth/2 - 10, towerY - towerHeight/2);
+            ctx.lineTo(towerX + towerWidth/2 + 10, towerY - towerHeight/2);
+            ctx.lineTo(towerX, towerY - towerHeight/2 - 30);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Tower windows
+            ctx.fillStyle = '#000000';
+            if (towerHealth > 0) ctx.fillRect(towerX - 25, towerY - 30, 15, 20);
+            if (towerHealth > 1) ctx.fillRect(towerX + 10, towerY - 30, 15, 20);
+            if (towerHealth > 2) ctx.fillRect(towerX - 10, towerY + 10, 20, 25);
+            
+            // Health indicator
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`HP: ${towerHealth}`, towerX, towerY + towerHeight/2 + 20);
+        }
+        
+        // Draw game path
+        function drawPath() {
+            const path = generatePath();
+            
+            ctx.strokeStyle = COLORS.path;
+            ctx.lineWidth = 40;
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y);
+            
+            for (let i = 1; i < path.length; i++) {
+                ctx.lineTo(path[i].x, path[i].y);
+            }
+            
+            ctx.stroke();
+            
+            // Draw path border
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y - 20);
+            for (let i = 1; i < path.length; i++) {
+                ctx.lineTo(path[i].x, path[i].y - 20);
+            }
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y + 20);
+            for (let i = 1; i < path.length; i++) {
+                ctx.lineTo(path[i].x, path[i].y + 20);
+            }
+            ctx.stroke();
+        }
+        
+        // Handle player clicks
+        canvas.addEventListener('click', (event) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+            
+            for (const enemy of enemies) {
+                if (enemy.contains(x, y)) {
+                    enemy.selected = true;
+                    
+                    if (enemy.isCorrect) {
+                        gameOver = true;
+                        gameWon = true;
+                        playSound('correct');
+                    } else {
+                        towerHealth--;
+                        playSound('wrong');
+                        
+                        if (towerHealth <= 0) {
+                            gameOver = true;
+                        }
+                    }
+                    
+                    break;
+                }
+            }
+        });
+        
+        // Restart game
+        restartButton.addEventListener('click', () => {
+            // Reset game state
+            gameOver = false;
+            gameWon = false;
+            towerHealth = 3;
+            
+            // Reset enemies
+            for (let i = 0; i < enemies.length; i++) {
+                const enemy = enemies[i];
+                enemy.x = -150 * (i + 1);
+                enemy.y = canvas.height / 2;
+                enemy.pathIndex = 0;
+                enemy.selected = false;
+            }
+            
+            restartButton.style.display = 'none';
+        });
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw path
+            drawPath();
+            
+            // Draw tower
+            drawTower();
+            
+            // Update and draw enemies
+            for (const enemy of enemies) {
+                if (!gameOver) {
+                    enemy.update();
+                }
+                enemy.draw();
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.textBg;
+            ctx.fillRect(canvas.width/2 - 175, 20, 350, 40);
+            
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width/2, 45);
+            
+            // Game over state
+            if (gameOver) {
+                const message = gameWon ? 'Correct!' : 'Game Over!';
+                
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = 'white';
+                ctx.font = '30px sans-serif';
+                ctx.fillText(message, canvas.width/2, canvas.height/2);
+                
+                restartButton.style.display = 'block';
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

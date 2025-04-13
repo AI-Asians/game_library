@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        .restart-btn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #333;
+            color: white;
+            border: 2px solid #555;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn" class="restart-btn">Restart</button>
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+
+        // Adjust for mobile if needed
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+
+        // Game variables
+        let gameOver = false;
+        let planetFill = null;
+        let pulseValue = 0;
+        let pulseDirection = 1;
+        
+        // The question and answers
+        const question = "Which planet is known as the Red Planet?";
+        const options = [
+            { text: "Venus", color: "#FFE34C" },
+            { text: "Mars", color: "#FF4242", correct: true },
+            { text: "Jupiter", color: "#B36F39" },
+            { text: "Neptune", color: "#4287FF" }
+        ];
+
+        // Planet properties
+        const planet = {
+            x: canvas.width / 2,
+            y: canvas.height / 2 - 30,
+            radius: Math.min(canvas.width, canvas.height) * 0.25,
+            outline: "#FFFFFF",
+            fillColor: null,
+            pulsing: true
+        };
+
+        // Color bucket positions
+        const buckets = [];
+        const bucketSize = 50;
+        const bucketSpacing = 20;
+        const totalWidth = (bucketSize * options.length) + (bucketSpacing * (options.length - 1));
+        const startX = (canvas.width - totalWidth) / 2;
+
+        for (let i = 0; i < options.length; i++) {
+            buckets.push({
+                x: startX + (bucketSize + bucketSpacing) * i,
+                y: canvas.height - 100,
+                width: bucketSize,
+                height: bucketSize,
+                color: options[i].color,
+                text: options[i].text,
+                correct: options[i].correct || false
+            });
+        }
+
+        // Sound effects
+        function createBeepSound(correct) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = correct ? 440 : 220;
+                
+                gainNode.gain.value = 0.1;
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.5);
+            } catch (e) {
+                console.log("Audio not supported");
+            }
+        }
+
+        // Draw functions
+        function drawPixelatedCircle(x, y, radius, color, outlineColor) {
+            // Draw a pixelated circle for the 8-bit style
+            const pixelSize = 4;
+            
+            // Draw fill if color is provided
+            if (color) {
+                ctx.fillStyle = color;
+                for (let px = -radius; px < radius; px += pixelSize) {
+                    for (let py = -radius; py < radius; py += pixelSize) {
+                        if (px*px + py*py < radius*radius) {
+                            ctx.fillRect(x + px, y + py, pixelSize, pixelSize);
+                        }
+                    }
+                }
+            }
+            
+            // Draw outline
+            if (outlineColor) {
+                ctx.strokeStyle = outlineColor;
+                ctx.lineWidth = pixelSize;
+                
+                // Draw pixelated outline
+                for (let angle = 0; angle < Math.PI * 2; angle += 0.1) {
+                    const px = Math.round(x + Math.cos(angle) * radius / pixelSize) * pixelSize;
+                    const py = Math.round(y + Math.sin(angle) * radius / pixelSize) * pixelSize;
+                    ctx.fillStyle = outlineColor;
+                    ctx.fillRect(px - pixelSize/2, py - pixelSize/2, pixelSize, pixelSize);
+                }
+            }
+            
+            // Add some craters for Mars-like appearance
+            if (color) {
+                ctx.fillStyle = adjustColor(color, -30);
+                for (let i = 0; i < 8; i++) {
+                    const craterRadius = Math.random() * radius * 0.2;
+                    const angle = Math.random() * Math.PI * 2;
+                    const distance = Math.random() * radius * 0.7;
+                    const craterX = x + Math.cos(angle) * distance;
+                    const craterY = y + Math.sin(angle) * distance;
+                    
+                    for (let px = -craterRadius; px < craterRadius; px += pixelSize) {
+                        for (let py = -craterRadius; py < craterRadius; py += pixelSize) {
+                            if (px*px + py*py < craterRadius*craterRadius) {
+                                ctx.fillRect(craterX + px, craterY + py, pixelSize, pixelSize);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function adjustColor(color, amount) {
+            // Simple helper to darken/lighten a color
+            return color;
+        }
+
+        function drawBucket(bucket) {
+            // Draw a pixelated paint bucket
+            ctx.fillStyle = bucket.color;
+            
+            // Bucket body
+            ctx.fillRect(bucket.x, bucket.y, bucket.width, bucket.height * 0.7);
+            
+            // Bucket handle
+            ctx.fillRect(bucket.x + bucket.width * 0.3, bucket.y - bucket.height * 0.3, bucket.width * 0.4, bucket.height * 0.3);
+            
+            // Bucket label
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "16px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(bucket.text, bucket.x + bucket.width / 2, bucket.y + bucket.height + 20);
+        }
+
+        function drawQuestion() {
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 80);
+        }
+
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = "#111122";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid pattern for retro feel
+            ctx.strokeStyle = "#1a1a2a";
+            ctx.lineWidth = 1;
+            const gridSize = 20;
+            for (let x = 0; x <= canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw question
+            drawQuestion();
+            
+            // Calculate pulsing for outline
+            if (planet.pulsing) {
+                pulseValue += 0.05 * pulseDirection;
+                if (pulseValue >= 1) {
+                    pulseValue = 1;
+                    pulseDirection = -1;
+                } else if (pulseValue <= 0.5) {
+                    pulseValue = 0.5;
+                    pulseDirection = 1;
+                }
+                
+                planet.outlineWidth = 2 + pulseValue * 2;
+            }
+            
+            // Draw planet
+            drawPixelatedCircle(
+                planet.x, 
+                planet.y, 
+                planet.radius, 
+                planet.fillColor, 
+                planet.pulsing ? `rgba(255, 255, 255, ${pulseValue})` : planet.outline
+            );
+            
+            // Draw color buckets
+            buckets.forEach(drawBucket);
+            
+            // Draw answer feedback
+            if (gameOver) {
+                ctx.fillStyle = planetFill ? "#4CFF4C" : "#FF4242";
+                ctx.font = "24px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    planetFill ? "Correct!" : "Wrong! It's Mars.",
+                    canvas.width / 2, 
+                    canvas.height / 2 + planet.radius + 60
+                );
+            }
+        }
+
+        // Handle click events
+        canvas.addEventListener('click', function(event) {
+            if (gameOver) return;
+            
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // Check if a bucket was clicked
+            for (const bucket of buckets) {
+                if (x >= bucket.x && x <= bucket.x + bucket.width &&
+                    y >= bucket.y && y <= bucket.y + bucket.height) {
+                    // Fill the planet with the selected color
+                    planet.fillColor = bucket.color;
+                    planet.pulsing = false;
+                    planetFill = bucket.correct;
+                    gameOver = true;
+                    
+                    // Play sound effect
+                    createBeepSound(bucket.correct);
+                    
+                    // Show restart button
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 1000);
+                    
+                    break;
+                }
+            }
+        });
+
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            planet.fillColor = null;
+            planet.pulsing = true;
+            gameOver = false;
+            planetFill = null;
+            restartBtn.style.display = 'none';
+        });
+
+        // Game loop
+        function gameLoop() {
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Flash Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Define game colors - 8-bit palette
+        const COLORS = {
+            background: '#0f380f',   // Dark green (Game Boy-like)
+            question: '#8bac0f',     // Light green
+            options: '#9bbc0f',      // Pale green
+            correct: '#306230',      // Medium green
+            wrong: '#8b0000',        // Dark red
+            highlight: '#e0f8d0',    // Lightest green
+            flash: '#ffffff'         // White
+        };
+        
+        // Game state
+        let gameOver = false;
+        let options = ['Paris', 'London', 'Berlin', 'Rome'];
+        let correctAnswer = 'Paris';
+        let currentOption = null;
+        let nextFlashTimer = 30;
+        let flashDuration = 90;
+        let flashTimer = 0;
+        let successMessage = '';
+        let countdown = 0;
+        let spotlightPos = null;
+        let showSpotlight = false;
+        let spotlightTimer = 0;
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2), 200); // G5
+        }
+        
+        function playWrongSound() {
+            playSound(311.13, 0.2, 'sawtooth'); // Eb4
+            setTimeout(() => playSound(233.08, 0.3, 'sawtooth'), 150); // Bb3
+        }
+        
+        function playPopSound() {
+            playSound(400 + Math.random() * 200, 0.08);
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        // Draw pixelated text
+        function drawPixelText(text, x, y, color, size) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw spotlight
+        function drawSpotlight() {
+            if (!spotlightPos || !showSpotlight) return;
+            
+            ctx.fillStyle = 'rgba(224, 248, 208, 0.2)';
+            ctx.beginPath();
+            ctx.arc(spotlightPos.x, spotlightPos.y, 60, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.strokeStyle = COLORS.highlight;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(spotlightPos.x, spotlightPos.y, 60, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        
+        // Reset the game
+        function resetGame() {
+            gameOver = false;
+            successMessage = '';
+            nextFlashTimer = 30;
+            flashDuration = 90;
+            showSpotlight = false;
+        }
+        
+        // Flash an option on screen
+        function flashOption() {
+            const option = options[Math.floor(Math.random() * options.length)];
+            currentOption = {
+                text: option,
+                x: 100 + Math.random() * (canvas.width - 200),
+                y: 150 + Math.random() * (canvas.height - 300),
+                isCorrect: option === correctAnswer,
+                width: 120,
+                height: 50
+            };
+            
+            // Decrease flash duration for progressive difficulty
+            flashDuration = Math.max(30, flashDuration - 10);
+            flashTimer = flashDuration;
+            
+            // Play pop sound when option appears
+            playPopSound();
+            
+            // Reset spotlight
+            showSpotlight = false;
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) return;
+            
+            if (currentOption) {
+                flashTimer--;
+                if (flashTimer <= 0) {
+                    currentOption = null;
+                    nextFlashTimer = 30 + Math.floor(Math.random() * 30); // Random delay between flashes
+                }
+            } else {
+                if (spotlightTimer > 0) {
+                    spotlightTimer--;
+                    if (spotlightTimer === 0) {
+                        showSpotlight = false;
+                    }
+                }
+                
+                nextFlashTimer--;
+                if (nextFlashTimer <= 0) {
+                    // Show spotlight before next flash
+                    if (!showSpotlight) {
+                        spotlightPos = {
+                            x: 100 + Math.random() * (canvas.width - 200),
+                            y: 150 + Math.random() * (canvas.height - 300)
+                        };
+                        showSpotlight = true;
+                        spotlightTimer = 25;
+                        
+                        // Schedule the next flash after spotlight
+                        setTimeout(() => {
+                            flashOption();
+                        }, 500);
+                    }
+                }
+            }
+        }
+        
+        // Render game
+        function render() {
+            // Background
+            drawPixelRect(0, 0, canvas.width, canvas.height, COLORS.background);
+            
+            // Draw spotlight if active
+            drawSpotlight();
+            
+            // Question
+            drawPixelRect(canvas.width/2 - 250, 20, 500, 60, COLORS.question);
+            drawPixelText("What is the capital of France?", canvas.width/2, 50, '#fff', 24);
+            
+            // Draw option if active
+            if (currentOption) {
+                const option = currentOption;
+                
+                // Draw option box
+                drawPixelRect(option.x - option.width/2, option.y - option.height/2, 
+                             option.width, option.height, COLORS.options);
+                
+                // Draw option text
+                drawPixelText(option.text, option.x, option.y, '#000', 20);
+                
+                // Draw flash effect border
+                const flashIntensity = (flashTimer / flashDuration);
+                ctx.strokeStyle = `rgba(255, 255, 255, ${flashIntensity})`;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(option.x - option.width/2 - 2, option.y - option.height/2 - 2, 
+                              option.width + 4, option.height + 4);
+                
+                // Draw countdown indicator
+                const percentage = flashTimer / flashDuration;
+                drawPixelRect(option.x - option.width/2, option.y + option.height/2 + 5, 
+                             option.width * percentage, 5, COLORS.highlight);
+            }
+            
+            // Success/failure message
+            if (gameOver) {
+                const messageY = canvas.height - 100;
+                drawPixelRect(canvas.width/2 - 150, messageY - 25, 300, 50, 
+                             successMessage.includes("Correct") ? COLORS.correct : COLORS.wrong);
+                drawPixelText(successMessage, canvas.width/2, messageY, '#fff', 24);
+                
+                // Restart button
+                drawPixelRect(canvas.width/2 - 60, messageY + 40, 120, 40, COLORS.options);
+                drawPixelText("Restart", canvas.width/2, messageY + 60, '#000', 20);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (event.clientX - rect.left) * scaleX;
+            const y = (event.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const messageY = canvas.height - 100;
+                if (x > canvas.width/2 - 60 && x < canvas.width/2 + 60 &&
+                    y > messageY + 40 && y < messageY + 80) {
+                    resetGame();
+                }
+            } else if (currentOption) {
+                // Check if option was clicked
+                const option = currentOption;
+                if (x > option.x - option.width/2 && x < option.x + option.width/2 &&
+                    y > option.y - option.height/2 && y < option.y + option.height/2) {
+                    
+                    gameOver = true;
+                    
+                    if (option.isCorrect) {
+                        successMessage = "Correct!";
+                        playCorrectSound();
+                    } else {
+                        successMessage = "Wrong Answer!";
+                        playWrongSound();
+                    }
+                }
+            }
+        });
+        
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

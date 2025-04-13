@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>True/False Filter Gate Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 5px 10px;
+            background: #333;
+            border: 3px solid #555;
+            color: #fff;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Game state
+        let gameOver = false;
+        let correctAnswer = false; // The Great Wall of China is NOT visible from space
+
+        // Colors
+        const colors = {
+            background: '#002244',
+            trueGate: '#22AA44',
+            falseGate: '#CC2222',
+            trueGateOpen: '#44FF77',
+            falseGateOpen: '#FF4444',
+            item: '#FFCC22',
+            text: '#FFFFFF',
+            questionBox: '#333366'
+        };
+
+        // Gates
+        const gates = {
+            true: { 
+                x: 250, 
+                y: 450, 
+                width: 100, 
+                height: 80, 
+                isOpen: false,
+                color: colors.trueGate,
+                openColor: colors.trueGateOpen
+            },
+            false: { 
+                x: 550, 
+                y: 450, 
+                width: 100, 
+                height: 80, 
+                isOpen: false,
+                color: colors.falseGate,
+                openColor: colors.falseGateOpen
+            }
+        };
+
+        // Items that flow toward gates
+        const items = [
+            { x: 400, y: 150, size: 30, speed: 3, active: true }
+        ];
+
+        // Create a simple oscillator for sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+            
+            return oscillator;
+        }
+
+        function playCorrectSound() {
+            playSound(440, 100);
+            setTimeout(() => playSound(660, 200), 100);
+        }
+
+        function playIncorrectSound() {
+            playSound(200, 200, 'sawtooth');
+        }
+
+        function playGateOpenSound() {
+            playSound(300, 50);
+        }
+
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+
+        function drawPixelText(text, x, y, size, color) {
+            ctx.font = `${size}px sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.fillText(text, x, y);
+        }
+
+        function drawItem(item) {
+            if (!item.active) return;
+            
+            // Draw a pixelated bouncing wall icon
+            drawPixelRect(item.x - item.size/2, item.y - item.size/2, item.size, item.size, colors.item);
+            drawPixelRect(item.x - item.size/2 + 5, item.y - item.size/2, item.size - 10, 5, '#855522');
+            drawPixelRect(item.x - item.size/2 + 5, item.y - item.size/2 + 10, item.size - 10, 5, '#855522');
+            drawPixelRect(item.x - item.size/2 + 5, item.y - item.size/2 + 20, item.size - 10, 5, '#855522');
+        }
+
+        function drawGate(gate, isTrue) {
+            const color = gate.isOpen ? gate.openColor : gate.color;
+            
+            // Draw gate base
+            drawPixelRect(gate.x, gate.y, gate.width, gate.height, color);
+            
+            // Draw gate details
+            const gateText = isTrue ? "TRUE" : "FALSE";
+            drawPixelText(gateText, gate.x + gate.width/2, gate.y + gate.height/2 + 5, 16, '#FFFFFF');
+            
+            // Draw key indicator
+            const keyText = isTrue ? "T Key" : "F Key";
+            drawPixelText(keyText, gate.x + gate.width/2, gate.y + gate.height + 20, 12, '#AAAAAA');
+            
+            // Draw gate opening if open
+            if (gate.isOpen) {
+                drawPixelRect(gate.x + 10, gate.y + 10, gate.width - 20, gate.height - 20, '#000000');
+            }
+        }
+
+        function drawQuestion() {
+            // Draw question box
+            drawPixelRect(200, 50, 400, 70, colors.questionBox);
+            drawPixelRect(205, 55, 390, 60, '#222244');
+            
+            // Draw question text
+            drawPixelText("The Great Wall of China", 400, 80, 18, colors.text);
+            drawPixelText("is visible from space.", 400, 105, 18, colors.text);
+        }
+
+        function drawGameOver() {
+            if (!gameOver) return;
+            
+            const text = correctAnswer ? "Correct!" : "Incorrect!";
+            const fact = "The Great Wall is NOT visible from space";
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawPixelText(text, canvas.width/2, canvas.height/2 - 30, 32, correctAnswer ? '#44FF77' : '#FF4444');
+            drawPixelText(fact, canvas.width/2, canvas.height/2 + 20, 18, '#FFFFFF');
+            
+            restartBtn.style.display = 'block';
+        }
+
+        function createPixelParticles(x, y, color, count) {
+            const particles = [];
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x,
+                    y,
+                    size: 3 + Math.random() * 3,
+                    speedX: -2 + Math.random() * 4,
+                    speedY: -2 - Math.random() * 3,
+                    color,
+                    life: 20 + Math.random() * 20
+                });
+            }
+            return particles;
+        }
+
+        let particles = [];
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.x += particle.speedX;
+                particle.y += particle.speedY;
+                particle.speedY += 0.1; // gravity
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawParticles() {
+            for (let i = 0; i < particles.length; i++) {
+                const particle = particles[i];
+                drawPixelRect(particle.x, particle.y, particle.size, particle.size, particle.color);
+            }
+        }
+
+        function checkCollisions() {
+            items.forEach(item => {
+                if (!item.active || gameOver) return;
+                
+                // Check collision with true gate
+                if (item.y + item.size/2 > gates.true.y && 
+                    item.x > gates.true.x && 
+                    item.x < gates.true.x + gates.true.width) {
+                    
+                    if (gates.true.isOpen) {
+                        // Item passes through true gate
+                        correctAnswer = false; // The answer is False, so this is incorrect
+                        endGame();
+                        item.active = false;
+                        particles = particles.concat(
+                            createPixelParticles(item.x, item.y, colors.trueGateOpen, 20)
+                        );
+                    }
+                }
+                
+                // Check collision with false gate
+                if (item.y + item.size/2 > gates.false.y && 
+                    item.x > gates.false.x && 
+                    item.x < gates.false.x + gates.false.width) {
+                    
+                    if (gates.false.isOpen) {
+                        // Item passes through false gate
+                        correctAnswer = true; // The answer is False, so this is correct
+                        endGame();
+                        item.active = false;
+                        particles = particles.concat(
+                            createPixelParticles(item.x, item.y, colors.falseGateOpen, 20)
+                        );
+                    }
+                }
+                
+                // Check if item hits bottom of screen
+                if (item.y > canvas.height) {
+                    item.active = false;
+                }
+            });
+        }
+
+        function endGame() {
+            gameOver = true;
+            
+            if (correctAnswer) {
+                playCorrectSound();
+            } else {
+                playIncorrectSound();
+            }
+            
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+            }, 1000);
+        }
+
+        function update() {
+            // Update items
+            items.forEach(item => {
+                if (!item.active || gameOver) return;
+                item.y += item.speed;
+            });
+            
+            // Check collisions
+            checkCollisions();
+            
+            // Update particles
+            updateParticles();
+            
+            // Auto-spawn new items if all are gone or off-screen
+            const activeItems = items.filter(item => item.active);
+            if (activeItems.length === 0 && !gameOver) {
+                if (Math.random() < 0.02) { // Randomly spawn at intervals
+                    items.push({
+                        x: 250 + Math.random() * 300,
+                        y: 150,
+                        size: 30,
+                        speed: 3,
+                        active: true
+                    });
+                }
+            }
+            
+            // Auto-close gates after a short time
+            if (gates.true.isOpen) {
+                setTimeout(() => { gates.true.isOpen = false; }, 200);
+            }
+            if (gates.false.isOpen) {
+                setTimeout(() => { gates.false.isOpen = false; }, 200);
+            }
+        }
+
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw gates
+            drawGate(gates.true, true);
+            drawGate(gates.false, false);
+            
+            // Draw items
+            items.forEach(drawItem);
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw game over screen if needed
+            drawGameOver();
+        }
+
+        function gameLoop() {
+            if (!gameOver) {
+                update();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle key presses
+        document.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            
+            if (e.key.toLowerCase() === 't') {
+                gates.true.isOpen = true;
+                playGateOpenSound();
+            }
+            if (e.key.toLowerCase() === 'f') {
+                gates.false.isOpen = true;
+                playGateOpenSound();
+            }
+        });
+
+        // Handle restart button
+        restartBtn.addEventListener('click', () => {
+            gameOver = false;
+            correctAnswer = false;
+            gates.true.isOpen = false;
+            gates.false.isOpen = false;
+            items.length = 0;
+            items.push({
+                x: 400,
+                y: 150,
+                size: 30,
+                speed: 3,
+                active: true
+            });
+            particles = [];
+            restartBtn.style.display = 'none';
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

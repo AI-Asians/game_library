@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Lane Racing Quiz</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #333;
+      overflow: hidden;
+    }
+    canvas {
+      border: 2px solid #fff;
+      image-rendering: pixelated;
+    }
+    #restart {
+      position: absolute;
+      bottom: 20px;
+      padding: 10px 20px;
+      background-color: #f44336;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: sans-serif;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <button id="restart">Restart</button>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Game configuration
+    const LANE_COUNT = 3;
+    const LANE_WIDTH = canvas.width / LANE_COUNT;
+    const PLAYER_HEIGHT = 40;
+    const PLAYER_WIDTH = 30;
+    const ROAD_SPEED = 10;
+    const LANE_SWITCH_SPEED = 12;
+    
+    // Answer options (only one is correct)
+    const answers = ["Berlin", "Paris", "London"];
+    const correctAnswerIndex = 1; // Paris is correct
+    
+    // Game state
+    let gameActive = true;
+    let roadOffset = 0;
+    let finishLinePosition = canvas.height * 5; // Finish line starts off-screen
+    let player = {
+      x: canvas.width / 2 - PLAYER_WIDTH / 2,
+      y: canvas.height - PLAYER_HEIGHT - 20,
+      targetLane: 1,
+      currentLane: 1,
+      speed: ROAD_SPEED * 1.2
+    };
+    
+    // Sound generation
+    function playSound(type) {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      if (type === 'switch') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+        oscillator.frequency.linearRampToValueAtTime(600, audioContext.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2);
+      } else if (type === 'correct') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+        oscillator.frequency.setValueAtTime(392, audioContext.currentTime + 0.1);
+        oscillator.frequency.setValueAtTime(523, audioContext.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.3);
+      } else if (type === 'wrong') {
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+        oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.3);
+      }
+    }
+    
+    // Controls
+    document.addEventListener('keydown', function(event) {
+      if (!gameActive) return;
+      
+      if (event.key === "ArrowLeft" && player.targetLane > 0) {
+        player.targetLane--;
+        playSound('switch');
+      } else if (event.key === "ArrowRight" && player.targetLane < LANE_COUNT - 1) {
+        player.targetLane++;
+        playSound('switch');
+      }
+    });
+    
+    // Touch controls for mobile
+    canvas.addEventListener('touchstart', function(event) {
+      if (!gameActive) return;
+      
+      const touchX = event.touches[0].clientX - canvas.getBoundingClientRect().left;
+      
+      if (touchX < canvas.width / 2 && player.targetLane > 0) {
+        player.targetLane--;
+        playSound('switch');
+      } else if (touchX >= canvas.width / 2 && player.targetLane < LANE_COUNT - 1) {
+        player.targetLane++;
+        playSound('switch');
+      }
+      
+      event.preventDefault();
+    });
+    
+    // Restart button
+    restartBtn.addEventListener('click', function() {
+      gameActive = true;
+      roadOffset = 0;
+      finishLinePosition = canvas.height * 5;
+      player.currentLane = 1;
+      player.targetLane = 1;
+      player.x = getLaneX(player.currentLane);
+      player.speed = ROAD_SPEED * 1.2;
+      restartBtn.style.display = 'none';
+    });
+    
+    // Utility functions
+    function getLaneX(laneIndex) {
+      return (laneIndex * LANE_WIDTH) + (LANE_WIDTH / 2) - (PLAYER_WIDTH / 2);
+    }
+    
+    function drawRoad() {
+      // Sky (simple gradient)
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height / 2);
+      gradient.addColorStop(0, '#5588FF');
+      gradient.addColorStop(1, '#99CCFF');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height / 2);
+      
+      // Ground
+      ctx.fillStyle = '#7CFC00';
+      ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
+      
+      // Road
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(0, canvas.height / 2 - 20, canvas.width, canvas.height / 2 + 20);
+      
+      // Lane dividers
+      ctx.fillStyle = '#FFFFFF';
+      for (let i = 1; i < LANE_COUNT; i++) {
+        const x = i * LANE_WIDTH;
+        
+        // Dashed lines
+        const dashLength = 20;
+        const gapLength = 15;
+        const totalLength = dashLength + gapLength;
+        
+        // Calculate how many dashes we need
+        const dashCount = Math.ceil(canvas.height / totalLength) + 1;
+        
+        for (let j = 0; j < dashCount; j++) {
+          const y = j * totalLength - (roadOffset % totalLength);
+          if (y < canvas.height) {
+            ctx.fillRect(x - 2, y, 4, dashLength);
+          }
+        }
+      }
+      
+      // Draw lane answers
+      ctx.font = '20px sans-serif';
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      
+      for (let i = 0; i < LANE_COUNT; i++) {
+        const x = i * LANE_WIDTH + LANE_WIDTH / 2;
+        // Draw the answers up ahead
+        ctx.fillText(answers[i], x, canvas.height / 2 - 40);
+      }
+      
+      // Draw finish line
+      const finishY = finishLinePosition - roadOffset;
+      if (finishY < canvas.height + 20) {
+        ctx.fillStyle = '#FFFFFF';
+        
+        // Checkered pattern
+        const checkerSize = 15;
+        const checkerCount = Math.ceil(canvas.width / checkerSize);
+        
+        for (let i = 0; i < checkerCount; i++) {
+          for (let j = 0; j < 2; j++) { // Just 2 rows for a simple finish line
+            if ((i + j) % 2 === 0) {
+              ctx.fillRect(
+                i * checkerSize, 
+                finishY + j * checkerSize, 
+                checkerSize, 
+                checkerSize
+              );
+            }
+          }
+        }
+        
+        // "FINISH" text
+        ctx.font = '24px sans-serif';
+        ctx.fillStyle = 'white';
+        ctx.fillText("FINISH", canvas.width / 2, finishY - 10);
+      }
+      
+      // Question
+      ctx.font = '24px sans-serif';
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      ctx.fillText("What is the capital of France?", canvas.width / 2, 50);
+    }
+    
+    function drawPlayer() {
+      // Determine target X position based on lane
+      const targetX = getLaneX(player.targetLane);
+      
+      // Move player toward target lane
+      if (player.x < targetX) {
+        player.x += LANE_SWITCH_SPEED;
+        if (player.x > targetX) player.x = targetX;
+      } else if (player.x > targetX) {
+        player.x -= LANE_SWITCH_SPEED;
+        if (player.x < targetX) player.x = targetX;
+      }
+      
+      // Update current lane if player reached target
+      if (player.x === targetX) {
+        player.currentLane = player.targetLane;
+      }
+      
+      // Car body (simple 8-bit style)
+      ctx.fillStyle = '#FF4444';
+      ctx.fillRect(player.x, player.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+      
+      // Car windows
+      ctx.fillStyle = '#6699FF';
+      ctx.fillRect(player.x + 5, player.y + 5, PLAYER_WIDTH - 10, 15);
+      
+      // Car lights
+      ctx.fillStyle = '#FFFF00';
+      ctx.fillRect(player.x + 3, player.y + PLAYER_HEIGHT - 8, 5, 5);
+      ctx.fillRect(player.x + PLAYER_WIDTH - 8, player.y + PLAYER_HEIGHT - 8, 5, 5);
+      
+      // Car wheels
+      ctx.fillStyle = '#222222';
+      ctx.fillRect(player.x - 3, player.y + 8, 5, 8);
+      ctx.fillRect(player.x - 3, player.y + PLAYER_HEIGHT - 15, 5, 8);
+      ctx.fillRect(player.x + PLAYER_WIDTH - 2, player.y + 8, 5, 8);
+      ctx.fillRect(player.x + PLAYER_WIDTH - 2, player.y + PLAYER_HEIGHT - 15, 5, 8);
+    }
+    
+    function checkGameEnd() {
+      const finishY = finishLinePosition - roadOffset;
+      
+      // If player crossed the finish line
+      if (finishY <= player.y) {
+        gameActive = false;
+        restartBtn.style.display = 'block';
+        
+        // Check if player is in the correct lane
+        if (player.currentLane === correctAnswerIndex) {
+          playSound('correct');
+          
+          // Display success message
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          ctx.font = '30px sans-serif';
+          ctx.fillStyle = '#7CFC00';
+          ctx.textAlign = 'center';
+          ctx.fillText("CORRECT! Paris is the capital of France.", canvas.width / 2, canvas.height / 2);
+        } else {
+          playSound('wrong');
+          
+          // Display failure message
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          ctx.font = '30px sans-serif';
+          ctx.fillStyle = '#FF4444';
+          ctx.textAlign = 'center';
+          ctx.fillText("WRONG! Paris is the capital of France.", canvas.width / 2, canvas.height / 2);
+        }
+      }
+    }
+    
+    function update() {
+      if (gameActive) {
+        // Move road forward
+        roadOffset += ROAD_SPEED;
+        
+        // Move finish line
+        if (finishLinePosition > canvas.height * 2) {
+          finishLinePosition -= ROAD_SPEED * 0.5; // Gradual approach
+        } else {
+          // Speed up as we get closer to the finish
+          player.speed *= 1.001;
+          finishLinePosition -= player.speed;
+        }
+        
+        checkGameEnd();
+      }
+      
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw game elements
+      drawRoad();
+      drawPlayer();
+      
+      // Continue animation
+      requestAnimationFrame(update);
+    }
+    
+    // Start the game
+    update();
+    
+    // Handle window resize for responsiveness
+    window.addEventListener('resize', function() {
+      // Adjust canvas size if needed for mobile
+      if (window.innerWidth <= 360) {
+        canvas.width = 360;
+        canvas.height = 640;
+      } else {
+        canvas.width = 800;
+        canvas.height = 600;
+      }
+    });
+  </script>
+</body>
+</html>

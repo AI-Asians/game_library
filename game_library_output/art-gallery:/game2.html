@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Gallery Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let correctAnswer = false;
+        let showRestartButton = false;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Gallery settings
+        const galleryWallColor = '#554838';
+        const galleryFloorColor = '#3a3226';
+        const frameColor = '#9e7b35';
+        const frameDarkColor = '#6b542b';
+        const questionBgColor = '#222034';
+        
+        // Answer options - planets
+        const planets = [
+            { name: "Mercury", color: "#a9a9a9", correct: false },
+            { name: "Venus", color: "#e6bb7a", correct: false },
+            { name: "Mars", color: "#c14b3c", correct: true },
+            { name: "Jupiter", color: "#e1b87f", correct: false }
+        ];
+        
+        // Planet painting positions
+        let paintings = [];
+        
+        // Initialize the gallery
+        function initGallery() {
+            const cols = 2;
+            const rows = 2;
+            const padding = isMobile ? 30 : 60;
+            const frameWidth = isMobile ? 120 : 260;
+            const frameHeight = isMobile ? 120 : 200;
+            const startX = (canvas.width - (cols * frameWidth + (cols-1) * padding)) / 2;
+            const startY = isMobile ? 180 : 160;
+            
+            paintings = [];
+            
+            let index = 0;
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    if (index < planets.length) {
+                        const x = startX + col * (frameWidth + padding);
+                        const y = startY + row * (frameHeight + padding);
+                        
+                        paintings.push({
+                            x: x,
+                            y: y, 
+                            width: frameWidth,
+                            height: frameHeight,
+                            planet: planets[index],
+                            hovered: false
+                        });
+                        
+                        index++;
+                    }
+                }
+            }
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'hover') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.1);
+                }, 100);
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(550, audioCtx.currentTime + 0.2);
+                }, 200);
+                
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.2);
+                }, 200);
+                
+                oscillator.stop(audioCtx.currentTime + 0.4);
+            }
+        }
+        
+        // Draw functions
+        function drawGalleryWalls() {
+            // Wall
+            ctx.fillStyle = galleryWallColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height * 0.8);
+            
+            // Floor
+            ctx.fillStyle = galleryFloorColor;
+            ctx.fillRect(0, canvas.height * 0.8, canvas.width, canvas.height * 0.2);
+            
+            // Wall texture
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            for (let x = 0; x < canvas.width; x += 20) {
+                for (let y = 0; y < canvas.height * 0.8; y += 20) {
+                    if ((x + y) % 40 === 0) {
+                        ctx.fillRect(x, y, 10, 10);
+                    }
+                }
+            }
+            
+            // Floor tiles
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            for (let x = 0; x < canvas.width; x += 40) {
+                for (let y = canvas.height * 0.8; y < canvas.height; y += 20) {
+                    if ((x + y) % 80 === 0) {
+                        ctx.fillRect(x, y, 40, 20);
+                    }
+                }
+            }
+            
+            // Lighting effect
+            const gradient = ctx.createRadialGradient(
+                canvas.width/2, canvas.height * 0.3, 50,
+                canvas.width/2, canvas.height * 0.3, canvas.width * 0.7
+            );
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawFrame(x, y, width, height, hovered) {
+            // Outer frame
+            ctx.fillStyle = hovered ? '#c69a47' : frameColor;
+            ctx.fillRect(x, y, width, height);
+            
+            // Inner frame
+            ctx.fillStyle = frameDarkColor;
+            ctx.fillRect(x + 10, y + 10, width - 20, height - 20);
+            
+            // Frame corners
+            ctx.fillStyle = '#d4af37';
+            ctx.fillRect(x, y, 20, 20);
+            ctx.fillRect(x + width - 20, y, 20, 20);
+            ctx.fillRect(x, y + height - 20, 20, 20);
+            ctx.fillRect(x + width - 20, y + height - 20, 20, 20);
+        }
+        
+        function drawPlanet(x, y, width, height, planet) {
+            const centerX = x + width / 2;
+            const centerY = y + height / 2;
+            const radius = Math.min(width, height) / 3;
+            
+            // Planet
+            ctx.fillStyle = planet.color;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pixel details for each planet
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            if (planet.name === "Mercury") {
+                // Craters
+                for (let i = 0; i < 5; i++) {
+                    const craterX = centerX + Math.cos(i * 1.5) * radius * 0.6;
+                    const craterY = centerY + Math.sin(i * 1.5) * radius * 0.6;
+                    const craterSize = radius * 0.2;
+                    ctx.beginPath();
+                    ctx.arc(craterX, craterY, craterSize, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (planet.name === "Venus") {
+                // Cloud swirls
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius * (0.5 + i * 0.15), i * Math.PI/2, (i+1.5) * Math.PI/2);
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                    ctx.stroke();
+                }
+            } else if (planet.name === "Mars") {
+                // Mars features
+                ctx.fillStyle = '#a13b2d';
+                ctx.beginPath();
+                ctx.arc(centerX - radius * 0.4, centerY + radius * 0.3, radius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.arc(centerX + radius * 0.5, centerY - radius * 0.2, radius * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Ice caps
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(centerX, centerY - radius * 0.8, radius * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (planet.name === "Jupiter") {
+                // Stripes
+                for (let i = -2; i <= 2; i++) {
+                    ctx.fillStyle = i % 2 === 0 ? '#d1a76a' : '#b78e58';
+                    ctx.fillRect(centerX - radius, centerY + i * radius * 0.2, radius * 2, radius * 0.2);
+                }
+                
+                // Great Red Spot
+                ctx.fillStyle = '#b5553c';
+                ctx.beginPath();
+                ctx.ellipse(centerX - radius * 0.3, centerY - radius * 0.3, radius * 0.3, radius * 0.2, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Planet name
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(planet.name, centerX, y + height - 25);
+        }
+        
+        function drawQuestion() {
+            const questionY = isMobile ? 80 : 70;
+            
+            // Question box
+            ctx.fillStyle = questionBgColor;
+            ctx.fillRect(canvas.width * 0.1, questionY, canvas.width * 0.8, 70);
+            
+            // Pixel border
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(canvas.width * 0.1, questionY, canvas.width * 0.8, 70);
+            
+            // Question text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, questionY + 40);
+        }
+        
+        function drawRestartButton() {
+            const buttonWidth = 160;
+            const buttonHeight = 50;
+            const buttonX = (canvas.width - buttonWidth) / 2;
+            const buttonY = canvas.height - 80;
+            
+            // Button
+            ctx.fillStyle = '#4a752c';
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button border
+            ctx.strokeStyle = '#8bac0f';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Restart', buttonX + buttonWidth / 2, buttonY + 33);
+            
+            return { x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight };
+        }
+        
+        function drawGameOverText() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            
+            if (correctAnswer) {
+                ctx.fillStyle = '#4a752c';
+                ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2 - 50);
+            } else {
+                ctx.fillStyle = '#a13b2d';
+                ctx.fillText('Incorrect!', canvas.width / 2, canvas.height / 2 - 50);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawGalleryWalls();
+            drawQuestion();
+            
+            // Draw all paintings
+            paintings.forEach(painting => {
+                drawFrame(painting.x, painting.y, painting.width, painting.height, painting.hovered);
+                drawPlanet(
+                    painting.x + 15, 
+                    painting.y + 15, 
+                    painting.width - 30, 
+                    painting.height - 30, 
+                    painting.planet
+                );
+            });
+            
+            if (gameOver) {
+                drawGameOverText();
+            }
+            
+            if (showRestartButton) {
+                restartBtn = drawRestartButton();
+            }
+        }
+        
+        // Mouse/touch interaction
+        let mouseX = 0;
+        let mouseY = 0;
+        let restartBtn = null;
+        
+        function getMousePos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: (evt.clientX - rect.left) * (canvas.width / rect.width),
+                y: (evt.clientY - rect.top) * (canvas.height / rect.height)
+            };
+        }
+        
+        function handleMouseMove(e) {
+            const pos = getMousePos(canvas, e);
+            mouseX = pos.x;
+            mouseY = pos.y;
+            
+            let hoverChanged = false;
+            
+            paintings.forEach(painting => {
+                const wasHovered = painting.hovered;
+                painting.hovered = !gameOver && 
+                    mouseX > painting.x && 
+                    mouseX < painting.x + painting.width && 
+                    mouseY > painting.y && 
+                    mouseY < painting.y + painting.height;
+                
+                if (!wasHovered && painting.hovered) {
+                    playSound('hover');
+                    hoverChanged = true;
+                }
+            });
+            
+            if (hoverChanged) {
+                draw();
+            }
+        }
+        
+        function handleClick(e) {
+            const pos = getMousePos(canvas, e);
+            mouseX = pos.x;
+            mouseY = pos.y;
+            
+            if (gameOver && showRestartButton && restartBtn) {
+                if (mouseX > restartBtn.x && 
+                    mouseX < restartBtn.x + restartBtn.width && 
+                    mouseY > restartBtn.y && 
+                    mouseY < restartBtn.y + restartBtn.height) {
+                    resetGame();
+                    return;
+                }
+            }
+            
+            if (!gameOver) {
+                paintings.forEach(painting => {
+                    if (mouseX > painting.x && 
+                        mouseX < painting.x + painting.width && 
+                        mouseY > painting.y && 
+                        mouseY < painting.y + painting.height) {
+                        
+                        correctAnswer = painting.planet.correct;
+                        gameOver = true;
+                        showRestartButton = true;
+                        
+                        if (correctAnswer) {
+                            playSound('correct');
+                        } else {
+                            playSound('wrong');
+                        }
+                        
+                        draw();
+                    }
+                });
+            }
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameOver = false;
+            correctAnswer = false;
+            showRestartButton = false;
+            initGallery();
+            draw();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleMouseMove(touch);
+        });
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleClick(touch);
+        });
+        
+        // Initialize and start game
+        initGallery();
+        draw();
+    </script>
+</body>
+</html>

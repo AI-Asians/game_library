@@ -1,0 +1,82 @@
+**Multiple Choice:**
+
+1. **Tap-Pop:** (Similar to Desktop Bubble-Pop) Bubbles with answers float up; tap the correct one before it floats away. Incorrect taps might incur penalties.  
+2. **Swipe-Select:** Four answer options appear in quadrants. Swipe quickly in the direction of the correct answer.  
+3. **Quick-Tap Target:** Answer options appear briefly as targets; tap the correct one before it vanishes.  
+4. **Answer-Catch:** A character moves left/right (via tap/hold ); catch falling items representing the correct answer, avoid others.  
+5. **Path-Chooser Tap:** A character approaches a junction with multiple paths, each labeled with an answer. Tap the correct path to proceed.  
+6. **Color-Match Tap:** Options are colored blocks; tap the block matching the color associated with the correct answer.  
+7. **Shape-Sort Tap:** Options are different shapes; tap the shape associated with the correct answer.  
+8. **Rapid-Fire Tap:** Cycle through options quickly; tap the screen when the correct answer is highlighted.  
+9. **Memory-Flash Tap:** Options flash briefly then hide; tap the location where the correct answer was shown.  
+10. **Tile-Flip Tap:** A grid of tiles hides answers; tap tiles to reveal, find and tap the correct answer within a time limit.  
+11. **Whack-An-Answer:** Answers pop up from holes; tap the correct one quickly. Tapping wrong ones loses time/points.  
+12. **Sequence-Tap:** A sequence related to the question is shown; tap answer buttons in the correct order.  
+13. **Connect-Tap:** Tap and drag a line from the question prompt to the correct answer node among several options.  
+14. **Grow-Tap:** Tap and hold on the correct answer bubble to make it grow; release before it pops or time runs out. Incorrect holds shrink/pop instantly.  
+15. **Slide-Puzzle Select:** A simple slide puzzle where completing it reveals options; tap the correct one. (Focus is on the tap after solving).  
+16. **Orbit-Tap:** Answers orbit a central point; tap the correct one as it passes a target zone.  
+17. **Charge-Tap:** Hold tap to charge a meter; release when the meter is in the zone corresponding to the correct answer choice (A, B, C, D zones).  
+18. **Bouncer-Tap:** An object bounces around; tap when it hits the wall/area marked with the correct answer.  
+19. **Stack-Tap:** Blocks with answers fall; tap to place the correct answer block onto a stack, avoiding incorrect ones.  
+20. **Conveyor-Tap:** Answers move across on a conveyor belt; tap the correct one as it passes under a scanner/target.  
+21. **Jigsaw-Tap:** Pieces of different answers appear; tap the piece that fits the correct answer image/concept.  
+22. **Light-Up Tap:** Buttons for answers light up randomly; tap the correct answer's button when it lights up.  
+23. **Sound-Match Tap:** (Requires audio) Play a sound related to the question; tap the image/text representing the correct answer.  
+24. **Zoom-Tap:** The view zooms in on a cluster of answers; tap the correct one before the view zooms back out or shifts.  
+25. **Fling-Select:** Drag back and fling a projectile towards the target representing the correct answer.  
+26. **Cut-The-Rope Tap:** Multiple ropes hold answers; tap to cut the rope holding the correct answer, letting it fall into a goal.  
+27. **Balance-Tap:** Tap left/right side of screen to tilt a platform; guide a ball to roll into the hole/zone for the correct answer.  
+28. **Reflex-Alley Tap:** Answers rush towards the player from different alleys; tap the alley with the correct answer to "block" or "select" it.  
+29. **Code-Breaker Tap:** Tap numbers/symbols in the sequence that corresponds to the correct answer choice.  
+30. **Paint-Bucket Tap:** Tap the area/object that should be colored according to the correct answer.  
+31. **Merge-Tap:** Tap two adjacent items that merge to form the correct answer.  
+32. **Filter-Tap:** Tap to activate filters that only let the correct answer pass through an obstacle.  
+33. **Launch-Tap:** Tap to launch a character/object upwards; time the tap to hit the correct answer floating above.  
+34. **Dig-Tap:** Tap dirt blocks to dig a path towards the buried correct answer, avoiding wrong ones.  
+35. **Rotate-Tap:** Tap to rotate a central structure; align the pointer/opening with the correct answer choice.  
+36. **Wave-Tap:** Tap to send a wave/pulse; time it to hit the correct answer as it moves.  
+37. **Build-Tap:** Tap falling components to build a structure representing the correct answer.  
+38. **Defend-Tap:** Tap incoming projectiles carrying incorrect answers to destroy them; let the correct one pass.  
+39. **Portal-Tap:** Tap the portal corresponding to the correct answer to proceed.  
+40. **Switch-Track Tap:** Tap to switch train tracks, guiding a train/cart to the station marked with the correct answer.  
+41. **Speed-Match:** Match pairs of concepts/images as they briefly appear (like a stripped-down memory game). *\[As provided\]*  
+42. **Bubble-Pop:** Pop only the bubbles containing correct answers as they float up (inspired by Bubble Bobble). *\[As provided\]*  
+43. **Quick-Shoot:** Aim and shoot (mouse click or spacebar) at targets representing correct answers (Space Invaders simplified). *\[As provided\]*  
+44. **Reflex-Jump:** Time single jumps (spacebar) to collect correct answers while avoiding incorrect ones (simplified platformer). *\[As provided\]*  
+45. **Quick-Stack:** Drag correct element (mouse) onto a stack before time runs out. *\[As provided\]*  
+46. **Rapid-Cycle:** Cycle through options with taps (keyboard keys 1-4 or clicks) and confirm at the right moment (slot machine inspiration). *\[As provided\]*  
+47. **Maze-Navigate:** Use arrow keys to guide a character through a simple maze to reach the exit marked with the correct answer.  
+48. **Asteroid-Blast:** Pilot a ship (arrow keys); shoot (spacebar) the asteroid labeled with the correct answer among several flying by.  
+49. **Color-Fill:** Click the correct color swatch from a palette to fill an area related to the question.  
+50. **Pattern-Trace:** Use the mouse to trace a specific pattern path that corresponds to the correct answer choice.  
+51. **Whack-A-Mole Answer:** Answers pop up from holes; click the correct one quickly with the mouse.  
+52. **Conveyor-Sort:** Items with answers move on a conveyor; click buttons/levers to divert the correct answer item into a chute.  
+53. **Code-Entry:** Type the number (1-4) or letter (A-D) corresponding to the correct answer using the keyboard.  
+54. **Fishing-For-Answers:** Use mouse to cast a line and hook the fish/object carrying the correct answer.  
+55. **Arkanoid-Select:** Control a paddle (mouse/keys); bounce a ball to break blocks. Breaking the block with the correct answer progresses.  
+56. **Pipe-Dream Connect:** Click pipe pieces to rotate them; connect the start point to the end point marked with the correct answer.  
+57. **Racing-Lanes:** Cars labeled A,B,C,D race; click a boost button for the car with the correct answer to make it win.  
+58. **Tower-Defense Select:** Place a "selector tower" (click) that automatically targets/selects enemies carrying the correct answer as they follow a path.  
+59. **Music-Sequencer:** Click buttons on a simple sequencer grid to replicate a pattern associated with the correct answer.  
+60. **Word-Link:** Click and drag between letters in a grid to spell out the correct answer (if answers are single words).  
+61. **Rhythm-Hit:** Markers corresponding to answers flow towards a target line; press the key (A, B, C, D) when the correct answer's marker hits the line.  
+62. **Lock-Combination:** Click rotating dials to align numbers/symbols forming the code for the correct answer.  
+63. **Ingredient-Mix:** Drag and drop correct ingredients (answers) into a cauldron/bowl.  
+64. **Charge-Shot:** Hold mouse button to charge power; release to fire a projectile. Aim at the correct answer target.  
+65. **Platform-Builder:** Click to place platforms quickly, creating a path for a character to reach the correct answer zone.  
+66. **Mine-Sweeper Select:** Click grid cells; reveal numbers or the correct answer. Avoid clicking incorrect answers (mines).  
+67. **Cannon-Aim:** Adjust angle/power (mouse drag or keys); fire a cannonball to hit the target displaying the correct answer.  
+68. **Network-Node:** Click nodes in a network graph to activate the path leading to the correct answer node.  
+69. **Spell-Casting:** Click runes/symbols in the correct sequence associated with the chosen answer.  
+70. **Factory-Sort:** Use mouse to click gates/flippers on assembly lines to route the item with the correct answer to the shipping area.  
+71. **Galaxy-Jump:** Click on the star system/planet representing the correct answer on a star map to warp there.  
+72. **Submarine-Ping:** Click to send out a sonar ping; locate and click the underwater object corresponding to the correct answer.  
+73. **Gardening-Select:** Click the correct seed packet (answer) to plant it in the garden.  
+74. **Book-Shelf:** Click the book with the title/author representing the correct answer from a shelf.  
+75. **Art-Gallery:** Click on the painting/sculpture that represents the correct answer in a gallery view.  
+76. **DJ-Scratch:** Use mouse to "scratch" the turntable corresponding to the correct answer choice (A, B, C, D).  
+77. **Constellation-Draw:** Click and drag between stars to draw the constellation representing the correct answer.  
+78. **Chemistry-Mix:** Drag and drop virtual beakers/test tubes representing answers into the correct flask.  
+79. **News-Headline:** Click the news headline ticker that contains the correct answer phrase.  
+80. **Time-Travel:** Click the correct date/event on a timeline interface representing the answer.

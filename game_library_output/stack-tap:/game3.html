@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Capital of France Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background: #222;
+      overflow: hidden;
+    }
+    canvas {
+      border: 8px solid #444;
+      image-rendering: pixelated;
+    }
+    #restart {
+      position: absolute;
+      bottom: 20px;
+      padding: 8px 16px;
+      background: #333;
+      color: white;
+      border: 4px solid #555;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+  
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartButton = document.getElementById('restart');
+    
+    // Device detection and sizing
+    const isMobile = window.innerWidth <= 768;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const question = "What is the capital of France?";
+    const correctAnswer = "Paris";
+    const wrongAnswers = ["London", "Berlin", "Rome", "Madrid", "Brussels"];
+    let answers = [];
+    let gameOver = false;
+    let gameWon = false;
+    
+    // Colors - 16 color palette
+    const colors = [
+      '#5D275D', '#B13E53', '#EF7D57', '#FFCD75', 
+      '#A7F070', '#38B764', '#257179', '#29366F',
+      '#3B5DC9', '#41A6F6', '#73EFF7', '#F4F4F4', 
+      '#94B0C2', '#566C86', '#333C57', '#201D2F'
+    ];
+    
+    // Audio context
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Sound effects
+    function playSound(freq, type, duration) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    function clickSound() {
+      playSound(220, 'square', 0.1);
+    }
+    
+    function correctSound() {
+      playSound(523.25, 'square', 0.1);
+      setTimeout(() => playSound(659.25, 'square', 0.1), 100);
+      setTimeout(() => playSound(783.99, 'square', 0.15), 200);
+    }
+    
+    function wrongSound() {
+      playSound(196, 'square', 0.1);
+      setTimeout(() => playSound(146.83, 'square', 0.2), 100);
+    }
+    
+    // Particle system
+    let particles = [];
+    
+    class Particle {
+      constructor(x, y, color, isWin) {
+        this.x = x;
+        this.y = y;
+        this.size = Math.random() * 6 + 4;
+        this.speedX = Math.random() * 6 - 3;
+        this.speedY = Math.random() * -6 - 2;
+        this.color = color;
+        this.life = 30;
+        this.isWin = isWin;
+      }
+      
+      update() {
+        this.x += this.speedX;
+        this.y += this.speedY;
+        if (this.isWin) {
+          this.speedY += 0.2; // Gravity for win particles
+        } else {
+          this.size -= 0.2;
+        }
+        this.life--;
+      }
+      
+      draw() {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(
+          Math.floor(this.x),
+          Math.floor(this.y),
+          Math.floor(this.size),
+          Math.floor(this.size)
+        );
+      }
+    }
+    
+    // Answer block class
+    class AnswerBlock {
+      constructor(text, isCorrect) {
+        this.text = text;
+        this.isCorrect = isCorrect;
+        this.width = canvas.width / 2;
+        this.height = 70;
+        this.x = Math.random() * (canvas.width - this.width);
+        this.y = -this.height;
+        this.speed = Math.random() * 2 + 1.5;
+        this.color = colors[Math.floor(Math.random() * 8) + 4]; // Random color from palette
+        this.borderColor = colors[15];
+        this.clicked = false;
+      }
+      
+      update() {
+        if (!this.clicked) {
+          this.y += this.speed;
+        }
+      }
+      
+      draw() {
+        if (this.clicked) return;
+        
+        // Draw block with pixelated style
+        ctx.fillStyle = this.color;
+        ctx.fillRect(Math.floor(this.x), Math.floor(this.y), this.width, this.height);
+        
+        // Pixelated border
+        ctx.fillStyle = this.borderColor;
+        ctx.fillRect(Math.floor(this.x), Math.floor(this.y), this.width, 4);
+        ctx.fillRect(Math.floor(this.x), Math.floor(this.y), 4, this.height);
+        ctx.fillRect(Math.floor(this.x + this.width - 4), Math.floor(this.y), 4, this.height);
+        ctx.fillRect(Math.floor(this.x), Math.floor(this.y + this.height - 4), this.width, 4);
+        
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.text, this.x + this.width/2, this.y + this.height/2);
+      }
+      
+      isClicked(x, y) {
+        return (
+          x >= this.x && 
+          x <= this.x + this.width && 
+          y >= this.y && 
+          y <= this.y + this.height
+        );
+      }
+    }
+    
+    // Create answer blocks
+    function createAnswers() {
+      // Start with the correct answer
+      answers.push(new AnswerBlock(correctAnswer, true));
+      
+      // Add 4 wrong answers
+      const shuffledWrong = [...wrongAnswers];
+      for (let i = 0; i < 4; i++) {
+        if (shuffledWrong.length > 0) {
+          const idx = Math.floor(Math.random() * shuffledWrong.length);
+          const answer = shuffledWrong.splice(idx, 1)[0];
+          answers.push(new AnswerBlock(answer, false));
+        }
+      }
+    }
+    
+    // Create initial set of answers
+    createAnswers();
+    
+    // Spawn new answers periodically
+    function spawnNewAnswer() {
+      if (answers.length < 8 && !gameOver) {
+        if (Math.random() < 0.2) {
+          // 20% chance for correct answer
+          answers.push(new AnswerBlock(correctAnswer, true));
+        } else {
+          // 80% chance for wrong answer
+          const randomWrong = wrongAnswers[Math.floor(Math.random() * wrongAnswers.length)];
+          answers.push(new AnswerBlock(randomWrong, false));
+        }
+      }
+    }
+    
+    // Create screen shake effect
+    let shakeTime = 0;
+    let shakeIntensity = 0;
+    
+    function shake(intensity, time) {
+      shakeIntensity = intensity;
+      shakeTime = time;
+    }
+    
+    // Game over function
+    function endGame(won) {
+      gameOver = true;
+      gameWon = won;
+      
+      if (won) {
+        correctSound();
+        // Create win particles
+        for (let i = 0; i < 50; i++) {
+          particles.push(new Particle(
+            canvas.width / 2,
+            canvas.height / 2,
+            colors[Math.floor(Math.random() * colors.length)],
+            true
+          ));
+        }
+      } else {
+        wrongSound();
+        shake(10, 20);
+      }
+      
+      setTimeout(() => {
+        restartButton.style.display = 'block';
+      }, 1000);
+    }
+    
+    // Event listeners
+    canvas.addEventListener('click', function(e) {
+      if (gameOver) return;
+      
+      // Get mouse position
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Check if any answer was clicked
+      for (let i = 0; i < answers.length; i++) {
+        if (!answers[i].clicked && answers[i].isClicked(x, y)) {
+          answers[i].clicked = true;
+          
+          // Create particles
+          for (let j = 0; j < 20; j++) {
+            particles.push(new Particle(
+              answers[i].x + answers[i].width/2,
+              answers[i].y + answers[i].height/2,
+              answers[i].color,
+              false
+            ));
+          }
+          
+          if (answers[i].isCorrect) {
+            endGame(true);
+          } else {
+            clickSound();
+            shake(5, 10);
+          }
+          
+          break;
+        }
+      }
+    });
+    
+    restartButton.addEventListener('click', function() {
+      answers = [];
+      particles = [];
+      gameOver = false;
+      gameWon = false;
+      createAnswers();
+      restartButton.style.display = 'none';
+      shakeTime = 0;
+    });
+    
+    // Main game loop
+    let lastTime = 0;
+    let spawnCounter = 0;
+    
+    function gameLoop(timestamp) {
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+      
+      spawnCounter += deltaTime;
+      if (spawnCounter > 800 && !gameOver) {
+        spawnCounter = 0;
+        spawnNewAnswer();
+      }
+      
+      // Clear canvas with screen shake
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Apply screen shake
+      if (shakeTime > 0) {
+        ctx.save();
+        const shakeX = (Math.random() - 0.5) * shakeIntensity;
+        const shakeY = (Math.random() - 0.5) * shakeIntensity;
+        ctx.translate(shakeX, shakeY);
+        shakeTime--;
+      }
+      
+      // Draw pixelated border
+      ctx.fillStyle = colors[6];
+      ctx.fillRect(0, 0, canvas.width, 8);
+      ctx.fillRect(0, 0, 8, canvas.height);
+      ctx.fillRect(canvas.width - 8, 0, 8, canvas.height);
+      ctx.fillRect(0, canvas.height - 8, canvas.width, 8);
+      
+      // Draw pixelated corners
+      ctx.fillStyle = colors[8];
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.fillRect(canvas.width - 16, 0, 16, 16);
+      ctx.fillRect(0, canvas.height - 16, 16, 16);
+      ctx.fillRect(canvas.width - 16, canvas.height - 16, 16, 16);
+      
+      // Draw question
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `${isMobile ? 22 : 28}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(question, canvas.width/2, 40);
+      
+      // Update and draw answer blocks
+      for (let i = answers.length - 1; i >= 0; i--) {
+        answers[i].update();
+        answers[i].draw();
+        
+        // Remove blocks that are off screen
+        if (answers[i].y > canvas.height) {
+          if (answers[i].isCorrect) {
+            // If correct answer falls off screen, end game as loss
+            endGame(false);
+          }
+          answers.splice(i, 1);
+        }
+      }
+      
+      // Update and draw particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update();
+        particles[i].draw();
+        
+        if (particles[i].life <= 0 || particles[i].size <= 0) {
+          particles.splice(i, 1);
+        }
+      }
+      
+      // Draw game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `${isMobile ? 30 : 36}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        if (gameWon) {
+          ctx.fillText('Correct!', canvas.width/2, canvas.height/2);
+        } else {
+          ctx.fillText('Try Again!', canvas.width/2, canvas.height/2);
+        }
+      }
+      
+      if (shakeTime > 0) {
+        ctx.restore();
+      }
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start game
+    gameLoop(0);
+  </script>
+</body>
+</html>

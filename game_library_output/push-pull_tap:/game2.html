@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>True or False Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    #restart {
+      position: absolute;
+      bottom: 20px;
+      padding: 10px 20px;
+      background: #555;
+      color: white;
+      border: 4px solid #888;
+      font-family: sans-serif;
+      font-size: 16px;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+  <script>
+    // Game variables
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Colors (8-bit palette)
+    const colors = {
+      bg: '#5A6988',
+      panelDark: '#2D3A5E',
+      panelLight: '#7B92C9',
+      leverBase: '#333333',
+      leverHandle: '#FF4040',
+      leverShadow: '#990000',
+      textDark: '#222034',
+      textLight: '#F0F0F0',
+      trueColor: '#3CB043',
+      falseColor: '#CD5C5C',
+      highlight: '#FFF15A'
+    };
+    
+    // Game state
+    let gameState = {
+      leverPosition: 0.5, // 0 = left (false), 1 = right (true)
+      isDragging: false,
+      gameOver: false,
+      dragStartX: 0,
+      feedback: null,
+      question: "Water boils at 100 degrees Celsius at sea level."
+    };
+    
+    // Correct answer (true for this question)
+    const correctAnswer = true;
+    
+    // Audio context and sounds
+    let audioCtx;
+    
+    function initAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    function playSound(frequency, type, duration) {
+      if (!audioCtx) initAudio();
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.value = 0.3;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      
+      setTimeout(() => {
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+        setTimeout(() => oscillator.stop(), 300);
+      }, duration);
+    }
+    
+    function playClickSound() {
+      playSound(220, 'square', 60);
+    }
+    
+    function playCorrectSound() {
+      playSound(523.25, 'square', 100);
+      setTimeout(() => playSound(783.99, 'square', 200), 100);
+    }
+    
+    function playIncorrectSound() {
+      playSound(196, 'sawtooth', 100);
+      setTimeout(() => playSound(146.83, 'sawtooth', 300), 100);
+    }
+    
+    // Draw functions
+    function drawPixelRect(x, y, width, height, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+    }
+    
+    function drawPanel() {
+      // Main panel
+      drawPixelRect(canvas.width * 0.1, canvas.height * 0.3, canvas.width * 0.8, canvas.height * 0.4, colors.panelDark);
+      
+      // Panel highlights
+      drawPixelRect(canvas.width * 0.1, canvas.height * 0.3, canvas.width * 0.8, canvas.height * 0.05, colors.panelLight);
+      
+      // Question text
+      ctx.fillStyle = colors.textLight;
+      ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(gameState.question, canvas.width / 2, canvas.height * 0.25);
+      
+      // True/False labels
+      ctx.font = `${isMobile ? 16 : 22}px sans-serif`;
+      ctx.fillStyle = colors.falseColor;
+      ctx.fillText("FALSE", canvas.width * 0.25, canvas.height * 0.44);
+      
+      ctx.fillStyle = colors.trueColor;
+      ctx.fillText("TRUE", canvas.width * 0.75, canvas.height * 0.44);
+      
+      // Arrows
+      drawArrow(canvas.width * 0.25, canvas.height * 0.5, -1);
+      drawArrow(canvas.width * 0.75, canvas.height * 0.5, 1);
+    }
+    
+    function drawArrow(x, y, direction) {
+      const size = canvas.width * 0.03;
+      ctx.fillStyle = colors.textLight;
+      
+      ctx.beginPath();
+      if (direction > 0) {
+        ctx.moveTo(x - size, y - size);
+        ctx.lineTo(x + size, y);
+        ctx.lineTo(x - size, y + size);
+      } else {
+        ctx.moveTo(x + size, y - size);
+        ctx.lineTo(x - size, y);
+        ctx.lineTo(x + size, y + size);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    
+    function drawLever() {
+      const leverWidth = canvas.width * 0.6;
+      const leverX = canvas.width * 0.2;
+      const leverY = canvas.height * 0.5;
+      const handleSize = canvas.width * 0.08;
+      
+      // Lever track
+      drawPixelRect(leverX, leverY - 5, leverWidth, 10, colors.leverBase);
+      
+      // Position markers
+      drawPixelRect(leverX, leverY - 15, 10, 30, colors.falseColor);
+      drawPixelRect(leverX + leverWidth - 10, leverY - 15, 10, 30, colors.trueColor);
+      
+      // Lever handle position
+      const handleX = leverX + (leverWidth - handleSize) * gameState.leverPosition;
+      
+      // Lever handle shadow
+      drawPixelRect(handleX + 4, leverY - handleSize/2 + 4, handleSize, handleSize, colors.leverShadow);
+      
+      // Lever handle
+      drawPixelRect(handleX, leverY - handleSize/2, handleSize, handleSize, colors.leverHandle);
+      
+      // Handle highlight
+      drawPixelRect(handleX + handleSize/4, leverY - handleSize/3, handleSize/5, handleSize/5, colors.highlight);
+    }
+    
+    function drawFeedback() {
+      if (!gameState.feedback) return;
+      
+      ctx.fillStyle = gameState.feedback === 'correct' ? colors.trueColor : colors.falseColor;
+      ctx.font = `${isMobile ? 28 : 36}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        gameState.feedback === 'correct' ? 'CORRECT!' : 'INCORRECT!', 
+        canvas.width / 2, 
+        canvas.height * 0.7
+      );
+    }
+    
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw game elements
+      drawPanel();
+      drawLever();
+      drawFeedback();
+      
+      // Loop animation if game not over
+      if (!gameState.gameOver) {
+        requestAnimationFrame(draw);
+      }
+    }
+    
+    // Game logic
+    function checkAnswer() {
+      const playerAnswer = gameState.leverPosition > 0.5;
+      gameState.feedback = playerAnswer === correctAnswer ? 'correct' : 'incorrect';
+      gameState.gameOver = true;
+      
+      if (playerAnswer === correctAnswer) {
+        playCorrectSound();
+      } else {
+        playIncorrectSound();
+      }
+      
+      // Show restart button
+      restartBtn.style.display = 'block';
+      
+      // One final render
+      draw();
+    }
+    
+    function handleMouseDown(e) {
+      if (gameState.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Lever bounds
+      const leverWidth = canvas.width * 0.6;
+      const leverX = canvas.width * 0.2;
+      const leverY = canvas.height * 0.5;
+      const handleSize = canvas.width * 0.08;
+      const handleX = leverX + (leverWidth - handleSize) * gameState.leverPosition;
+      
+      // Check if click is on lever handle
+      if (x >= handleX && x <= handleX + handleSize &&
+          y >= leverY - handleSize/2 && y <= leverY + handleSize/2) {
+        gameState.isDragging = true;
+        gameState.dragStartX = x - handleX;
+        
+        playClickSound();
+      }
+    }
+    
+    function handleMouseMove(e) {
+      if (!gameState.isDragging || gameState.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const x = (e.clientX - rect.left) * scaleX;
+      
+      const leverWidth = canvas.width * 0.6;
+      const leverX = canvas.width * 0.2;
+      const handleSize = canvas.width * 0.08;
+      
+      // Calculate new position
+      let newPos = (x - gameState.dragStartX - leverX) / (leverWidth - handleSize);
+      
+      // Apply some resistance
+      const resistance = 0.1;
+      const targetPos = newPos > 0.5 ? 1 : 0;
+      newPos = newPos + (targetPos - newPos) * resistance;
+      
+      // Clamp position
+      gameState.leverPosition = Math.max(0, Math.min(1, newPos));
+    }
+    
+    function handleMouseUp() {
+      if (!gameState.isDragging || gameState.gameOver) return;
+      
+      gameState.isDragging = false;
+      
+      // Snap to position
+      if (gameState.leverPosition > 0.5) {
+        gameState.leverPosition = 1;
+      } else {
+        gameState.leverPosition = 0;
+      }
+      
+      playClickSound();
+      
+      // Check answer after snap
+      setTimeout(checkAnswer, 300);
+    }
+    
+    function handleTouchStart(e) {
+      e.preventDefault();
+      handleMouseDown({
+        clientX: e.touches[0].clientX,
+        clientY: e.touches[0].clientY
+      });
+    }
+    
+    function handleTouchMove(e) {
+      e.preventDefault();
+      handleMouseMove({
+        clientX: e.touches[0].clientX,
+        clientY: e.touches[0].clientY
+      });
+    }
+    
+    function handleTouchEnd(e) {
+      e.preventDefault();
+      handleMouseUp();
+    }
+    
+    function resetGame() {
+      gameState = {
+        leverPosition: 0.5,
+        isDragging: false,
+        gameOver: false,
+        dragStartX: 0,
+        feedback: null,
+        question: "Water boils at 100 degrees Celsius at sea level."
+      };
+      
+      restartBtn.style.display = 'none';
+      
+      // Restart animation loop
+      requestAnimationFrame(draw);
+    }
+    
+    // Event listeners
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('touchstart', handleTouchStart);
+    canvas.addEventListener('touchmove', handleTouchMove);
+    canvas.addEventListener('touchend', handleTouchEnd);
+    restartBtn.addEventListener('click', resetGame);
+    
+    // Start game
+    resetGame();
+  </script>
+</body>
+</html>

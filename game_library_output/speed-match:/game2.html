@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Planet Speed-Match</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize canvas and context
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const colors = {
+            bg: "#121212",
+            question: "#FFFFFF",
+            optionBg: "#3A5BA0",
+            optionText: "#FFFFFF",
+            correct: "#4CAF50",
+            incorrect: "#F44336",
+            timerBar: "#FFEB3B"
+        };
+        
+        const answers = ["Mars", "Venus", "Mercury", "Jupiter"];
+        const correctAnswer = "Mars";
+        const question = "Which planet is known as the Red Planet?";
+        
+        let gameActive = true;
+        let gameOver = false;
+        let currentAnswer = null;
+        let answerTimer = 0;
+        let nextAnswerDelay = 700;
+        let timeSinceLastAnswer = 0;
+        let timerBarWidth = canvas.width - 40;
+        let gameStartTime = Date.now();
+        let gameTimeLimit = 10000; // 10 seconds
+        let sparkles = [];
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'appear':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(1320, audioContext.currentTime);
+                    }, 100);
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(1760, audioContext.currentTime);
+                    }, 200);
+                    
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(180, audioContext.currentTime);
+                    }, 150);
+                    
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Game functions
+        function createAnswer() {
+            if (!gameActive) return;
+            
+            const idx = Math.floor(Math.random() * answers.length);
+            const text = answers[idx];
+            
+            // Random position that ensures the option is fully visible
+            const width = isMobile ? 140 : 200;
+            const height = 60;
+            const x = Math.random() * (canvas.width - width - 20) + 10;
+            const y = Math.random() * (canvas.height - height - 150) + 120;
+            
+            answerTimer = text === correctAnswer ? 1500 : 1200; // Correct answer shows slightly longer
+            
+            currentAnswer = {
+                text,
+                x,
+                y,
+                width,
+                height,
+                scale: 0,
+                isCorrect: text === correctAnswer
+            };
+            
+            playSound('appear');
+            
+            // Create sparkles if it's the correct answer
+            if (currentAnswer.isCorrect) {
+                for (let i = 0; i < 10; i++) {
+                    sparkles.push({
+                        x: currentAnswer.x + Math.random() * currentAnswer.width,
+                        y: currentAnswer.y + Math.random() * currentAnswer.height,
+                        size: Math.random() * 4 + 2,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: (Math.random() - 0.5) * 3,
+                        life: 20 + Math.random() * 15
+                    });
+                }
+            }
+        }
+        
+        function drawPixelRect(x, y, width, height, color) {
+            // Draw a pixelated rectangle by using slightly smaller blocks
+            const blockSize = 4;
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < width; i += blockSize) {
+                for (let j = 0; j < height; j += blockSize) {
+                    if (i + blockSize <= width && j + blockSize <= height) {
+                        ctx.fillRect(Math.floor(x + i), Math.floor(y + j), blockSize - 1, blockSize - 1);
+                    }
+                }
+            }
+        }
+        
+        function checkAnswer(x, y) {
+            if (!currentAnswer || !gameActive) return;
+            
+            const { x: ansX, y: ansY, width, height, text, scale } = currentAnswer;
+            
+            // Only register clicks if the answer has fully appeared
+            if (scale < 0.8) return;
+            
+            if (x >= ansX && x <= ansX + width && y >= ansY && y <= ansY + height) {
+                gameActive = false;
+                
+                if (text === correctAnswer) {
+                    currentAnswer.bg = colors.correct;
+                    playSound('correct');
+                    
+                    // Add more sparkles on correct answer
+                    for (let i = 0; i < 30; i++) {
+                        sparkles.push({
+                            x: ansX + Math.random() * width,
+                            y: ansY + Math.random() * height,
+                            size: Math.random() * 6 + 3,
+                            vx: (Math.random() - 0.5) * 5,
+                            vy: (Math.random() - 0.5) * 5,
+                            life: 30 + Math.random() * 20
+                        });
+                    }
+                } else {
+                    currentAnswer.bg = colors.incorrect;
+                    playSound('incorrect');
+                }
+                
+                setTimeout(() => {
+                    gameOver = true;
+                }, 1000);
+            }
+        }
+        
+        function drawRestartButton() {
+            const btnWidth = 160;
+            const btnHeight = 50;
+            const btnX = (canvas.width - btnWidth) / 2;
+            const btnY = canvas.height - 100;
+            
+            drawPixelRect(btnX, btnY, btnWidth, btnHeight, "#555");
+            drawPixelRect(btnX + 4, btnY + 4, btnWidth - 8, btnHeight - 8, "#333");
+            
+            ctx.fillStyle = "#FFF";
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("RESTART", btnX + btnWidth / 2, btnY + btnHeight / 2 + 7);
+            
+            // Return button bounds for click detection
+            return {x: btnX, y: btnY, width: btnWidth, height: btnHeight};
+        }
+        
+        // Game loop
+        function update() {
+            // Clear the canvas
+            ctx.fillStyle = colors.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const currentTime = Date.now();
+            const elapsedTime = currentTime - gameStartTime;
+            const timeRemaining = Math.max(0, gameTimeLimit - elapsedTime);
+            
+            // Update timer bar
+            timerBarWidth = ((canvas.width - 40) * timeRemaining) / gameTimeLimit;
+            
+            // Draw timer bar
+            drawPixelRect(20, 20, canvas.width - 40, 20, "#222");
+            drawPixelRect(20, 20, timerBarWidth, 20, colors.timerBar);
+            
+            // Draw question
+            ctx.fillStyle = colors.question;
+            ctx.font = isMobile ? "18px sans-serif" : "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 70);
+            
+            // Update game
+            if (gameActive && !gameOver) {
+                timeSinceLastAnswer += 16.67; // Approx for 60fps
+                
+                // Create new answer if needed
+                if (!currentAnswer && timeSinceLastAnswer >= nextAnswerDelay) {
+                    createAnswer();
+                    timeSinceLastAnswer = 0;
+                    nextAnswerDelay = Math.max(400, nextAnswerDelay - 50); // Speed up
+                }
+                
+                // Update current answer
+                if (currentAnswer) {
+                    // Animate appearance
+                    if (currentAnswer.scale < 1) {
+                        currentAnswer.scale += 0.15;
+                    }
+                    
+                    // Draw the answer
+                    const scaledWidth = currentAnswer.width * currentAnswer.scale;
+                    const scaledHeight = currentAnswer.height * currentAnswer.scale;
+                    const offsetX = (currentAnswer.width - scaledWidth) / 2;
+                    const offsetY = (currentAnswer.height - scaledHeight) / 2;
+                    
+                    drawPixelRect(
+                        currentAnswer.x + offsetX, 
+                        currentAnswer.y + offsetY, 
+                        scaledWidth, 
+                        scaledHeight, 
+                        currentAnswer.bg || colors.optionBg
+                    );
+                    
+                    // Draw text
+                    ctx.fillStyle = colors.optionText;
+                    ctx.font = Math.floor(20 * currentAnswer.scale) + "px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(
+                        currentAnswer.text, 
+                        currentAnswer.x + currentAnswer.width / 2, 
+                        currentAnswer.y + currentAnswer.height / 2 + 7
+                    );
+                    
+                    // Update timer for current answer
+                    answerTimer -= 16.67;
+                    if (answerTimer <= 0) {
+                        currentAnswer = null;
+                        timeSinceLastAnswer = 0;
+                    }
+                }
+                
+                // Update sparkles
+                for (let i = sparkles.length - 1; i >= 0; i--) {
+                    const sparkle = sparkles[i];
+                    sparkle.x += sparkle.vx;
+                    sparkle.y += sparkle.vy;
+                    sparkle.life -= 1;
+                    
+                    if (sparkle.life <= 0) {
+                        sparkles.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // Draw sparkle
+                    const alpha = sparkle.life / 30;
+                    ctx.fillStyle = `rgba(255, 255, 100, ${alpha})`;
+                    ctx.fillRect(sparkle.x, sparkle.y, sparkle.size, sparkle.size);
+                }
+                
+                // Check if game time is up
+                if (timeRemaining <= 0) {
+                    gameActive = false;
+                    gameOver = true;
+                }
+            } else if (gameOver) {
+                // Game over, show restart button
+                const restartBtn = drawRestartButton();
+                
+                // Allow clicking the restart button
+                canvas.onclick = (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    if (x >= restartBtn.x && x <= restartBtn.x + restartBtn.width &&
+                        y >= restartBtn.y && y <= restartBtn.y + restartBtn.height) {
+                        resetGame();
+                    }
+                };
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        function resetGame() {
+            gameActive = true;
+            gameOver = false;
+            currentAnswer = null;
+            answerTimer = 0;
+            nextAnswerDelay = 700;
+            timeSinceLastAnswer = 0;
+            timerBarWidth = canvas.width - 40;
+            gameStartTime = Date.now();
+            sparkles = [];
+            
+            // Reset click handler
+            canvas.onclick = handleClick;
+        }
+        
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            checkAnswer(x, y);
+        }
+        
+        // Start the game
+        canvas.onclick = handleClick;
+        
+        // Touch support for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            
+            if (gameOver) {
+                const restartBtn = {
+                    x: (canvas.width - 160) / 2,
+                    y: canvas.height - 100,
+                    width: 160,
+                    height: 50
+                };
+                
+                if (x >= restartBtn.x && x <= restartBtn.x + restartBtn.width &&
+                    y >= restartBtn.y && y <= restartBtn.y + restartBtn.height) {
+                    resetGame();
+                }
+            } else {
+                checkAnswer(x, y);
+            }
+        }, { passive: false });
+        
+        update();
+    </script>
+</body>
+</html>

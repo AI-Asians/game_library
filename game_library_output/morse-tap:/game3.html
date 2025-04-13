@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Morse-Tap True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+            font-family: sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 2px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Retro color palette
+        const colors = {
+            background: '#0f380f',  // Dark green
+            text: '#9bbc0f',        // Light green
+            highlight: '#8bac0f',   // Medium green
+            accent: '#306230',      // Medium dark green
+            bright: '#e0f8d0',      // Very light green
+            error: '#d04648',       // Red
+            success: '#55a049'      // Green
+        };
+        
+        // Game state
+        let state = {
+            pressStartTime: null,
+            isPressed: false,
+            morseInput: [],
+            gameOver: false,
+            isCorrect: null,
+            restartHover: false,
+            lastTapTime: 0
+        };
+        
+        // Correct answers
+        const TRUE_PATTERN = [0, 1];  // dot-dash for TRUE
+        const FALSE_PATTERN = [1, 0];  // dash-dot for FALSE
+        
+        // Correct answer for our question
+        const CORRECT_ANSWER = FALSE_PATTERN; // The Great Wall of China is NOT visible from space
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Generate a beep sound
+        function beep(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+        }
+        
+        function drawPixelText(text, x, y, color, size = 20, align = 'center') {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = align;
+            ctx.fillText(text, Math.round(x), Math.round(y));
+        }
+        
+        function drawMorseSymbols() {
+            const centerX = canvas.width / 2;
+            const startY = 250;
+            
+            // Draw the TRUE pattern guide
+            drawPixelText("TRUE = • —", centerX - 120, startY, colors.text, 24, 'left');
+            drawPixelRect(centerX - 120, startY + 10, 15, 15, colors.bright); // dot
+            drawPixelText("•", centerX - 112, startY + 45, colors.bright, 36);
+            drawPixelRect(centerX - 90, startY + 10, 45, 15, colors.bright); // dash
+            drawPixelText("—", centerX - 67, startY + 45, colors.bright, 36);
+            
+            // Draw the FALSE pattern guide
+            drawPixelText("FALSE = — •", centerX + 40, startY, colors.text, 24, 'left');
+            drawPixelRect(centerX + 40, startY + 10, 45, 15, colors.bright); // dash
+            drawPixelText("—", centerX + 62, startY + 45, colors.bright, 36);
+            drawPixelRect(centerX + 100, startY + 10, 15, 15, colors.bright); // dot
+            drawPixelText("•", centerX + 108, startY + 45, colors.bright, 36);
+        }
+        
+        function drawInputArea() {
+            const centerX = canvas.width / 2;
+            const inputY = 350;
+            
+            // Draw input area background
+            drawPixelRect(centerX - 150, inputY, 300, 100, colors.accent);
+            drawPixelRect(centerX - 145, inputY + 5, 290, 90, colors.background);
+            
+            // Draw tap instruction
+            const tapInstr = state.isPressed ? "HOLD FOR DASH" : "TAP FOR DOT";
+            drawPixelText(tapInstr, centerX, inputY + 30, state.isPressed ? colors.highlight : colors.text, 18);
+            
+            // Draw morse input visualization
+            if (state.morseInput.length > 0) {
+                let startX = centerX - (state.morseInput.length * 40) / 2;
+                
+                for (let i = 0; i < state.morseInput.length; i++) {
+                    if (state.morseInput[i] === 0) { // Dot
+                        drawPixelRect(startX + i * 40, inputY + 50, 15, 15, colors.bright);
+                    } else { // Dash
+                        drawPixelRect(startX + i * 40, inputY + 50, 45, 15, colors.bright);
+                    }
+                }
+            }
+        }
+        
+        function drawGameOver() {
+            const centerX = canvas.width / 2;
+            const feedbackY = 450;
+            
+            if (state.isCorrect === true) {
+                drawPixelText("CORRECT!", centerX, feedbackY, colors.success, 32);
+            } else if (state.isCorrect === false) {
+                drawPixelText("INCORRECT!", centerX, feedbackY, colors.error, 32);
+            }
+            
+            // Draw restart button
+            const buttonWidth = 150;
+            const buttonHeight = 50;
+            const buttonX = centerX - buttonWidth / 2;
+            const buttonY = feedbackY + 40;
+            
+            const buttonColor = state.restartHover ? colors.highlight : colors.accent;
+            drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, buttonColor);
+            drawPixelRect(buttonX + 4, buttonY + 4, buttonWidth - 8, buttonHeight - 8, colors.background);
+            drawPixelText("RESTART", centerX, buttonY + 30, colors.text, 20);
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear the canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border
+            const borderWidth = 8;
+            drawPixelRect(0, 0, canvas.width, borderWidth, colors.accent); // Top
+            drawPixelRect(0, canvas.height - borderWidth, canvas.width, borderWidth, colors.accent); // Bottom
+            drawPixelRect(0, 0, borderWidth, canvas.height, colors.accent); // Left
+            drawPixelRect(canvas.width - borderWidth, 0, borderWidth, canvas.height, colors.accent); // Right
+            
+            // Draw game title
+            drawPixelText("MORSE-TAP QUIZ", canvas.width / 2, 60, colors.bright, 36);
+            
+            // Draw the question
+            drawPixelText("The Great Wall of China is visible from space.", canvas.width / 2, 150, colors.text, 24);
+            
+            // Draw morse code guide
+            drawMorseSymbols();
+            
+            // Draw input area
+            drawInputArea();
+            
+            // If the game is over, draw the game over screen
+            if (state.gameOver) {
+                drawGameOver();
+            }
+            
+            // Draw press indicator
+            if (state.isPressed) {
+                const pressTime = Date.now() - state.pressStartTime;
+                const indicatorWidth = Math.min(pressTime / 500 * 150, 150);
+                drawPixelRect(canvas.width / 2 - 75, 320, indicatorWidth, 10, pressTime >= 500 ? colors.highlight : colors.text);
+            }
+        }
+        
+        // Check if the input matches the correct answer
+        function checkAnswer() {
+            if (state.morseInput.length !== CORRECT_ANSWER.length) return;
+            
+            let correct = true;
+            for (let i = 0; i < CORRECT_ANSWER.length; i++) {
+                if (state.morseInput[i] !== CORRECT_ANSWER[i]) {
+                    correct = false;
+                    break;
+                }
+            }
+            
+            state.gameOver = true;
+            state.isCorrect = correct;
+            
+            // Play sound based on result
+            if (correct) {
+                beep(660, 0.1);
+                setTimeout(() => beep(880, 0.2), 100);
+            } else {
+                beep(330, 0.2);
+                setTimeout(() => beep(220, 0.3), 200);
+            }
+        }
+        
+        // Event handlers
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.gameOver) {
+                // Check if clicked on restart button
+                const buttonWidth = 150;
+                const buttonHeight = 50;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = 450 + 40;
+                
+                if (e.offsetX >= buttonX && e.offsetX <= buttonX + buttonWidth &&
+                    e.offsetY >= buttonY && e.offsetY <= buttonY + buttonHeight) {
+                    // Restart the game
+                    state = {
+                        pressStartTime: null,
+                        isPressed: false,
+                        morseInput: [],
+                        gameOver: false,
+                        isCorrect: null,
+                        restartHover: false,
+                        lastTapTime: 0
+                    };
+                }
+                return;
+            }
+            
+            if (state.morseInput.length >= 2) return; // Only allow 2 inputs
+            
+            state.isPressed = true;
+            state.pressStartTime = Date.now();
+            beep(440, 0.05); // Start press sound
+        });
+        
+        canvas.addEventListener('mouseup', (e) => {
+            if (state.gameOver || !state.isPressed) return;
+            
+            const pressDuration = Date.now() - state.pressStartTime;
+            
+            // Determine if it was a short (dot) or long (dash) press
+            if (pressDuration < 500) {
+                state.morseInput.push(0); // Dot
+                beep(880, 0.1); // Dot sound
+            } else {
+                state.morseInput.push(1); // Dash
+                beep(440, 0.3); // Dash sound
+            }
+            
+            state.isPressed = false;
+            state.lastTapTime = Date.now();
+            
+            // Check the answer if we have enough input
+            if (state.morseInput.length === 2) {
+                setTimeout(checkAnswer, 300);
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (!state.gameOver) return;
+            
+            // Check if hovering over restart button
+            const buttonWidth = 150;
+            const buttonHeight = 50;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = 450 + 40;
+            
+            state.restartHover = (
+                e.offsetX >= buttonX && e.offsetX <= buttonX + buttonWidth &&
+                e.offsetY >= buttonY && e.offsetY <= buttonY + buttonHeight
+            );
+        });
+        
+        // Mobile touch support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        // Game loop
+        function gameLoop() {
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

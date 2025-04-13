@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wall From Space</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        let soundOn = false;
+        let gameOver = false;
+        let correctAnswer = false; // The Great Wall is NOT visible from space (False)
+        let answered = false;
+        let timer = 10; // 10 second timer
+        
+        // Colors (limited palette)
+        const colors = {
+            background: '#0A1428',
+            questionBg: '#1A2639',
+            textLight: '#F0F0F0',
+            textDark: '#333333',
+            switchOn: '#5FCC9C',
+            switchOff: '#CC5F5F',
+            switchBase: '#444444',
+            buttonBorder: '#555555',
+            buttonHighlight: '#AAAAAA',
+            timerBar: '#FFC107',
+            correctFeedback: '#5FCC9C',
+            incorrectFeedback: '#CC5F5F'
+        };
+        
+        // Audio context
+        let audioCtx;
+        let isMuted = false;
+        
+        // Initialize audio context on user interaction
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+        
+        // Simple sound effects
+        function playSound(type) {
+            if (!audioCtx || isMuted) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'toggle':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(soundOn ? 440 : 220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'correct':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+                case 'tick':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Draw sound toggle switch
+        function drawSoundSwitch() {
+            const switchWidth = 100;
+            const switchHeight = 50;
+            const switchX = canvas.width / 2 - switchWidth / 2;
+            const switchY = canvas.height / 2 + 50;
+            
+            // Draw switch base (looks like an old-school toggle switch)
+            ctx.fillStyle = colors.switchBase;
+            ctx.fillRect(switchX, switchY, switchWidth, switchHeight);
+            
+            // Draw border with 8-bit styling
+            ctx.strokeStyle = colors.buttonBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(switchX, switchY, switchWidth, switchHeight);
+            
+            // Draw ON/OFF text
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // OFF side (left)
+            ctx.fillStyle = !soundOn ? colors.switchOff : '#777777';
+            ctx.fillRect(switchX, switchY, switchWidth/2, switchHeight);
+            ctx.fillStyle = colors.textLight;
+            ctx.fillText('FALSE', switchX + switchWidth/4, switchY + switchHeight/2 + 6);
+            
+            // ON side (right)
+            ctx.fillStyle = soundOn ? colors.switchOn : '#777777';
+            ctx.fillRect(switchX + switchWidth/2, switchY, switchWidth/2, switchHeight);
+            ctx.fillStyle = colors.textLight;
+            ctx.fillText('TRUE', switchX + switchWidth*3/4, switchY + switchHeight/2 + 6);
+            
+            // Draw slider knob
+            ctx.fillStyle = '#DDDDDD';
+            const knobX = soundOn ? switchX + switchWidth*3/4 - 15 : switchX + switchWidth/4 - 15;
+            ctx.fillRect(knobX, switchY + 10, 30, 30);
+            
+            // Draw instruction
+            ctx.font = '16px sans-serif';
+            ctx.fillStyle = colors.textLight;
+            ctx.textAlign = 'center';
+            ctx.fillText('Press SPACE to toggle sound ON/OFF', canvas.width/2, switchY + switchHeight + 40);
+            
+            // If sound is ON, draw sound waves
+            if (soundOn && !answered) {
+                const now = Date.now();
+                const waveX = switchX + switchWidth + 20;
+                const waveY = switchY + switchHeight/2;
+                
+                ctx.beginPath();
+                for (let i = 0; i < 3; i++) {
+                    const offset = i * 15;
+                    const amplitude = 10 - i * 2;
+                    
+                    // Draw sound wave with animation
+                    for (let x = 0; x < 30; x += 5) {
+                        const y = waveY + Math.sin((now / 100) + x / 5 + i) * amplitude;
+                        if (x === 0) {
+                            ctx.moveTo(waveX + offset + x, y);
+                        } else {
+                            ctx.lineTo(waveX + offset + x, y);
+                        }
+                    }
+                }
+                ctx.strokeStyle = colors.switchOn;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+        }
+        
+        // Draw submit button
+        function drawSubmitButton() {
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 150;
+            
+            // Button base
+            ctx.fillStyle = colors.switchBase;
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button border with 8-bit styling
+            ctx.strokeStyle = colors.buttonBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button text
+            ctx.font = '18px sans-serif';
+            ctx.fillStyle = colors.textLight;
+            ctx.textAlign = 'center';
+            ctx.fillText('SUBMIT', buttonX + buttonWidth/2, buttonY + buttonHeight/2 + 6);
+            
+            // Button instruction
+            ctx.font = '16px sans-serif';
+            ctx.fillText('Press ENTER to submit', canvas.width/2, buttonY + buttonHeight + 30);
+            
+            return { x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight };
+        }
+        
+        // Draw timer bar
+        function drawTimer() {
+            const timerWidth = 600;
+            const timerHeight = 20;
+            const timerX = canvas.width / 2 - timerWidth / 2;
+            const timerY = 100;
+            
+            // Timer background
+            ctx.fillStyle = '#444';
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Timer fill
+            const fillWidth = timerWidth * (timer / 10);
+            ctx.fillStyle = colors.timerBar;
+            ctx.fillRect(timerX, timerY, fillWidth, timerHeight);
+            
+            // Timer border
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(timerX, timerY, timerWidth, timerHeight);
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            const buttonWidth = 160;
+            const buttonHeight = 50;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 50;
+            
+            // Button base
+            ctx.fillStyle = colors.switchBase;
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button border
+            ctx.strokeStyle = colors.buttonBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button text
+            ctx.font = '20px sans-serif';
+            ctx.fillStyle = colors.textLight;
+            ctx.textAlign = 'center';
+            ctx.fillText('PLAY AGAIN', buttonX + buttonWidth/2, buttonY + buttonHeight/2 + 7);
+            
+            return { x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight };
+        }
+        
+        // Main game render function
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 8;
+            ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+            
+            if (!gameOver) {
+                // Draw timer
+                drawTimer();
+                
+                // Draw question box with 8-bit styling
+                const questionWidth = 700;
+                const questionHeight = 80;
+                const questionX = canvas.width / 2 - questionWidth / 2;
+                const questionY = 150;
+                
+                ctx.fillStyle = colors.questionBg;
+                ctx.fillRect(questionX, questionY, questionWidth, questionHeight);
+                
+                // Question box border
+                ctx.strokeStyle = colors.buttonBorder;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(questionX, questionY, questionWidth, questionHeight);
+                
+                // Draw question text
+                ctx.font = '24px sans-serif';
+                ctx.fillStyle = colors.textLight;
+                ctx.textAlign = 'center';
+                ctx.fillText('The Great Wall of China is visible from space.', 
+                             canvas.width / 2, questionY + questionHeight / 2 + 10);
+                
+                // Draw sound toggle switch
+                drawSoundSwitch();
+                
+                // Draw submit button
+                const submitBtn = drawSubmitButton();
+            } else {
+                // Game over screen
+                ctx.font = '36px sans-serif';
+                ctx.fillStyle = answered ? 
+                    (correctAnswer ? colors.correctFeedback : colors.incorrectFeedback) : 
+                    colors.textLight;
+                ctx.textAlign = 'center';
+                
+                if (answered) {
+                    ctx.fillText(correctAnswer ? 'CORRECT!' : 'INCORRECT!', 
+                                 canvas.width / 2, canvas.height / 3);
+                    
+                    // Show correct answer
+                    ctx.font = '24px sans-serif';
+                    ctx.fillText('The Great Wall of China is NOT visible from space.', 
+                                 canvas.width / 2, canvas.height / 3 + 50);
+                } else {
+                    ctx.fillText('TIME\'S UP!', canvas.width / 2, canvas.height / 3);
+                    
+                    // Show correct answer
+                    ctx.font = '24px sans-serif';
+                    ctx.fillText('The Great Wall of China is NOT visible from space.', 
+                                 canvas.width / 2, canvas.height / 3 + 50);
+                }
+                
+                // Draw restart button
+                const restartBtn = drawRestartButton();
+            }
+        }
+        
+        // Game loop
+        let lastTimestamp = 0;
+        let timerInterval = 1000; // Update timer every second
+        let timeSinceLastTimerUpdate = 0;
+        
+        function gameLoop(timestamp) {
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const deltaTime = timestamp - lastTimestamp;
+            lastTimestamp = timestamp;
+            
+            if (!gameOver) {
+                // Update timer
+                timeSinceLastTimerUpdate += deltaTime;
+                if (timeSinceLastTimerUpdate >= timerInterval) {
+                    timer -= 1;
+                    timeSinceLastTimerUpdate = 0;
+                    
+                    if (timer <= 0) {
+                        timer = 0;
+                        gameOver = true;
+                    }
+                    
+                    // Play tick sound when timer is low
+                    if (timer <= 3 && timer > 0) {
+                        playSound('tick');
+                    }
+                }
+            }
+            
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Check answer
+        function checkAnswer() {
+            if (gameOver || answered) return;
+            
+            // The answer is FALSE - Great Wall is NOT visible from space
+            correctAnswer = !soundOn; // Sound OFF = FALSE
+            answered = true;
+            gameOver = true;
+            
+            // Play appropriate sound
+            playSound(correctAnswer ? 'correct' : 'incorrect');
+        }
+        
+        // Handle keyboard input
+        document.addEventListener('keydown', function(e) {
+            if (e.code === 'Space') {
+                // Toggle sound on/off
+                if (!gameOver && !answered) {
+                    initAudio();
+                    soundOn = !soundOn;
+                    playSound('toggle');
+                }
+            } else if (e.code === 'Enter') {
+                if (!gameOver && !answered) {
+                    // Submit answer
+                    checkAnswer();
+                } else if (gameOver) {
+                    // Restart game
+                    resetGame();
+                }
+            }
+        });
+        
+        // Handle mouse/touch input
+        canvas.addEventListener('click', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (!gameOver) {
+                // Check if clicked on the switch
+                const switchWidth = 100;
+                const switchHeight = 50;
+                const switchX = canvas.width / 2 - switchWidth / 2;
+                const switchY = canvas.height / 2 + 50;
+                
+                if (x >= switchX && x <= switchX + switchWidth &&
+                    y >= switchY && y <= switchY + switchHeight) {
+                    // Toggle sound
+                    if (!answered) {
+                        initAudio();
+                        soundOn = !soundOn;
+                        playSound('toggle');
+                    }
+                }
+                
+                // Check if clicked on submit button
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height / 2 + 150;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth &&
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    // Submit answer
+                    checkAnswer();
+                }
+            } else {
+                // Check if clicked on restart button
+                const buttonWidth = 160;
+                const buttonHeight = 50;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height / 2 + 50;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth &&
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    // Restart game
+                    resetGame();
+                }
+            }
+        });
+        
+        // Reset game
+        function resetGame() {
+            soundOn = false;
+            gameOver = false;
+            answered = false;
+            timer = 10;
+            timeSinceLastTimerUpdate = 0;
+        }
+        
+        // Start game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

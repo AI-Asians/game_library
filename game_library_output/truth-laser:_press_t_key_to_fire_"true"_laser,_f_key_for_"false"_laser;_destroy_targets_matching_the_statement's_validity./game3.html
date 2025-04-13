@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Truth Laser</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #000;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        canvas {
+            display: block;
+            background: #000;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            bg1: '#000022',
+            bg2: '#000044',
+            text: '#FFFFFF',
+            laser1: '#FF3333',
+            laser2: '#3333FF',
+            cannon: '#88AAFF',
+            particleTrue: '#FF8800',
+            particleFalse: '#00FFFF',
+            gridLines: '#113355'
+        };
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Game state
+        let gameState = {
+            gameOver: false,
+            targets: [],
+            cannon: {
+                x: canvas.width / 2,
+                y: canvas.height - 50,
+                width: 40,
+                height: 30
+            },
+            lasers: [],
+            lastShot: 0,
+            cooldown: 200,
+            question: "The Great Wall of China is visible from space.",
+            answer: false, // The correct answer is FALSE
+            particles: [],
+            gridOffset: 0,
+            starfield: Array(50).fill().map(() => ({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                speed: Math.random() * 0.5 + 0.2
+            }))
+        };
+        
+        // Initialize game
+        function initGame() {
+            gameState.gameOver = false;
+            gameState.targets = [];
+            gameState.lasers = [];
+            gameState.particles = [];
+            
+            // Create targets (4-6 targets with mixed T/F values)
+            const numTargets = Math.floor(Math.random() * 3) + 4;
+            for (let i = 0; i < numTargets; i++) {
+                gameState.targets.push({
+                    x: Math.random() * (canvas.width - 60) + 30,
+                    y: Math.random() * 200 + 100,
+                    width: 40,
+                    height: 40,
+                    isTrue: Math.random() > 0.5,
+                    speedX: (Math.random() * 2 - 1) * 2,
+                    speedY: (Math.random() - 0.5) * 1,
+                    angle: 0
+                });
+            }
+        }
+        
+        // Sound functions
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'laser':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(110, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'explosion':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(110, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(55, audioCtx.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'correct':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Create explosion particles
+        function createExplosion(x, y, isTrue) {
+            const particleCount = 20;
+            const color = isTrue ? colors.particleTrue : colors.particleFalse;
+            
+            for (let i = 0; i < particleCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 3 + 1;
+                
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.floor(Math.random() * 4) + 2,
+                    speedX: Math.cos(angle) * speed,
+                    speedY: Math.sin(angle) * speed,
+                    color: color,
+                    life: Math.random() * 20 + 10
+                });
+            }
+        }
+        
+        // Render functions
+        function drawStarfield() {
+            // Draw grid lines
+            ctx.strokeStyle = colors.gridLines;
+            ctx.lineWidth = 1;
+            
+            // Horizontal grid lines
+            gameState.gridOffset = (gameState.gridOffset + 0.5) % 40;
+            for (let y = gameState.gridOffset; y < canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Stars
+            for (let star of gameState.starfield) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.size / 3})`;
+                ctx.fillRect(
+                    Math.floor(star.x), 
+                    Math.floor(star.y), 
+                    Math.floor(star.size), 
+                    Math.floor(star.size)
+                );
+                
+                star.y += star.speed;
+                if (star.y > canvas.height) {
+                    star.y = 0;
+                    star.x = Math.random() * canvas.width;
+                }
+            }
+        }
+        
+        function drawCannon() {
+            const c = gameState.cannon;
+            
+            // Base
+            ctx.fillStyle = colors.cannon;
+            ctx.fillRect(c.x - c.width/2, c.y - c.height/2, c.width, c.height);
+            
+            // Barrel
+            ctx.fillRect(c.x - 5, c.y - c.height/2 - 15, 10, 15);
+            
+            // Details
+            ctx.fillStyle = '#223366';
+            ctx.fillRect(c.x - c.width/2 + 5, c.y - c.height/2 + 5, c.width - 10, 10);
+        }
+        
+        function drawLasers() {
+            for (let laser of gameState.lasers) {
+                ctx.fillStyle = laser.isTrue ? colors.laser1 : colors.laser2;
+                ctx.fillRect(laser.x - 2, laser.y, 4, laser.height);
+                
+                // Add pixelated beam texture
+                ctx.fillStyle = "#FFF";
+                for (let i = 0; i < laser.height; i += 8) {
+                    ctx.fillRect(laser.x - 1, laser.y + i, 2, 3);
+                }
+            }
+        }
+        
+        function drawTargets() {
+            for (let target of gameState.targets) {
+                // Draw target body
+                ctx.fillStyle = target.isTrue ? '#FF6600' : '#00AAFF';
+                ctx.fillRect(
+                    Math.floor(target.x - target.width/2), 
+                    Math.floor(target.y - target.height/2), 
+                    target.width, 
+                    target.height
+                );
+                
+                // Draw pixel details
+                ctx.fillStyle = '#000';
+                ctx.fillRect(
+                    Math.floor(target.x - target.width/2 + 5), 
+                    Math.floor(target.y - target.height/2 + 5), 
+                    target.width - 10, 
+                    target.height - 10
+                );
+                
+                // Draw T or F text
+                ctx.fillStyle = '#FFF';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    target.isTrue ? 'T' : 'F', 
+                    Math.floor(target.x), 
+                    Math.floor(target.y)
+                );
+            }
+        }
+        
+        function drawParticles() {
+            for (let p of gameState.particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x), 
+                    Math.floor(p.y), 
+                    Math.floor(p.size), 
+                    Math.floor(p.size)
+                );
+            }
+        }
+        
+        function drawGameOver() {
+            if (gameState.gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                const correctText = gameState.lastCorrect ? "Correct!" : "Wrong!";
+                ctx.fillText(correctText, canvas.width/2, canvas.height/2 - 30);
+                
+                ctx.fillStyle = '#AAFFAA';
+                ctx.fillRect(canvas.width/2 - 60, canvas.height/2 + 20, 120, 40);
+                
+                ctx.fillStyle = '#000';
+                ctx.font = '18px sans-serif';
+                ctx.fillText("Restart", canvas.width/2, canvas.height/2 + 40);
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = isMobile ? '16px sans-serif' : '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(gameState.question, canvas.width/2, 30);
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = '#AAAAAA';
+            ctx.font = isMobile ? '14px sans-serif' : '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText('Press T for True, F for False', canvas.width/2, canvas.height - 10);
+        }
+        
+        // Update game logic
+        function updateGame() {
+            // Update lasers
+            for (let i = gameState.lasers.length - 1; i >= 0; i--) {
+                gameState.lasers[i].y -= 10;
+                gameState.lasers[i].height += 10;
+                
+                // Remove lasers that go off screen
+                if (gameState.lasers[i].y < 0) {
+                    gameState.lasers.splice(i, 1);
+                }
+            }
+            
+            // Update targets
+            for (let target of gameState.targets) {
+                target.x += target.speedX;
+                target.y += target.speedY;
+                target.angle += 0.05;
+                
+                // Bounce off walls
+                if (target.x < target.width/2 || target.x > canvas.width - target.width/2) {
+                    target.speedX *= -1;
+                }
+                if (target.y < target.height/2 || target.y > canvas.height/2) {
+                    target.speedY *= -1;
+                }
+            }
+            
+            // Check for laser-target collisions
+            for (let i = gameState.lasers.length - 1; i >= 0; i--) {
+                const laser = gameState.lasers[i];
+                
+                for (let j = gameState.targets.length - 1; j >= 0; j--) {
+                    const target = gameState.targets[j];
+                    
+                    if (
+                        laser.x > target.x - target.width/2 &&
+                        laser.x < target.x + target.width/2 &&
+                        laser.y < target.y + target.height/2 &&
+                        laser.y + laser.height > target.y - target.height/2
+                    ) {
+                        // Target hit!
+                        createExplosion(target.x, target.y, target.isTrue);
+                        gameState.targets.splice(j, 1);
+                        gameState.lasers.splice(i, 1);
+                        playSound('explosion');
+                        
+                        // Check if answer is correct
+                        const isCorrect = (laser.isTrue && target.isTrue) || (!laser.isTrue && !target.isTrue);
+                        const matchesAnswer = (target.isTrue === gameState.answer);
+                        
+                        if (isCorrect && matchesAnswer) {
+                            // Correct answer!
+                            gameState.gameOver = true;
+                            gameState.lastCorrect = true;
+                            playSound('correct');
+                        } else {
+                            // Wrong answer!
+                            gameState.gameOver = true;
+                            gameState.lastCorrect = false;
+                            playSound('wrong');
+                        }
+                        
+                        break;
+                    }
+                }
+            }
+            
+            // Update particles
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Main render function
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.bg1;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawStarfield();
+            drawParticles();
+            drawCannon();
+            drawLasers();
+            drawTargets();
+            drawQuestion();
+            drawInstructions();
+            drawGameOver();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            if (!gameState.gameOver) {
+                updateGame();
+            }
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handlers
+        function handleKeyDown(e) {
+            if (gameState.gameOver) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    initGame();
+                }
+                return;
+            }
+            
+            if (e.key === 't' || e.key === 'T') {
+                fireLaser(true);
+            } else if (e.key === 'f' || e.key === 'F') {
+                fireLaser(false);
+            }
+        }
+        
+        function handleTouch(e) {
+            e.preventDefault();
+            
+            if (gameState.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.touches[0].clientX - rect.left;
+                const touchY = e.touches[0].clientY - rect.top;
+                
+                if (
+                    touchX >= canvas.width/2 - 60 &&
+                    touchX <= canvas.width/2 + 60 &&
+                    touchY >= canvas.height/2 + 20 &&
+                    touchY <= canvas.height/2 + 60
+                ) {
+                    initGame();
+                }
+                return;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            
+            if (touchX < canvas.width/2) {
+                fireLaser(true);  // Left side = True
+            } else {
+                fireLaser(false); // Right side = False
+            }
+        }
+        
+        function handleClick(e) {
+            if (gameState.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+                
+                if (
+                    clickX >= canvas.width/2 - 60 &&
+                    clickX <= canvas.width/2 + 60 &&
+                    clickY >= canvas.height/2 + 20 &&
+                    clickY <= canvas.height/2 + 60
+                ) {
+                    initGame();
+                }
+            }
+        }
+        
+        function fireLaser(isTrue) {
+            const now = Date.now();
+            if (now - gameState.lastShot > gameState.cooldown) {
+                gameState.lasers.push({
+                    x: gameState.cannon.x,
+                    y: gameState.cannon.y - gameState.cannon.height/2 - 15,
+                    height: 20,
+                    isTrue: isTrue
+                });
+                
+                gameState.lastShot = now;
+                playSound('laser');
+            }
+        }
+        
+        // Initialize and start game
+        window.addEventListener('keydown', handleKeyDown);
+        canvas.addEventListener('touchstart', handleTouch, {passive: false});
+        canvas.addEventListener('click', handleClick);
+        
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

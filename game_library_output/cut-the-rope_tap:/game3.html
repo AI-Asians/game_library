@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital of France Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #222;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 3px solid #666;
+            cursor: pointer;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Sound effects
+        function createBeepSound(freq, duration, volume) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+        }
+        
+        // Sounds
+        const cutSound = () => createBeepSound(600, 80, 0.2);
+        const correctSound = () => createBeepSound(800, 150, 0.2);
+        const incorrectSound = () => createBeepSound(200, 300, 0.2);
+        
+        // Game variables
+        const COLORS = {
+            bg: '#5fcde4',
+            targetZone: '#ff5555',
+            targetZonePulse: '#ff0000',
+            rope: '#b97a57',
+            ropeHighlight: '#d4a176',
+            correctBox: '#7fff7f',
+            wrongBox: '#ffb347',
+            correctText: '#007700',
+            wrongText: '#773300',
+            question: '#ffffff'
+        };
+        
+        const answers = [
+            { text: "Paris", correct: true, x: 200, y: 80 },
+            { text: "London", correct: false, x: 400, y: 100 },
+            { text: "Berlin", correct: false, x: 600, y: 120 }
+        ];
+        
+        const targetZone = {
+            x: canvas.width / 2 - 75,
+            y: canvas.height - 80,
+            width: 150,
+            height: 40,
+            pulse: 0,
+            pulseDirection: 1
+        };
+        
+        let gameEnded = false;
+        let particles = [];
+        
+        // Initialize ropes and answers
+        answers.forEach(answer => {
+            answer.ropeLength = answer.y + 30;
+            answer.width = ctx.measureText(answer.text).width + 40;
+            answer.height = 50;
+            answer.angle = 0;
+            answer.angleVelocity = (Math.random() * 0.04) - 0.02;
+            answer.ropeExists = true;
+            answer.falling = false;
+            answer.fallingSpeed = 0;
+        });
+        
+        function update() {
+            if (gameEnded) return;
+            
+            // Update target zone pulse
+            targetZone.pulse += 0.1 * targetZone.pulseDirection;
+            if (targetZone.pulse > 1 || targetZone.pulse < 0) {
+                targetZone.pulseDirection *= -1;
+            }
+            
+            // Update answer positions and physics
+            answers.forEach(answer => {
+                if (answer.ropeExists) {
+                    // Swing effect
+                    answer.angle += answer.angleVelocity;
+                    if (Math.abs(answer.angle) > 0.3) {
+                        answer.angleVelocity *= -0.95;
+                    }
+                    
+                    // Calculate position based on rope and swing
+                    const swingOffset = Math.sin(answer.angle) * answer.ropeLength * 0.5;
+                    answer.currentX = answer.x + swingOffset;
+                } else if (answer.falling) {
+                    // Apply gravity
+                    answer.fallingSpeed += 0.4;
+                    answer.y += answer.fallingSpeed;
+                    
+                    // Check if answer hits target zone
+                    if (answer.y + answer.height > targetZone.y && 
+                        answer.y < targetZone.y + targetZone.height &&
+                        answer.currentX + answer.width / 2 > targetZone.x && 
+                        answer.currentX - answer.width / 2 < targetZone.x + targetZone.width) {
+                        
+                        gameEnded = true;
+                        restartBtn.style.display = 'block';
+                        
+                        if (answer.correct) {
+                            correctSound();
+                        } else {
+                            incorrectSound();
+                        }
+                    }
+                    
+                    // Remove if off screen
+                    if (answer.y > canvas.height) {
+                        answer.falling = false;
+                    }
+                }
+            });
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].life--;
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].vy += 0.2; // Gravity
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = COLORS.question;
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 40);
+            
+            // Draw target zone
+            const pulseColor = `rgb(${255}, ${Math.floor(50 + 100 * targetZone.pulse)}, ${Math.floor(50 + 50 * targetZone.pulse)})`;
+            ctx.fillStyle = pulseColor;
+            ctx.fillRect(targetZone.x, targetZone.y, targetZone.width, targetZone.height);
+            
+            // Draw 8-bit border for target zone
+            ctx.strokeStyle = COLORS.targetZonePulse;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(targetZone.x, targetZone.y, targetZone.width, targetZone.height);
+            
+            // Draw target text
+            ctx.fillStyle = 'white';
+            ctx.fillText("TARGET", targetZone.x + targetZone.width / 2, targetZone.y + 25);
+            
+            // Draw ropes and answers
+            answers.forEach(answer => {
+                const boxWidth = answer.width;
+                const boxHeight = answer.height;
+                const boxX = answer.currentX - boxWidth / 2;
+                
+                if (answer.ropeExists) {
+                    // Draw rope (pixelated style)
+                    ctx.strokeStyle = COLORS.rope;
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    
+                    // Create a segmented rope for pixelated effect
+                    const segments = 10;
+                    let prevX = answer.x;
+                    let prevY = 0;
+                    
+                    for (let i = 1; i <= segments; i++) {
+                        const segmentY = (answer.ropeLength / segments) * i;
+                        const progress = i / segments;
+                        const swingOffset = Math.sin(answer.angle * progress) * answer.ropeLength * 0.5 * progress;
+                        const segmentX = answer.x + swingOffset;
+                        
+                        // Draw rope segment (chunky pixelated line)
+                        ctx.beginPath();
+                        ctx.moveTo(prevX, prevY);
+                        ctx.lineTo(segmentX, segmentY);
+                        ctx.stroke();
+                        
+                        prevX = segmentX;
+                        prevY = segmentY;
+                    }
+                }
+                
+                // Draw answer box
+                ctx.fillStyle = answer.correct ? COLORS.correctBox : COLORS.wrongBox;
+                ctx.fillRect(boxX, answer.y, boxWidth, boxHeight);
+                
+                // Draw pixelated border
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#000';
+                ctx.strokeRect(boxX, answer.y, boxWidth, boxHeight);
+                
+                // Draw text
+                ctx.fillStyle = answer.correct ? COLORS.correctText : COLORS.wrongText;
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(answer.text, answer.currentX, answer.y + boxHeight/2 + 6);
+            });
+            
+            // Draw particles
+            ctx.fillStyle = COLORS.rope;
+            particles.forEach(particle => {
+                ctx.fillRect(particle.x, particle.y, 4, 4);
+            });
+            
+            // Draw game over message
+            if (gameEnded) {
+                const foundCorrect = answers.find(a => a.correct && a.falling && a.y > targetZone.y);
+                ctx.fillStyle = foundCorrect ? 'rgba(0, 255, 0, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = 'white';
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    foundCorrect ? "Correct! Paris is the capital of France" : "Wrong Answer!", 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        function createParticles(x, y) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 3,
+                    vy: (Math.random() - 0.5) * 3 - 2,
+                    life: 30
+                });
+            }
+        }
+        
+        function cutRope(mouseX, mouseY) {
+            if (gameEnded) return;
+            
+            answers.forEach(answer => {
+                if (!answer.ropeExists) return;
+                
+                // Check if click is near rope
+                const segments = 10;
+                let prevX = answer.x;
+                let prevY = 0;
+                
+                for (let i = 1; i <= segments; i++) {
+                    const segmentY = (answer.ropeLength / segments) * i;
+                    const progress = i / segments;
+                    const swingOffset = Math.sin(answer.angle * progress) * answer.ropeLength * 0.5 * progress;
+                    const segmentX = answer.x + swingOffset;
+                    
+                    // Calculate distance from mouse to line segment
+                    const distance = distToSegment(mouseX, mouseY, prevX, prevY, segmentX, segmentY);
+                    if (distance < 20) {
+                        // Cut the rope
+                        answer.ropeExists = false;
+                        answer.falling = true;
+                        answer.fallingSpeed = 2;
+                        
+                        // Create particles at cut point
+                        createParticles(mouseX, mouseY);
+                        
+                        // Play cut sound
+                        cutSound();
+                        break;
+                    }
+                    
+                    prevX = segmentX;
+                    prevY = segmentY;
+                }
+            });
+        }
+        
+        // Distance from point to line segment (for rope cutting)
+        function distToSegment(px, py, x1, y1, x2, y2) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const length2 = dx * dx + dy * dy;
+            let t = ((px - x1) * dx + (py - y1) * dy) / length2;
+            t = Math.max(0, Math.min(1, t));
+            
+            const closestX = x1 + t * dx;
+            const closestY = y1 + t * dy;
+            
+            const distX = px - closestX;
+            const distY = py - closestY;
+            
+            return Math.sqrt(distX * distX + distY * distY);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            cutRope(mouseX, mouseY);
+        });
+        
+        restartBtn.addEventListener('click', () => {
+            location.reload();
+        });
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

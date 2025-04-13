@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz - Bubble Pop</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: 4px solid #777;
+            font-family: sans-serif;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit palette
+        const COLORS = {
+            background: '#5560aa',
+            dialogBg: '#333377',
+            dialogBorder: '#8888ff',
+            text: '#ffffff',
+            bubble1: '#ff5555',
+            bubble2: '#55ff55',
+            bubble3: '#5555ff',
+            bubble4: '#ffff55',
+            correct: '#55ff55',
+            incorrect: '#ff5555'
+        };
+        
+        // Sound effects using AudioContext
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'pop') {
+                oscillator.type = 'triangle';
+                oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "London", correct: false },
+            { text: "Paris", correct: true },
+            { text: "Rome", correct: false },
+            { text: "Berlin", correct: false }
+        ];
+        
+        // Bubble class
+        class Bubble {
+            constructor(x, y, radius, color, answer) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.answer = answer;
+                this.speedX = (Math.random() * 2 - 1) * 2;
+                this.speedY = (Math.random() * 2 - 1) * 2;
+                this.popping = false;
+                this.popFrame = 0;
+                this.popMaxFrames = 5;
+            }
+            
+            update() {
+                if (this.popping) {
+                    this.popFrame++;
+                    return;
+                }
+                
+                this.x += this.speedX;
+                this.y += this.speedY;
+                
+                // Bounce off walls
+                if (this.x - this.radius < 0 || this.x + this.radius > canvas.width) {
+                    this.speedX *= -1;
+                    // Add slight randomness to bounce
+                    this.speedY += (Math.random() * 0.6) - 0.3;
+                }
+                
+                if (this.y - this.radius < dialogHeight + 10 || this.y + this.radius > canvas.height) {
+                    this.speedY *= -1;
+                    // Add slight randomness to bounce
+                    this.speedX += (Math.random() * 0.6) - 0.3;
+                }
+                
+                // Constrain speeds
+                const maxSpeed = 3;
+                this.speedX = Math.max(-maxSpeed, Math.min(maxSpeed, this.speedX));
+                this.speedY = Math.max(-maxSpeed, Math.min(maxSpeed, this.speedY));
+            }
+            
+            draw() {
+                if (this.popping) {
+                    // Draw pop animation
+                    const popSize = this.radius * (1 + this.popFrame / this.popMaxFrames * 0.5);
+                    const numFragments = 8;
+                    
+                    for (let i = 0; i < numFragments; i++) {
+                        const angle = (i / numFragments) * Math.PI * 2;
+                        const distance = (this.popFrame / this.popMaxFrames) * this.radius * 1.5;
+                        const fragX = this.x + Math.cos(angle) * distance;
+                        const fragY = this.y + Math.sin(angle) * distance;
+                        
+                        ctx.fillStyle = this.color;
+                        ctx.beginPath();
+                        ctx.rect(
+                            Math.floor(fragX - 6), 
+                            Math.floor(fragY - 6), 
+                            12, 
+                            12
+                        );
+                        ctx.fill();
+                    }
+                    return;
+                }
+                
+                // Draw bubble
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(
+                    Math.floor(this.x),
+                    Math.floor(this.y),
+                    Math.floor(this.radius),
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+                
+                // Add pixelated highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.arc(
+                    Math.floor(this.x - this.radius * 0.3),
+                    Math.floor(this.y - this.radius * 0.3),
+                    Math.floor(this.radius * 0.4),
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${Math.floor(this.radius * 0.5)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.answer.text, Math.floor(this.x), Math.floor(this.y));
+            }
+            
+            contains(x, y) {
+                if (this.popping) return false;
+                const distance = Math.sqrt((this.x - x) ** 2 + (this.y - y) ** 2);
+                return distance <= this.radius;
+            }
+            
+            pop() {
+                this.popping = true;
+                this.popFrame = 0;
+                playSound('pop');
+            }
+        }
+        
+        // Game state
+        let bubbles = [];
+        let gameOver = false;
+        let dialogHeight = 100;
+        
+        // Initialize game
+        function initGame() {
+            bubbles = [];
+            gameOver = false;
+            restartBtn.style.display = 'none';
+            
+            const colors = [COLORS.bubble1, COLORS.bubble2, COLORS.bubble3, COLORS.bubble4];
+            const radius = isMobile ? 40 : 60;
+            
+            // Create bubbles in a scattered pattern
+            for (let i = 0; i < answers.length; i++) {
+                const margin = radius * 3;
+                const x = margin + Math.random() * (canvas.width - margin * 2);
+                const y = dialogHeight + margin + Math.random() * (canvas.height - dialogHeight - margin * 2);
+                
+                bubbles.push(new Bubble(x, y, radius, colors[i], answers[i]));
+            }
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background pattern (8-bit style)
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            const gridSize = 20;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                for (let y = 0; y < canvas.height; y += gridSize) {
+                    if ((x + y) % (gridSize * 2) === 0) {
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    }
+                }
+            }
+            
+            // Draw dialog box
+            ctx.fillStyle = COLORS.dialogBg;
+            ctx.fillRect(0, 0, canvas.width, dialogHeight);
+            
+            // Dialog border (pixelated style)
+            ctx.fillStyle = COLORS.dialogBorder;
+            ctx.fillRect(0, dialogHeight - 4, canvas.width, 4);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, dialogHeight / 2);
+            
+            // Update and draw bubbles
+            let allPopped = true;
+            bubbles.forEach(bubble => {
+                bubble.update();
+                bubble.draw();
+                
+                // Check if all bubbles have completed their popping animation
+                if (bubble.popping && bubble.popFrame >= bubble.popMaxFrames) {
+                    // Bubble has finished popping
+                } else {
+                    allPopped = false;
+                }
+            });
+            
+            // Show restart when game is over and animations complete
+            if (gameOver && allPopped) {
+                restartBtn.style.display = 'block';
+            }
+            
+            // Continue animation if game is not over or animations still running
+            if (!gameOver || !allPopped) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Handle clicks/taps
+        canvas.addEventListener('click', function(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            for (const bubble of bubbles) {
+                if (bubble.contains(x, y)) {
+                    bubble.pop();
+                    
+                    if (bubble.answer.correct) {
+                        playSound('correct');
+                        // Make other bubbles pop after a slight delay
+                        setTimeout(() => {
+                            bubbles.forEach(b => {
+                                if (b !== bubble && !b.popping) {
+                                    b.pop();
+                                }
+                            });
+                        }, 300);
+                    } else {
+                        playSound('incorrect');
+                    }
+                    
+                    gameOver = true;
+                    break;
+                }
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', initGame);
+        
+        // Start game
+        initGame();
+    </script>
+</body>
+</html>

@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submarine-Ping Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #003366;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #pingButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #cc0000;
+            color: white;
+            border: 3px solid #ff0000;
+            font-family: sans-serif;
+            font-size: 18px;
+            cursor: pointer;
+            user-select: none;
+        }
+        #restartButton {
+            position: absolute;
+            display: none;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 3px solid #666;
+            font-family: sans-serif;
+            font-size: 18px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="pingButton">SONAR PING</button>
+    <button id="restartButton">RESTART</button>
+
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const pingButton = document.getElementById('pingButton');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        const answers = [
+            { text: "Paris", correct: true, x: 0, y: 0, width: 80, height: 80, color: "#88cc88", shape: "fish" },
+            { text: "London", correct: false, x: 0, y: 0, width: 80, height: 80, color: "#cc8888", shape: "jellyfish" },
+            { text: "Berlin", correct: false, x: 0, y: 0, width: 80, height: 80, color: "#8888cc", shape: "seahorse" },
+            { text: "Madrid", correct: false, x: 0, y: 0, width: 80, height: 80, color: "#cccc88", shape: "crab" }
+        ];
+        
+        // Submarine
+        const submarine = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            width: 60,
+            height: 30,
+            speed: 3,
+            targetX: canvas.width / 2,
+            targetY: canvas.height / 2,
+            energy: 100,
+            bubbles: []
+        };
+        
+        // Ping effect
+        const ping = {
+            active: false,
+            x: 0,
+            y: 0,
+            radius: 0,
+            maxRadius: 150,
+            cooldown: false,
+            cooldownTime: 800
+        };
+        
+        // Decorative elements
+        const bubbles = [];
+        const seaweed = [];
+        
+        // Create random positions for answers
+        function positionAnswers() {
+            const margin = 100;
+            for (let i = 0; i < answers.length; i++) {
+                // Position answers in different quadrants
+                const quadrant = i % 4;
+                let x, y;
+                
+                switch(quadrant) {
+                    case 0: // top left
+                        x = margin + Math.random() * (canvas.width / 2 - margin * 2);
+                        y = margin + Math.random() * (canvas.height / 2 - margin * 2);
+                        break;
+                    case 1: // top right
+                        x = canvas.width / 2 + Math.random() * (canvas.width / 2 - margin * 2);
+                        y = margin + Math.random() * (canvas.height / 2 - margin * 2);
+                        break;
+                    case 2: // bottom left
+                        x = margin + Math.random() * (canvas.width / 2 - margin * 2);
+                        y = canvas.height / 2 + Math.random() * (canvas.height / 2 - margin * 2);
+                        break;
+                    case 3: // bottom right
+                        x = canvas.width / 2 + Math.random() * (canvas.width / 2 - margin * 2);
+                        y = canvas.height / 2 + Math.random() * (canvas.height / 2 - margin * 2);
+                        break;
+                }
+                
+                answers[i].x = x;
+                answers[i].y = y;
+            }
+        }
+        
+        // Create decorative elements
+        function createDecorations() {
+            // Create bubbles
+            for (let i = 0; i < 20; i++) {
+                bubbles.push({
+                    x: Math.random() * canvas.width,
+                    y: canvas.height + Math.random() * 50,
+                    size: 3 + Math.random() * 8,
+                    speed: 0.5 + Math.random()
+                });
+            }
+            
+            // Create seaweed
+            for (let i = 0; i < 8; i++) {
+                seaweed.push({
+                    x: Math.random() * canvas.width,
+                    y: canvas.height,
+                    height: 50 + Math.random() * 150,
+                    width: 10 + Math.random() * 10,
+                    segments: 3 + Math.floor(Math.random() * 4),
+                    sway: Math.random() * 0.2
+                });
+            }
+        }
+        
+        // Initialize the game
+        function init() {
+            gameOver = false;
+            submarine.x = canvas.width / 2;
+            submarine.y = canvas.height / 2;
+            submarine.targetX = canvas.width / 2;
+            submarine.targetY = canvas.height / 2;
+            submarine.energy = 100;
+            submarine.bubbles = [];
+            
+            ping.active = false;
+            ping.radius = 0;
+            ping.cooldown = false;
+            
+            bubbles.length = 0;
+            seaweed.length = 0;
+            
+            positionAnswers();
+            createDecorations();
+            
+            restartButton.style.display = "none";
+            pingButton.style.display = "block";
+        }
+        
+        // Generate simple beep sound
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case "ping":
+                    oscillator.type = "sine";
+                    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case "correct":
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case "incorrect":
+                    oscillator.type = "sawtooth";
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw submarine
+        function drawSubmarine() {
+            ctx.save();
+            ctx.translate(submarine.x, submarine.y);
+            
+            // Determine direction
+            const dx = submarine.targetX - submarine.x;
+            const angle = dx > 0 ? 0 : Math.PI;
+            ctx.rotate(angle);
+            
+            // Draw submarine body (pixelated style)
+            ctx.fillStyle = "#ffcc00";
+            ctx.fillRect(-25, -10, 50, 20);
+            
+            // Draw conning tower
+            ctx.fillStyle = "#cc9900";
+            ctx.fillRect(-10, -20, 20, 10);
+            
+            // Draw viewport
+            ctx.fillStyle = "#66ccff";
+            ctx.fillRect(-5, -18, 10, 5);
+            
+            // Draw propeller
+            ctx.fillStyle = "#666666";
+            ctx.fillRect(25, -5, 5, 10);
+            
+            // Draw front
+            ctx.fillStyle = "#cc9900";
+            ctx.beginPath();
+            ctx.moveTo(-25, -10);
+            ctx.lineTo(-35, 0);
+            ctx.lineTo(-25, 10);
+            ctx.fill();
+            
+            ctx.restore();
+            
+            // Draw bubbles coming from submarine
+            for (let i = 0; i < submarine.bubbles.length; i++) {
+                const bubble = submarine.bubbles[i];
+                ctx.fillStyle = `rgba(255, 255, 255, ${bubble.opacity})`;
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                bubble.y -= bubble.speed;
+                bubble.x += Math.sin(bubble.y / 10) * 0.5;
+                bubble.opacity -= 0.01;
+                
+                if (bubble.opacity <= 0) {
+                    submarine.bubbles.splice(i, 1);
+                    i--;
+                }
+            }
+            
+            // Add new bubbles
+            if (Math.random() < 0.2 && (submarine.x !== submarine.targetX || submarine.y !== submarine.targetY)) {
+                submarine.bubbles.push({
+                    x: submarine.x - 30 * (submarine.targetX < submarine.x ? -1 : 1),
+                    y: submarine.y,
+                    size: 2 + Math.random() * 4,
+                    speed: 0.5 + Math.random() * 1,
+                    opacity: 0.7
+                });
+            }
+        }
+        
+        // Draw answer options
+        function drawAnswers() {
+            answers.forEach(answer => {
+                ctx.save();
+                ctx.translate(answer.x, answer.y);
+                
+                // Draw different shapes based on answer.shape
+                ctx.fillStyle = answer.color;
+                
+                if (answer.shape === "fish") {
+                    // Draw fish
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(30, -15);
+                    ctx.lineTo(30, 15);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    ctx.fillRect(30, -10, 20, 20);
+                    
+                    // Tail
+                    ctx.beginPath();
+                    ctx.moveTo(50, 0);
+                    ctx.lineTo(60, -15);
+                    ctx.lineTo(60, 15);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Eye
+                    ctx.fillStyle = "#000";
+                    ctx.beginPath();
+                    ctx.arc(10, 0, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                } else if (answer.shape === "jellyfish") {
+                    // Draw jellyfish
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 20, 0, Math.PI, true);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Tentacles
+                    for (let i = -15; i <= 15; i += 7) {
+                        ctx.beginPath();
+                        ctx.moveTo(i, 0);
+                        ctx.lineTo(i, 30);
+                        ctx.stroke();
+                    }
+                    
+                } else if (answer.shape === "seahorse") {
+                    // Draw seahorse
+                    ctx.beginPath();
+                    ctx.arc(0, -10, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    for (let i = 0; i < 5; i++) {
+                        ctx.lineTo(i % 2 === 0 ? 10 : -5, 5 + i * 8);
+                    }
+                    ctx.lineWidth = 8;
+                    ctx.stroke();
+                    
+                } else if (answer.shape === "crab") {
+                    // Draw crab
+                    ctx.fillRect(-15, -10, 30, 20);
+                    
+                    // Claws
+                    ctx.fillRect(-25, -15, 10, 10);
+                    ctx.fillRect(-25, 5, 10, 10);
+                    ctx.fillRect(15, -15, 10, 10);
+                    ctx.fillRect(15, 5, 10, 10);
+                    
+                    // Eyes
+                    ctx.fillStyle = "#000";
+                    ctx.fillRect(-5, -5, 4, 4);
+                    ctx.fillRect(5, -5, 4, 4);
+                }
+                
+                // Draw text label
+                ctx.fillStyle = "#fff";
+                ctx.font = "16px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(answer.text, 0, 30);
+                
+                ctx.restore();
+            });
+        }
+        
+        // Draw ping effect
+        function drawPing() {
+            if (ping.active) {
+                ctx.strokeStyle = `rgba(255, 255, 255, ${1 - ping.radius / ping.maxRadius})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(ping.x, ping.y, ping.radius, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Second circle for effect
+                ctx.strokeStyle = `rgba(0, 255, 255, ${0.7 - ping.radius / ping.maxRadius})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(ping.x, ping.y, ping.radius - 10, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                ping.radius += 5;
+                
+                if (ping.radius >= ping.maxRadius) {
+                    ping.active = false;
+                }
+            }
+        }
+        
+        // Draw decorative elements
+        function drawDecorations() {
+            // Draw bubbles
+            ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+            bubbles.forEach(bubble => {
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                bubble.y -= bubble.speed;
+                
+                if (bubble.y < -20) {
+                    bubble.y = canvas.height + 10;
+                    bubble.x = Math.random() * canvas.width;
+                }
+            });
+            
+            // Draw seaweed
+            seaweed.forEach(plant => {
+                ctx.fillStyle = "#00aa44";
+                
+                const time = Date.now() / 1000;
+                const swayX = Math.sin(time * plant.sway) * 10;
+                
+                for (let i = 0; i < plant.segments; i++) {
+                    const segmentHeight = plant.height / plant.segments;
+                    const y = plant.y - segmentHeight * i;
+                    const segSwayX = swayX * (i + 1) / plant.segments;
+                    
+                    ctx.fillRect(
+                        plant.x + segSwayX - plant.width / 2, 
+                        y - segmentHeight, 
+                        plant.width, 
+                        segmentHeight
+                    );
+                }
+            });
+        }
+        
+        // Draw energy bar
+        function drawEnergyBar() {
+            const barWidth = 150;
+            const barHeight = 15;
+            const x = 20;
+            const y = 20;
+            
+            // Draw background
+            ctx.fillStyle = "#333";
+            ctx.fillRect(x, y, barWidth, barHeight);
+            
+            // Draw energy level
+            ctx.fillStyle = submarine.energy > 30 ? "#00ff00" : "#ff0000";
+            ctx.fillRect(x, y, barWidth * (submarine.energy / 100), barHeight);
+            
+            // Draw border
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, barWidth, barHeight);
+            
+            // Draw label
+            ctx.fillStyle = "#fff";
+            ctx.font = "14px sans-serif";
+            ctx.fillText("ENERGY", x + barWidth / 2 - 30, y + barHeight + 15);
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+            
+            ctx.fillStyle = "#fff";
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("What is the capital of France?", canvas.width / 2, canvas.height - 30);
+        }
+        
+        // Check if ping detects any answer
+        function checkPingCollision() {
+            if (!ping.active) return;
+            
+            for (let i = 0; i < answers.length; i++) {
+                const answer = answers[i];
+                const dx = ping.x - answer.x;
+                const dy = ping.y - answer.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance <= ping.radius && distance >= ping.radius - 10) {
+                    // Ping detected an answer
+                    if (answer.correct) {
+                        endGame(true);
+                    } else {
+                        playSound("incorrect");
+                        // Visual feedback for incorrect answer
+                        answer.color = "#ff0000";
+                        setTimeout(() => {
+                            answer.color = answer.shape === "fish" ? "#88cc88" : 
+                                         answer.shape === "jellyfish" ? "#cc8888" : 
+                                         answer.shape === "seahorse" ? "#8888cc" : "#cccc88";
+                        }, 300);
+                    }
+                }
+            }
+        }
+        
+        // End the game with result
+        function endGame(correct) {
+            gameOver = true;
+            
+            if (correct) {
+                playSound("correct");
+            } else {
+                playSound("incorrect");
+            }
+            
+            pingButton.style.display = "none";
+            restartButton.style.display = "block";
+        }
+        
+        // Main game update function
+        function update() {
+            // Clear canvas
+            ctx.fillStyle = "#003366";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (!gameOver) {
+                // Update submarine position
+                const dx = submarine.targetX - submarine.x;
+                const dy = submarine.targetY - submarine.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance > 1) {
+                    submarine.x += dx / distance * submarine.speed;
+                    submarine.y += dy / distance * submarine.speed;
+                }
+                
+                // Check ping collision
+                checkPingCollision();
+            }
+            
+            // Draw elements
+            drawDecorations();
+            drawAnswers();
+            drawSubmarine();
+            drawPing();
+            drawEnergyBar();
+            drawQuestion();
+            
+            if (gameOver) {
+                // Show game over message
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(canvas.width/2 - 150, canvas.height/2 - 60, 300, 80);
+                
+                ctx.fillStyle = "#fff";
+                ctx.font = "24px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("Game Over", canvas.width/2, canvas.height/2);
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            submarine.targetX = x;
+            submarine.targetY = y;
+        });
+        
+        pingButton.addEventListener('click', () => {
+            if (gameOver || ping.cooldown || submarine.energy <= 0) return;
+            
+            ping.active = true;
+            ping.x = submarine.x;
+            ping.y = submarine.y;
+            ping.radius = 0;
+            
+            submarine.energy -= 20;
+            if (submarine.energy <= 0) {
+                endGame(false);
+            }
+            
+            playSound("ping");
+            
+            ping.cooldown = true;
+            setTimeout(() => {
+                ping.cooldown = false;
+            }, ping.cooldownTime);
+        });
+        
+        restartButton.addEventListener('click', () => {
+            init();
+        });
+        
+        // Start the game
+        init();
+        update();
+    </script>
+</body>
+</html>

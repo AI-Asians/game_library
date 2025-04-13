@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rhythm Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 10px;
+            padding: 5px 10px;
+            background: #333;
+            color: white;
+            border: 2px solid #555;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let beatTimer = 0;
+        const beatInterval = 60; // Beat timing in frames
+        let currentBeat = 0;
+        
+        // Colors for 8-bit style
+        const colors = {
+            background: '#111122',
+            hitZone: '#55AAFF',
+            hitZoneActive: '#FFAA55',
+            track: '#333344',
+            trackLines: '#444466',
+            correct: '#55FF55',
+            incorrect: '#FF5555',
+            text: '#FFFFFF',
+            beatIndicator: '#FF77AA'
+        };
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "London", correct: false, x: -100, lane: 0 },
+            { text: "Paris", correct: true, x: -250, lane: 1 },
+            { text: "Berlin", correct: false, x: -400, lane: 2 },
+            { text: "Madrid", correct: false, x: -550, lane: 3 }
+        ];
+        
+        const laneCount = 4;
+        const laneHeight = isMobile ? 70 : 90;
+        const laneStartY = (canvas.height / 2) - ((laneHeight * laneCount) / 2) + 50;
+        
+        // Hit zone
+        const hitZoneX = canvas.width - 100;
+        const hitZoneWidth = 60;
+        
+        // Sound generation functions
+        function createOscillator(freq, type, duration) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            // Create the fade out effect
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration * 1000);
+        }
+        
+        function playBeat() {
+            createOscillator(440, 'square', 0.1);
+        }
+        
+        function playCorrect() {
+            createOscillator(523.25, 'square', 0.1); // C5
+            setTimeout(() => createOscillator(659.25, 'square', 0.2), 100); // E5
+            setTimeout(() => createOscillator(783.99, 'square', 0.3), 200); // G5
+        }
+        
+        function playWrong() {
+            createOscillator(196.00, 'square', 0.3); // G3
+            setTimeout(() => createOscillator(185.00, 'square', 0.3), 100); // F#3
+        }
+        
+        // Hit particle effects
+        let particles = [];
+        
+        function createHitParticles(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    size: Math.random() * 6 + 2,
+                    color: color,
+                    life: 20
+                });
+            }
+        }
+        
+        function updateParticles() {
+            particles = particles.filter(p => p.life > 0);
+            
+            particles.forEach(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                p.size *= 0.95;
+            });
+        }
+        
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+            });
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            // Background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Pulsing background elements
+            const pulseSize = Math.sin(beatTimer * 0.1) * 5 + 15;
+            for (let i = 0; i < 10; i++) {
+                for (let j = 0; j < 8; j++) {
+                    ctx.fillStyle = `rgba(85, 170, 255, ${0.03 + (Math.sin(beatTimer * 0.1) * 0.02)})`;
+                    ctx.fillRect(
+                        i * canvas.width/10 - pulseSize/2, 
+                        j * canvas.height/8 - pulseSize/2, 
+                        pulseSize, pulseSize
+                    );
+                }
+            }
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `bold ${isMobile ? 18 : 22}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 40);
+        }
+        
+        function drawTracks() {
+            // Draw lanes
+            for (let i = 0; i < laneCount; i++) {
+                // Lane background
+                ctx.fillStyle = colors.track;
+                ctx.fillRect(0, laneStartY + (i * laneHeight), canvas.width, laneHeight);
+                
+                // Lane separator lines
+                ctx.fillStyle = colors.trackLines;
+                ctx.fillRect(0, laneStartY + (i * laneHeight), canvas.width, 2);
+                
+                // Lane beat markers
+                for (let j = 0; j < 8; j++) {
+                    const markerX = canvas.width - (j * beatInterval * 3) - 100;
+                    if (markerX > 0 && markerX < canvas.width) {
+                        ctx.fillStyle = j % 4 === 0 ? '#555577' : '#444466';
+                        ctx.fillRect(markerX, laneStartY + (i * laneHeight), 2, laneHeight);
+                    }
+                }
+            }
+            
+            // Draw hit zone
+            const hitZoneY = laneStartY;
+            const hitZoneHeight = laneHeight * laneCount;
+            
+            ctx.fillStyle = currentBeat % 2 === 0 ? colors.hitZoneActive : colors.hitZone;
+            ctx.fillRect(hitZoneX, hitZoneY, hitZoneWidth, hitZoneHeight);
+            
+            // Draw musical note design on hit zone
+            ctx.fillStyle = '#000';
+            // Note head
+            const noteX = hitZoneX + hitZoneWidth/2;
+            const noteY = hitZoneY + hitZoneHeight/2;
+            ctx.beginPath();
+            ctx.ellipse(noteX, noteY, 12, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Note stem
+            ctx.fillRect(noteX + 11, noteY - 25, 3, 25);
+            
+            // Note flag
+            ctx.beginPath();
+            ctx.moveTo(noteX + 14, noteY - 25);
+            ctx.lineTo(noteX + 24, noteY - 20);
+            ctx.lineTo(noteX + 14, noteY - 15);
+            ctx.fill();
+        }
+        
+        function drawAnswers() {
+            answers.forEach((answer, i) => {
+                const y = laneStartY + (answer.lane * laneHeight) + laneHeight/2;
+                
+                // Answer block
+                const blockWidth = isMobile ? 80 : 120;
+                const blockHeight = laneHeight - 20;
+                
+                ctx.fillStyle = answer.correct ? '#5588AA' : '#AA5588';
+                ctx.fillRect(answer.x, y - blockHeight/2, blockWidth, blockHeight);
+                
+                // Answer text
+                ctx.fillStyle = colors.text;
+                ctx.font = `${isMobile ? 14 : 16}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(answer.text, answer.x + blockWidth/2, y + 5);
+            });
+        }
+        
+        function drawBeatIndicator() {
+            ctx.fillStyle = currentBeat % 2 === 0 ? colors.beatIndicator : 'transparent';
+            const indicatorSize = isMobile ? 15 : 20;
+            ctx.fillRect(20, 20, indicatorSize, indicatorSize);
+        }
+        
+        // Game logic
+        function update() {
+            if (gameOver) return;
+            
+            beatTimer++;
+            
+            // Beat timing
+            if (beatTimer % beatInterval === 0) {
+                currentBeat++;
+                playBeat();
+            }
+            
+            // Move answers
+            const speed = 3;
+            answers.forEach(answer => {
+                answer.x += speed;
+                
+                // Loop answers
+                if (answer.x > canvas.width) {
+                    answer.x = -150 - Math.random() * 100;
+                }
+            });
+            
+            updateParticles();
+        }
+        
+        // Check if an answer is in the hit zone
+        function checkHitZone(x, y) {
+            // Find which lane was clicked
+            let clickedLane = -1;
+            for (let i = 0; i < laneCount; i++) {
+                const laneY = laneStartY + (i * laneHeight);
+                if (y >= laneY && y <= laneY + laneHeight) {
+                    clickedLane = i;
+                    break;
+                }
+            }
+            
+            if (clickedLane === -1) return;
+            
+            // Check if there's an answer in the hit zone in the clicked lane
+            for (let i = 0; i < answers.length; i++) {
+                const answer = answers[i];
+                if (answer.lane === clickedLane) {
+                    const answerBlockWidth = isMobile ? 80 : 120;
+                    
+                    // Check if answer is in hit zone
+                    if (answer.x <= hitZoneX + hitZoneWidth && 
+                        answer.x + answerBlockWidth >= hitZoneX) {
+                        
+                        // Create hit particles
+                        const hitY = laneStartY + (answer.lane * laneHeight) + laneHeight/2;
+                        createHitParticles(
+                            hitZoneX + hitZoneWidth/2, 
+                            hitY,
+                            answer.correct ? colors.correct : colors.incorrect
+                        );
+                        
+                        // Handle correct/incorrect
+                        gameOver = true;
+                        if (answer.correct) {
+                            playCorrect();
+                        } else {
+                            playWrong();
+                        }
+                        
+                        // Show restart button
+                        restartBtn.style.display = 'block';
+                        return;
+                    }
+                }
+            }
+        }
+        
+        // Input handling
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            checkHitZone(clickX, clickY);
+        });
+        
+        // Restart game
+        restartBtn.addEventListener('click', () => {
+            gameOver = false;
+            restartBtn.style.display = 'none';
+            beatTimer = 0;
+            currentBeat = 0;
+            particles = [];
+            
+            // Reset answers
+            answers[0].x = -100;
+            answers[1].x = -250;
+            answers[2].x = -400;
+            answers[3].x = -550;
+        });
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            
+            drawBackground();
+            drawTracks();
+            drawAnswers();
+            drawBeatIndicator();
+            drawParticles();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

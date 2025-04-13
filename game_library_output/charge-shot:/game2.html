@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #gameCanvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Determine if running on mobile based on screen width
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas dimensions
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors (8-bit limited palette)
+        const COLORS = {
+            background: '#222034',
+            text: '#ffffff',
+            chargeMeterEmpty: '#5a6988',
+            chargeMeterFull: '#ff0044',
+            correctAnswer: '#38b764',
+            wrongAnswer: '#d95763',
+            cannon: '#5a6988',
+            projectile: '#ffcd75',
+            projectileTrail: '#ff9166',
+            buttons: '#5a6988',
+            buttonText: '#ffffff',
+            chargeOverheat: '#d95763'
+        };
+
+        // Game state
+        let gameState = {
+            charging: false,
+            chargeLevel: 0,
+            cooldown: false,
+            fired: false,
+            gameOver: false,
+            projectile: null,
+            restartButton: { 
+                x: canvas.width / 2 - 50, 
+                y: canvas.height / 2 + 60, 
+                width: 100, 
+                height: 30 
+            }
+        };
+
+        // Answer options
+        const planets = [
+            { name: "Venus", correct: false },
+            { name: "Mars", correct: true },
+            { name: "Jupiter", correct: false },
+            { name: "Mercury", correct: false }
+        ];
+
+        // Shuffle the planets array
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+        
+        // Create positions for answers based on canvas size
+        const shuffledPlanets = shuffleArray([...planets]);
+        const targetRadius = isMobile ? 30 : 40;
+        const targetPositions = [];
+        
+        // Position the targets in a grid pattern
+        const columns = 2;
+        const rows = 2;
+        const spacing = isMobile ? 120 : 180;
+        const startX = canvas.width / 2 - (spacing * (columns - 1) / 2);
+        const startY = isMobile ? 200 : 220;
+        
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < columns; col++) {
+                const index = row * columns + col;
+                targetPositions.push({
+                    x: startX + col * spacing,
+                    y: startY + row * spacing,
+                    planet: shuffledPlanets[index]
+                });
+            }
+        }
+
+        // Cannon position
+        const cannon = {
+            x: canvas.width / 2,
+            y: canvas.height - 60,
+            width: 30,
+            height: 40
+        };
+
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'charge':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(150 + gameState.chargeLevel * 3, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'fire':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.2);
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(262, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    }, 100);
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(392, audioContext.currentTime);
+                    }, 200);
+                    
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                    }, 200);
+                    
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                    break;
+                case 'overheat':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.linearRampToValueAtTime(50, audioContext.currentTime + 0.3);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+
+        // Draw pixelated rectangle
+        function drawPixelatedRect(x, y, width, height, color) {
+            const pixelSize = 4;
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    // Add some "noise" to make it look more 8-bit
+                    if (Math.random() > 0.95) continue;
+                    ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                }
+            }
+        }
+
+        // Draw pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 3;
+            ctx.fillStyle = color;
+            
+            for (let i = -radius; i < radius; i += pixelSize) {
+                for (let j = -radius; j < radius; j += pixelSize) {
+                    // Only draw if within circle
+                    if (i*i + j*j <= radius*radius) {
+                        // Add some "noise" to make it look more 8-bit
+                        if (Math.random() > 0.95) continue;
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+
+        // Draw cannon
+        function drawCannon() {
+            // Base
+            drawPixelatedRect(cannon.x - cannon.width/2, cannon.y, cannon.width, cannon.height, COLORS.cannon);
+            
+            // Cannon "barrel"
+            const barrelLength = 20 + gameState.chargeLevel / 5;
+            drawPixelatedRect(cannon.x - 8, cannon.y - barrelLength, 16, barrelLength, COLORS.cannon);
+            
+            // Cannon "muzzle"
+            drawPixelatedRect(cannon.x - 10, cannon.y - barrelLength - 5, 20, 5, COLORS.cannon);
+            
+            // Draw charge meter
+            const meterWidth = 60;
+            const meterHeight = 10;
+            const meterX = cannon.x - meterWidth / 2;
+            const meterY = cannon.y + cannon.height + 10;
+            
+            // Background of meter
+            drawPixelatedRect(meterX, meterY, meterWidth, meterHeight, COLORS.chargeMeterEmpty);
+            
+            // Fill of meter based on charge level
+            const fillWidth = (gameState.chargeLevel / 100) * meterWidth;
+            const meterColor = gameState.cooldown ? COLORS.chargeOverheat : COLORS.chargeMeterFull;
+            drawPixelatedRect(meterX, meterY, fillWidth, meterHeight, meterColor);
+            
+            // Meter border
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(meterX, meterY, meterWidth, meterHeight);
+        }
+
+        // Draw targets (planets)
+        function drawTargets() {
+            targetPositions.forEach(target => {
+                // Draw target
+                const color = target.hit ? (target.planet.correct ? COLORS.correctAnswer : COLORS.wrongAnswer) : COLORS.buttons;
+                drawPixelatedCircle(target.x, target.y, targetRadius, color);
+                
+                // Draw planet name
+                ctx.fillStyle = COLORS.buttonText;
+                ctx.font = isMobile ? '16px Arial' : '18px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(target.planet.name, target.x, target.y);
+            });
+        }
+
+        // Draw projectile
+        function drawProjectile() {
+            if (!gameState.projectile) return;
+            
+            const proj = gameState.projectile;
+            const size = 10 + (proj.power / 20);
+            
+            // Draw trail particles
+            if (proj.power > 30) {
+                for (let i = 0; i < 5; i++) {
+                    const trailX = proj.x - Math.random() * 20 * (proj.velocityX / 10);
+                    const trailY = proj.y - Math.random() * 20 * (proj.velocityY / 10);
+                    const trailSize = size * 0.7 * Math.random();
+                    drawPixelatedCircle(trailX, trailY, trailSize, COLORS.projectileTrail);
+                }
+            }
+            
+            // Draw main projectile
+            drawPixelatedCircle(proj.x, proj.y, size, COLORS.projectile);
+        }
+
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '18px Arial' : '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, isMobile ? 120 : 100);
+        }
+
+        // Draw restart button
+        function drawRestartButton() {
+            if (gameState.gameOver) {
+                drawPixelatedRect(
+                    gameState.restartButton.x, 
+                    gameState.restartButton.y, 
+                    gameState.restartButton.width, 
+                    gameState.restartButton.height, 
+                    COLORS.buttons
+                );
+                
+                ctx.fillStyle = COLORS.buttonText;
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Restart', 
+                    gameState.restartButton.x + gameState.restartButton.width / 2, 
+                    gameState.restartButton.y + gameState.restartButton.height / 2
+                );
+            }
+        }
+
+        // Handle mouse/touch down
+        function handleStart(e) {
+            e.preventDefault();
+            
+            // Get pointer position
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            // Check if restart button was clicked
+            if (gameState.gameOver && 
+                x >= gameState.restartButton.x && 
+                x <= gameState.restartButton.x + gameState.restartButton.width &&
+                y >= gameState.restartButton.y && 
+                y <= gameState.restartButton.y + gameState.restartButton.height) {
+                
+                restartGame();
+                return;
+            }
+            
+            // Start charging if not in cooldown
+            if (!gameState.cooldown && !gameState.fired && !gameState.gameOver) {
+                gameState.charging = true;
+            }
+        }
+
+        // Handle mouse/touch up
+        function handleEnd(e) {
+            e.preventDefault();
+            
+            // Fire if charging
+            if (gameState.charging && !gameState.fired && !gameState.gameOver) {
+                if (gameState.chargeLevel > 100) {
+                    // Overcharged - go into cooldown
+                    gameState.cooldown = true;
+                    gameState.charging = false;
+                    playSound('overheat');
+                    
+                    // Reset after cooldown period
+                    setTimeout(() => {
+                        gameState.cooldown = false;
+                        gameState.chargeLevel = 0;
+                    }, 1000);
+                } else if (gameState.chargeLevel > 5) {
+                    // Fire projectile
+                    gameState.fired = true;
+                    gameState.charging = false;
+                    
+                    const power = gameState.chargeLevel;
+                    gameState.projectile = {
+                        x: cannon.x,
+                        y: cannon.y - 30,
+                        velocityX: 0,
+                        velocityY: -power / 10,
+                        power: power
+                    };
+                    
+                    playSound('fire');
+                }
+            }
+        }
+
+        // Check collision between projectile and targets
+        function checkCollisions() {
+            if (!gameState.projectile) return;
+            
+            const proj = gameState.projectile;
+            
+            for (let target of targetPositions) {
+                const dx = proj.x - target.x;
+                const dy = proj.y - target.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < targetRadius + 10) {
+                    // Hit this target
+                    target.hit = true;
+                    
+                    // Play appropriate sound
+                    if (target.planet.correct) {
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    
+                    // End game
+                    setTimeout(() => {
+                        gameState.gameOver = true;
+                        gameState.projectile = null;
+                    }, 500);
+                    
+                    return;
+                }
+            }
+        }
+
+        // Update game state
+        function update() {
+            // Update charge level
+            if (gameState.charging && !gameState.cooldown) {
+                gameState.chargeLevel += 2;
+                
+                // Play charging sound at intervals
+                if (gameState.chargeLevel % 10 === 0) {
+                    playSound('charge');
+                }
+            }
+            
+            // Update projectile
+            if (gameState.projectile) {
+                const proj = gameState.projectile;
+                proj.x += proj.velocityX;
+                proj.y += proj.velocityY;
+                
+                // Check for collisions
+                checkCollisions();
+                
+                // Check if projectile is off-screen
+                if (proj.y < -50 || proj.y > canvas.height + 50 || 
+                    proj.x < -50 || proj.x > canvas.width + 50) {
+                    
+                    gameState.projectile = null;
+                    gameState.fired = false;
+                    gameState.chargeLevel = 0;
+                }
+            }
+        }
+
+        // Draw everything
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw all game elements
+            drawQuestion();
+            drawTargets();
+            drawCannon();
+            drawProjectile();
+            drawRestartButton();
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Restart game
+        function restartGame() {
+            // Shuffle planet positions
+            const newPlanets = shuffleArray([...planets]);
+            
+            for (let i = 0; i < targetPositions.length; i++) {
+                targetPositions[i].planet = newPlanets[i];
+                targetPositions[i].hit = false;
+            }
+            
+            // Reset game state
+            gameState = {
+                charging: false,
+                chargeLevel: 0,
+                cooldown: false,
+                fired: false,
+                gameOver: false,
+                projectile: null,
+                restartButton: gameState.restartButton
+            };
+        }
+
+        // Set up event listeners
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchend', handleEnd);
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lane Runner Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #222;
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: 3px solid #222;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas dimensions
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors - limited 8-bit palette
+        const COLORS = {
+            bg: '#5A6988',
+            road: '#222222',
+            lane: '#FFCC00',
+            player: '#FF4400',
+            shadow: '#943300',
+            text: '#FFFFFF',
+            true: '#44CC44',
+            false: '#CC4444',
+            clouds: '#AABBEE'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let result = '';
+        let lastTime = 0;
+        
+        // Game objects
+        const lanes = [0, 1]; // Left lane, Right lane
+        const laneWidth = canvas.width / 2;
+        
+        const player = {
+            lane: 0,
+            x: laneWidth / 2,
+            y: canvas.height - 100,
+            width: 40,
+            height: 40,
+            targetX: laneWidth / 2,
+            speed: 8,
+            dust: []
+        };
+        
+        // Answers as gates the player runs through
+        const answers = [
+            { text: "TRUE", lane: 0, y: -300, color: COLORS.true },
+            { text: "FALSE", lane: 1, y: -300, color: COLORS.false }
+        ];
+        
+        // Background elements
+        const clouds = [];
+        for (let i = 0; i < 10; i++) {
+            clouds.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height / 2,
+                width: 30 + Math.random() * 50,
+                speed: 0.5 + Math.random() * 1
+            });
+        }
+        
+        // Lane markers
+        const laneMarkers = [];
+        const markerSpacing = 80;
+        for (let y = -markerSpacing; y < canvas.height + markerSpacing; y += markerSpacing) {
+            laneMarkers.push({ y: y });
+        }
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        // Correct answer is FALSE
+        
+        // Sound effects using AudioContext
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playLaneChangeSound() {
+            playSound(300, 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 0.1, 'sine');
+            setTimeout(() => playSound(660, 0.15, 'sine'), 100);
+        }
+        
+        function playIncorrectSound() {
+            playSound(200, 0.2, 'sawtooth');
+            setTimeout(() => playSound(150, 0.3, 'sawtooth'), 150);
+        }
+        
+        // Input handling
+        canvas.addEventListener('click', handleTap);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            handleTap(e);
+        });
+        
+        function handleTap(e) {
+            if (gameOver) return;
+            
+            // Toggle between lanes
+            player.lane = player.lane === 0 ? 1 : 0;
+            player.targetX = (player.lane * laneWidth) + (laneWidth / 2);
+            
+            // Add dust particle effect
+            for (let i = 0; i < 5; i++) {
+                player.dust.push({
+                    x: player.x,
+                    y: player.y + player.height/2,
+                    size: 10 + Math.random() * 5,
+                    speedX: (Math.random() - 0.5) * 4,
+                    speedY: -0.5 - Math.random() * 2,
+                    life: 1
+                });
+            }
+            
+            playLaneChangeSound();
+        }
+        
+        document.getElementById('restartBtn').addEventListener('click', function() {
+            // Reset game state
+            gameOver = false;
+            result = '';
+            player.lane = 0;
+            player.targetX = laneWidth / 2;
+            answers[0].y = -300;
+            answers[1].y = -300;
+            document.getElementById('restartBtn').style.display = 'none';
+            
+            // Reset lane markers
+            laneMarkers.length = 0;
+            for (let y = -markerSpacing; y < canvas.height + markerSpacing; y += markerSpacing) {
+                laneMarkers.push({ y: y });
+            }
+            
+            // Resume game loop
+            requestAnimationFrame(gameLoop);
+        });
+        
+        // Update game state
+        function update(deltaTime) {
+            if (gameOver) return;
+            
+            // Move player towards target x position (lane center)
+            if (player.x < player.targetX) {
+                player.x = Math.min(player.x + player.speed, player.targetX);
+            } else if (player.x > player.targetX) {
+                player.x = Math.max(player.x - player.speed, player.targetX);
+            }
+            
+            // Update dust particles
+            for (let i = player.dust.length - 1; i >= 0; i--) {
+                const dust = player.dust[i];
+                dust.x += dust.speedX;
+                dust.y += dust.speedY;
+                dust.life -= 0.05;
+                dust.size *= 0.95;
+                
+                if (dust.life <= 0) {
+                    player.dust.splice(i, 1);
+                }
+            }
+            
+            // Move clouds
+            clouds.forEach(cloud => {
+                cloud.x -= cloud.speed;
+                if (cloud.x + cloud.width < 0) {
+                    cloud.x = canvas.width;
+                    cloud.y = Math.random() * canvas.height / 2;
+                }
+            });
+            
+            // Move lane markers
+            laneMarkers.forEach(marker => {
+                marker.y += 5;
+                if (marker.y > canvas.height) {
+                    marker.y = -markerSpacing;
+                }
+            });
+            
+            // Move answers toward player
+            answers.forEach(answer => {
+                answer.y += 3;
+                
+                // Check for collision with player
+                if (answer.y + 40 > player.y && answer.y < player.y + player.height && answer.lane === player.lane) {
+                    gameOver = true;
+                    if ((answer.text === "FALSE")) {
+                        result = "Correct!";
+                        playCorrectSound();
+                    } else {
+                        result = "Incorrect!";
+                        playIncorrectSound();
+                    }
+                    document.getElementById('restartBtn').style.display = 'block';
+                }
+            });
+        }
+        
+        // Draw game objects
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw clouds
+            ctx.fillStyle = COLORS.clouds;
+            clouds.forEach(cloud => {
+                // Simple 8-bit style cloud
+                ctx.fillRect(cloud.x, cloud.y, cloud.width, 20);
+                ctx.fillRect(cloud.x + 10, cloud.y - 10, cloud.width - 20, 15);
+            });
+            
+            // Draw road
+            ctx.fillStyle = COLORS.road;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw lane divider
+            ctx.fillStyle = COLORS.lane;
+            ctx.fillRect(laneWidth - 5, 0, 10, canvas.height);
+            
+            // Draw lane markers
+            ctx.fillStyle = COLORS.lane;
+            laneMarkers.forEach(marker => {
+                ctx.fillRect(laneWidth/4, marker.y, laneWidth/2, 15);
+                ctx.fillRect(laneWidth + laneWidth/4, marker.y, laneWidth/2, 15);
+            });
+            
+            // Draw player dust effect
+            player.dust.forEach(dust => {
+                ctx.fillStyle = `rgba(255, 210, 120, ${dust.life})`;
+                ctx.fillRect(dust.x, dust.y, dust.size, dust.size);
+            });
+            
+            // Draw player (8-bit character)
+            // Shadow
+            ctx.fillStyle = COLORS.shadow;
+            ctx.fillRect(player.x - player.width/2 + 4, player.y + 4, player.width, player.height);
+            
+            // Body
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(player.x - player.width/2, player.y, player.width, player.height);
+            
+            // Details
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(player.x - player.width/4, player.y + player.height/4, 8, 8);
+            ctx.fillRect(player.x + player.width/4 - 8, player.y + player.height/4, 8, 8);
+            
+            // Draw question at top
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw answer gates
+            answers.forEach(answer => {
+                // Gate
+                ctx.fillStyle = answer.color;
+                ctx.fillRect(answer.lane * laneWidth, answer.y, laneWidth, 40);
+                
+                // Answer text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '24px sans-serif';
+                ctx.fillText(answer.text, answer.lane * laneWidth + laneWidth / 2, answer.y + 28);
+            });
+            
+            // Draw game over result
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, canvas.height / 2 - 50, canvas.width, 100);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '32px sans-serif';
+                ctx.fillText(result, canvas.width / 2, canvas.height / 2 + 10);
+            }
+        }
+        
+        // Main game loop
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            draw();
+            
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Start the game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

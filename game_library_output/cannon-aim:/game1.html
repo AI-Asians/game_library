@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cannon Quiz - Capital of France</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #222;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - 8-bit palette
+        const COLORS = {
+            bg: '#5c94fc',
+            ground: '#8e8e8e',
+            cannon: '#333333',
+            cannonBase: '#7c7c7c',
+            projectile: '#ff0000',
+            targetCorrect: '#00a800',
+            targetWrong: '#a80000',
+            text: '#ffffff',
+            trail: '#ffaa00'
+        };
+        
+        // Game state
+        let angle = 0;
+        let cannonX = canvas.width / 2;
+        let cannonY = canvas.height - 100;
+        let projectile = null;
+        let targets = [];
+        let gameOver = false;
+        let shotFired = false;
+        let lastShotX = null;
+        let lastShotY = null;
+        let shotsRemaining = 3;
+        let cannonRecoil = 0;
+        let cannonRotating = false;
+        let rotationDirection = 1;
+        let rotationSpeed = 0.02;
+        let restartButton = null;
+        let trailPositions = [];
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'fire') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(40, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'hit') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(500, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(400, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(500, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(100, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        }
+        
+        // Initialize the game
+        function init() {
+            // Reset game state
+            gameOver = false;
+            shotFired = false;
+            projectile = null;
+            lastShotX = null;
+            lastShotY = null;
+            shotsRemaining = 3;
+            cannonRecoil = 0;
+            trailPositions = [];
+            
+            // Auto-rotate the cannon
+            cannonRotating = true;
+            angle = -Math.PI / 4; // Start at -45 degrees
+            
+            // Create targets
+            const answers = ['Paris', 'London', 'Berlin', 'Madrid'];
+            const correctAnswer = 'Paris';
+            targets = [];
+            
+            const targetRadius = isMobile ? 30 : 40;
+            const spacing = isMobile ? canvas.width / 5 : canvas.width / 6;
+            
+            for (let i = 0; i < answers.length; i++) {
+                const x = spacing + i * spacing;
+                const y = canvas.height * 0.25 + (i % 2 === 0 ? 0 : 60);
+                targets.push({
+                    x: x,
+                    y: y,
+                    text: answers[i],
+                    radius: targetRadius,
+                    isCorrect: answers[i] === correctAnswer,
+                    isHit: false,
+                    explosionParticles: [],
+                    explosionTime: 0
+                });
+            }
+            
+            // Initialize restart button
+            restartButton = {
+                x: canvas.width / 2,
+                y: canvas.height * 0.6,
+                width: 120,
+                height: 40,
+                visible: false
+            };
+        }
+        
+        // Draw a pixelated circle
+        function drawPixelCircle(x, y, radius, color) {
+            const pixelSize = 2;
+            x = Math.floor(x / pixelSize) * pixelSize;
+            y = Math.floor(y / pixelSize) * pixelSize;
+            
+            ctx.fillStyle = color;
+            for (let i = -radius; i <= radius; i += pixelSize) {
+                for (let j = -radius; j <= radius; j += pixelSize) {
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        // Draw the cannon
+        function drawCannon() {
+            const barrelLength = 40 - cannonRecoil;
+            const barrelWidth = 14;
+            
+            // Base
+            ctx.fillStyle = COLORS.cannonBase;
+            ctx.beginPath();
+            ctx.arc(cannonX, cannonY, 25, 0, Math.PI, false);
+            ctx.fill();
+            
+            // Barrel
+            ctx.save();
+            ctx.translate(cannonX, cannonY);
+            ctx.rotate(angle);
+            
+            // Pixelated barrel
+            ctx.fillStyle = COLORS.cannon;
+            for (let y = -barrelWidth/2; y < barrelWidth/2; y += 2) {
+                for (let x = 0; x < barrelLength; x += 2) {
+                    ctx.fillRect(x, y, 2, 2);
+                }
+            }
+            
+            // Arrow indicator for aim direction
+            ctx.fillStyle = COLORS.text;
+            ctx.beginPath();
+            ctx.moveTo(barrelLength + 5, 0);
+            ctx.lineTo(barrelLength + 15, -5);
+            ctx.lineTo(barrelLength + 15, 5);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        // Draw the targets
+        function drawTargets() {
+            targets.forEach(target => {
+                if (target.isHit) {
+                    // Draw explosion
+                    target.explosionParticles.forEach(particle => {
+                        drawPixelCircle(
+                            particle.x, 
+                            particle.y, 
+                            particle.size, 
+                            `rgb(${particle.color.r},${particle.color.g},${particle.color.b})`
+                        );
+                    });
+                } else {
+                    // Draw target
+                    drawPixelCircle(
+                        target.x, 
+                        target.y, 
+                        target.radius, 
+                        target.isCorrect ? COLORS.targetCorrect : COLORS.targetWrong
+                    );
+                    
+                    // Draw target text
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = '16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(target.text, target.x, target.y);
+                }
+            });
+        }
+        
+        // Draw projectile
+        function drawProjectile() {
+            if (projectile) {
+                drawPixelCircle(projectile.x, projectile.y, 6, COLORS.projectile);
+                
+                // Draw trail
+                for (let i = 0; i < trailPositions.length; i++) {
+                    const pos = trailPositions[i];
+                    const alpha = i / trailPositions.length;
+                    drawPixelCircle(pos.x, pos.y, 3, COLORS.trail);
+                }
+            }
+        }
+        
+        // Draw UI elements
+        function drawUI() {
+            // Question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 20);
+            
+            // Shots remaining
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Shots: ${shotsRemaining}`, 20, 20);
+            
+            // Last shot marker
+            if (lastShotX !== null && lastShotY !== null) {
+                ctx.strokeStyle = 'yellow';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(lastShotX - 5, lastShotY - 5);
+                ctx.lineTo(lastShotX + 5, lastShotY + 5);
+                ctx.moveTo(lastShotX + 5, lastShotY - 5);
+                ctx.lineTo(lastShotX - 5, lastShotY + 5);
+                ctx.stroke();
+            }
+            
+            // Draw restart button if game is over
+            if (restartButton.visible) {
+                ctx.fillStyle = '#444';
+                ctx.fillRect(
+                    restartButton.x - restartButton.width/2,
+                    restartButton.y - restartButton.height/2,
+                    restartButton.width,
+                    restartButton.height
+                );
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Play Again', restartButton.x, restartButton.y);
+            }
+        }
+        
+        // Fire the cannon
+        function fireCannon() {
+            if (!shotFired && !gameOver && shotsRemaining > 0) {
+                shotFired = true;
+                shotsRemaining--;
+                cannonRecoil = 10;
+                
+                // Calculate projectile velocity
+                const speed = 10;
+                projectile = {
+                    x: cannonX + Math.cos(angle) * 40,
+                    y: cannonY + Math.sin(angle) * 40,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed
+                };
+                
+                playSound('fire');
+            }
+        }
+        
+        // Update the game state
+        function update() {
+            // Handle cannon auto-rotation
+            if (cannonRotating) {
+                angle += rotationDirection * rotationSpeed;
+                
+                // Reverse direction at boundaries
+                if (angle <= -Math.PI/2) {
+                    angle = -Math.PI/2;
+                    rotationDirection = 1;
+                } else if (angle >= 0) {
+                    angle = 0;
+                    rotationDirection = -1;
+                }
+            }
+            
+            // Update cannon recoil
+            if (cannonRecoil > 0) {
+                cannonRecoil = Math.max(0, cannonRecoil - 1);
+            }
+            
+            // Update projectile
+            if (projectile) {
+                // Add current position to trail
+                if (trailPositions.length > 10) {
+                    trailPositions.shift();
+                }
+                trailPositions.push({x: projectile.x, y: projectile.y});
+                
+                // Update position
+                projectile.x += projectile.vx;
+                projectile.y += projectile.vy;
+                
+                // Check for collision with targets
+                targets.forEach(target => {
+                    if (!target.isHit) {
+                        const dx = projectile.x - target.x;
+                        const dy = projectile.y - target.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < target.radius) {
+                            target.isHit = true;
+                            lastShotX = projectile.x;
+                            lastShotY = projectile.y;
+                            shotFired = false;
+                            projectile = null;
+                            
+                            // Create explosion particles
+                            target.explosionParticles = [];
+                            for (let i = 0; i < 20; i++) {
+                                const angle = Math.random() * Math.PI * 2;
+                                const speed = 1 + Math.random() * 2;
+                                const size = 2 + Math.random() * 4;
+                                
+                                let r, g, b;
+                                if (target.isCorrect) {
+                                    r = 0; g = 200 + Math.random() * 55; b = 0;
+                                } else {
+                                    r = 200 + Math.random() * 55; g = 0; b = 0;
+                                }
+                                
+                                target.explosionParticles.push({
+                                    x: target.x,
+                                    y: target.y,
+                                    vx: Math.cos(angle) * speed,
+                                    vy: Math.sin(angle) * speed,
+                                    size: size,
+                                    color: { r, g, b }
+                                });
+                            }
+                            
+                            // Play sounds
+                            playSound('hit');
+                            if (target.isCorrect) {
+                                playSound('correct');
+                                gameOver = true;
+                            } else {
+                                playSound('wrong');
+                                if (shotsRemaining <= 0) {
+                                    gameOver = true;
+                                }
+                            }
+                            
+                            // Show restart button if game over
+                            if (gameOver) {
+                                setTimeout(() => {
+                                    restartButton.visible = true;
+                                }, 1000);
+                            }
+                        }
+                    }
+                });
+                
+                // Check if projectile is out of bounds
+                if (
+                    projectile.x < 0 || 
+                    projectile.x > canvas.width || 
+                    projectile.y < 0 || 
+                    projectile.y > canvas.height
+                ) {
+                    lastShotX = projectile.x;
+                    lastShotY = projectile.y;
+                    shotFired = false;
+                    projectile = null;
+                    
+                    if (shotsRemaining <= 0) {
+                        gameOver = true;
+                        setTimeout(() => {
+                            restartButton.visible = true;
+                        }, 1000);
+                    }
+                }
+            }
+            
+            // Update explosion particles
+            targets.forEach(target => {
+                if (target.isHit) {
+                    target.explosionParticles.forEach(particle => {
+                        particle.x += particle.vx;
+                        particle.y += particle.vy;
+                        particle.size *= 0.95;
+                    });
+                    
+                    // Remove tiny particles
+                    target.explosionParticles = target.explosionParticles.filter(p => p.size > 0.5);
+                }
+            });
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw ground
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, canvas.height - 70, canvas.width, 70);
+            
+            // Draw game elements
+            drawTargets();
+            drawProjectile();
+            drawCannon();
+            drawUI();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/touch events
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Check if restart button was clicked
+            if (
+                restartButton.visible &&
+                clickX >= restartButton.x - restartButton.width/2 &&
+                clickX <= restartButton.x + restartButton.width/2 &&
+                clickY >= restartButton.y - restartButton.height/2 &&
+                clickY <= restartButton.y + restartButton.height/2
+            ) {
+                init();
+                return;
+            }
+            
+            // Stop the auto-rotation and fire
+            if (!gameOver) {
+                cannonRotating = false;
+                fireCannon();
+            }
+        });
+        
+        // Initialize and start the game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

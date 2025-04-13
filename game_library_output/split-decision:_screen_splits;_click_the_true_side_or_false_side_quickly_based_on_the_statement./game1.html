@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>True or False: Split Decision</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameState = 'playing'; // playing, correct, incorrect
+        let timer = 10;
+        let lastTime = 0;
+        let hoveredSide = null;
+        let dividerOffset = 0;
+        let dividerDirection = 1;
+        
+        // Colors (limited retro palette)
+        const colors = {
+            background: '#111122',
+            trueBackground: '#220066',
+            trueHover: '#3300AA',
+            falseBackground: '#660022',
+            falseHover: '#AA0033',
+            text: '#EEEEEE',
+            textShadow: '#000000',
+            divider: '#FFCC00',
+            timerBar: '#00CCFF',
+            timerBackground: '#333333',
+            correctFlash: '#00FF66',
+            incorrectFlash: '#FF3300'
+        };
+        
+        // Correct answer
+        const correctAnswer = false; // The Great Wall of China is NOT visible from space
+        
+        // Question text
+        const question = "The Great Wall of China is visible from space.";
+        
+        // Audio context for sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound functions
+        function playSound(frequency, duration, type = 'square', volume = 0.3) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = volume;
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playHoverSound() {
+            playSound(220, 0.1, 'square', 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1, 'square');
+            setTimeout(() => playSound(659.25, 0.1, 'square'), 100);
+            setTimeout(() => playSound(783.99, 0.2, 'square'), 200);
+        }
+        
+        function playIncorrectSound() {
+            playSound(130.81, 0.2, 'sawtooth');
+            setTimeout(() => playSound(110, 0.3, 'sawtooth'), 200);
+        }
+        
+        function playTickSound() {
+            playSound(440, 0.05, 'square', 0.1);
+        }
+        
+        // Draw pixelated icon functions
+        function drawCheckmark(x, y, size) {
+            ctx.fillStyle = '#00FF66';
+            
+            // Pixelated checkmark
+            const pixels = [
+                [2, 5], [3, 6], [4, 7],
+                [5, 6], [6, 5], [7, 4], [8, 3]
+            ];
+            
+            const pixelSize = size / 10;
+            
+            pixels.forEach(pixel => {
+                ctx.fillRect(
+                    x + pixel[0] * pixelSize, 
+                    y + pixel[1] * pixelSize, 
+                    pixelSize, 
+                    pixelSize
+                );
+            });
+        }
+        
+        function drawXmark(x, y, size) {
+            ctx.fillStyle = '#FF3300';
+            
+            // Pixelated X mark
+            const pixels = [
+                [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8],
+                [2, 8], [3, 7], [4, 6], [5, 5], [6, 4], [7, 3], [8, 2]
+            ];
+            
+            const pixelSize = size / 10;
+            
+            pixels.forEach(pixel => {
+                ctx.fillRect(
+                    x + pixel[0] * pixelSize, 
+                    y + pixel[1] * pixelSize, 
+                    pixelSize, 
+                    pixelSize
+                );
+            });
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // LEFT SIDE - TRUE
+            ctx.fillStyle = hoveredSide === 'true' ? colors.trueHover : colors.trueBackground;
+            ctx.fillRect(0, 0, canvas.width / 2 - 2, canvas.height);
+            
+            // RIGHT SIDE - FALSE
+            ctx.fillStyle = hoveredSide === 'false' ? colors.falseHover : colors.falseBackground;
+            ctx.fillRect(canvas.width / 2 + 2, 0, canvas.width / 2, canvas.height);
+            
+            // Animated divider
+            ctx.fillStyle = colors.divider;
+            for (let y = 0; y < canvas.height; y += 16) {
+                ctx.fillRect(
+                    canvas.width / 2 - 2 + dividerOffset, 
+                    y, 
+                    4, 
+                    8
+                );
+            }
+        }
+        
+        function drawQuestionBox() {
+            const boxWidth = canvas.width - 40;
+            const boxHeight = 80;
+            const boxX = 20;
+            const boxY = 20;
+            
+            // Question box background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            
+            // Border (pixelated)
+            ctx.fillStyle = '#FFFFFF';
+            
+            // Top and bottom borders
+            for (let x = boxX; x < boxX + boxWidth; x += 4) {
+                ctx.fillRect(x, boxY, 3, 3);
+                ctx.fillRect(x, boxY + boxHeight - 3, 3, 3);
+            }
+            
+            // Left and right borders
+            for (let y = boxY; y < boxY + boxHeight; y += 4) {
+                ctx.fillRect(boxX, y, 3, 3);
+                ctx.fillRect(boxX + boxWidth - 3, y, 3, 3);
+            }
+            
+            // Question text with pixel-like shadow
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = colors.textShadow;
+            ctx.fillText(question, canvas.width / 2 + 2, boxY + 45 + 2);
+            ctx.fillStyle = colors.text;
+            ctx.fillText(question, canvas.width / 2, boxY + 45);
+        }
+        
+        function drawLabels() {
+            const fontSize = canvas.width * 0.08;
+            ctx.font = `bold ${fontSize}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            // TRUE label
+            ctx.fillStyle = colors.text;
+            ctx.fillText("TRUE", canvas.width * 0.25, canvas.height * 0.3);
+            
+            // TRUE icon
+            drawCheckmark(canvas.width * 0.25 - 30, canvas.height * 0.35, 60);
+            
+            // FALSE label
+            ctx.fillText("FALSE", canvas.width * 0.75, canvas.height * 0.3);
+            
+            // FALSE icon
+            drawXmark(canvas.width * 0.75 - 30, canvas.height * 0.35, 60);
+        }
+        
+        function drawTimer() {
+            const timerWidth = canvas.width - 100;
+            const timerHeight = 20;
+            const timerX = 50;
+            const timerY = canvas.height - 50;
+            
+            // Timer background
+            ctx.fillStyle = colors.timerBackground;
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Timer fill
+            ctx.fillStyle = colors.timerBar;
+            const fillWidth = (timer / 10) * timerWidth;
+            ctx.fillRect(timerX, timerY, fillWidth, timerHeight);
+            
+            // Pixelated timer border
+            ctx.fillStyle = '#FFFFFF';
+            for (let x = timerX; x < timerX + timerWidth; x += 5) {
+                ctx.fillRect(x, timerY, 3, 3);
+                ctx.fillRect(x, timerY + timerHeight - 3, 3, 3);
+            }
+            
+            for (let y = timerY; y < timerY + timerHeight; y += 5) {
+                ctx.fillRect(timerX, y, 3, 3);
+                ctx.fillRect(timerX + timerWidth - 3, y, 3, 3);
+            }
+        }
+        
+        function drawResults() {
+            ctx.fillStyle = gameState === 'correct' ? colors.correctFlash : colors.incorrectFlash;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = 'bold 36px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = colors.text;
+            
+            if (gameState === 'correct') {
+                ctx.fillText("CORRECT!", canvas.width / 2, canvas.height / 2 - 20);
+            } else {
+                ctx.fillText("INCORRECT!", canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '24px sans-serif';
+                ctx.fillText("The Great Wall is NOT visible from space", canvas.width / 2, canvas.height / 2 + 20);
+            }
+            
+            // Draw restart button
+            const btnWidth = 200;
+            const btnHeight = 60;
+            const btnX = canvas.width / 2 - btnWidth / 2;
+            const btnY = canvas.height / 2 + 50;
+            
+            ctx.fillStyle = '#333366';
+            ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+            
+            // Pixelated button border
+            ctx.fillStyle = '#6666CC';
+            for (let x = btnX; x < btnX + btnWidth; x += 5) {
+                ctx.fillRect(x, btnY, 4, 4);
+                ctx.fillRect(x, btnY + btnHeight - 4, 4, 4);
+            }
+            
+            for (let y = btnY; y < btnY + btnHeight; y += 5) {
+                ctx.fillRect(btnX, y, 4, 4);
+                ctx.fillRect(btnX + btnWidth - 4, y, 4, 4);
+            }
+            
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.fillText("RESTART", canvas.width / 2, btnY + btnHeight / 2 + 8);
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            if (gameState === 'playing') {
+                // Update game state
+                timer -= deltaTime;
+                if (timer <= 0) {
+                    timer = 0;
+                    gameState = 'incorrect';
+                    playIncorrectSound();
+                }
+                
+                // Update divider animation
+                dividerOffset += dividerDirection * 0.5;
+                if (dividerOffset > 2 || dividerOffset < -2) {
+                    dividerDirection *= -1;
+                }
+                
+                // Draw game elements
+                drawBackground();
+                drawQuestionBox();
+                drawLabels();
+                drawTimer();
+            } else {
+                drawResults();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch movement
+        function handleMouseMove(e) {
+            if (gameState !== 'playing') return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            
+            const oldHoveredSide = hoveredSide;
+            
+            if (x < canvas.width / 2) {
+                hoveredSide = 'true';
+            } else {
+                hoveredSide = 'false';
+            }
+            
+            if (oldHoveredSide !== hoveredSide && hoveredSide !== null) {
+                playHoverSound();
+            }
+        }
+        
+        // Handle clicks/taps
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameState === 'playing') {
+                if (x < canvas.width / 2) {
+                    // Clicked TRUE
+                    gameState = correctAnswer === true ? 'correct' : 'incorrect';
+                } else {
+                    // Clicked FALSE
+                    gameState = correctAnswer === false ? 'correct' : 'incorrect';
+                }
+                
+                if (gameState === 'correct') {
+                    playCorrectSound();
+                } else {
+                    playIncorrectSound();
+                }
+            } else {
+                // Check if restart button was clicked
+                const btnWidth = 200;
+                const btnHeight = 60;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = canvas.height / 2 + 50;
+                
+                if (x >= btnX && x <= btnX + btnWidth && y >= btnY && y <= btnY + btnHeight) {
+                    // Reset game
+                    gameState = 'playing';
+                    timer = 10;
+                    hoveredSide = null;
+                    playHoverSound();
+                }
+            }
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('click', handleClick);
+        
+        // Handle touch events
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            const mouseEvent = new MouseEvent('click', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        // Start game
+        requestAnimationFrame(gameLoop);
+        
+        // Timer tick sound
+        setInterval(() => {
+            if (gameState === 'playing' && timer > 0 && timer < 5) {
+                playTickSound();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>

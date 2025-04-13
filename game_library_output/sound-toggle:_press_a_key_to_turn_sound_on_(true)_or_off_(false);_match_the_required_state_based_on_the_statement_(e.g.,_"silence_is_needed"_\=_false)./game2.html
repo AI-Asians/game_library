@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound True or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas dimensions based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let soundOn = false;
+        let gameOver = false;
+        let showFeedback = false;
+        let feedbackTimer = 0;
+        let success = false;
+        
+        // Colors - limited 8-bit palette
+        const colors = {
+            background: '#0f380f', // dark green
+            text: '#9bbc0f',       // light green
+            buttonBg: '#306230',   // medium green
+            buttonBgHover: '#8bac0f', // yellowish green
+            buttonBorder: '#306230', // medium green
+            success: '#8bac0f',    // yellowish green
+            failure: '#e83000',    // red
+            soundWave: '#9bbc0f'   // light green
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effect function
+        function playSound(freq, duration) {
+            if (soundOn) {
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = freq;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                gainNode.gain.value = 0.3;
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration);
+            }
+        }
+        
+        // Toggle sound function
+        function toggleSound() {
+            soundOn = !soundOn;
+            playSound(soundOn ? 880 : 440, 100);
+        }
+        
+        // Submit answer function
+        function submitAnswer() {
+            // The statement is true, so sound should be ON
+            success = soundOn === true;
+            
+            // Play success/failure sound
+            if (success) {
+                playSound(523.25, 100); // C5
+                setTimeout(() => playSound(659.25, 100), 100); // E5
+                setTimeout(() => playSound(783.99, 150), 200); // G5
+            } else {
+                playSound(110, 150); // A2
+                setTimeout(() => playSound(103.83, 300), 150); // G#2
+            }
+            
+            showFeedback = true;
+            feedbackTimer = 90; // frames (about 1.5 seconds)
+            gameOver = true;
+        }
+        
+        // Draw pixelated speaker icon
+        function drawSpeaker(x, y, size) {
+            // Speaker base
+            ctx.fillStyle = '#9bbc0f';
+            ctx.fillRect(x, y + size * 0.25, size * 0.4, size * 0.5);
+            
+            // Speaker cone
+            ctx.beginPath();
+            ctx.moveTo(x + size * 0.4, y);
+            ctx.lineTo(x + size * 0.8, y);
+            ctx.lineTo(x + size * 0.8, y + size);
+            ctx.lineTo(x + size * 0.4, y + size);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Sound waves (only when sound is on)
+            if (soundOn) {
+                // Draw animated sound waves
+                const waveTime = Date.now() / 300;
+                for (let i = 1; i <= 3; i++) {
+                    const offset = Math.sin(waveTime + i) * 2;
+                    const waveSize = size * 0.15 * i;
+                    
+                    ctx.beginPath();
+                    ctx.arc(
+                        x + size + waveSize/2 + offset, 
+                        y + size/2,
+                        waveSize,
+                        Math.PI * -0.5, 
+                        Math.PI * 0.5
+                    );
+                    ctx.strokeStyle = colors.soundWave;
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                }
+            } else {
+                // Draw X over speaker when off
+                ctx.strokeStyle = colors.failure;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(x + size * 0.2, y + size * 0.2);
+                ctx.lineTo(x + size * 0.8, y + size * 0.8);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(x + size * 0.8, y + size * 0.2);
+                ctx.lineTo(x + size * 0.2, y + size * 0.8);
+                ctx.stroke();
+            }
+        }
+        
+        // Button rendering function
+        function drawButton(x, y, width, height, text, isHovered = false) {
+            // Shadow
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(x + 4, y + 4, width, height);
+            
+            // Button base
+            ctx.fillStyle = isHovered ? colors.buttonBgHover : colors.buttonBg;
+            ctx.fillRect(x, y, width, height);
+            
+            // Pixelated border
+            ctx.strokeStyle = colors.buttonBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Button text
+            ctx.fillStyle = colors.text;
+            ctx.font = `${Math.floor(height * 0.5)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x + width / 2, y + height / 2);
+        }
+        
+        // Mouse/touch position tracking
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Toggle sound button
+            const toggleBtnX = canvas.width / 2 - 120;
+            const toggleBtnY = canvas.height / 2 - 30;
+            if (clickX >= toggleBtnX && clickX <= toggleBtnX + 240 &&
+                clickY >= toggleBtnY && clickY <= toggleBtnY + 60) {
+                toggleSound();
+            }
+            
+            // Submit button
+            const submitBtnX = canvas.width / 2 - 100;
+            const submitBtnY = canvas.height / 2 + 60;
+            if (!gameOver && clickX >= submitBtnX && clickX <= submitBtnX + 200 &&
+                clickY >= submitBtnY && clickY <= submitBtnY + 50) {
+                submitAnswer();
+            }
+            
+            // Restart button
+            if (gameOver) {
+                const restartBtnX = canvas.width / 2 - 80;
+                const restartBtnY = canvas.height / 2 + 140;
+                if (clickX >= restartBtnX && clickX <= restartBtnX + 160 &&
+                    clickY >= restartBtnY && clickY <= restartBtnY + 50) {
+                    resetGame();
+                }
+            }
+        });
+        
+        // Keyboard event listener
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.key === 's' || e.key === 'S') {
+                toggleSound();
+            } else if (e.key === 'Enter' && !gameOver) {
+                submitAnswer();
+            } else if (e.key === 'r' && gameOver) {
+                resetGame();
+            }
+        });
+        
+        // Reset game function
+        function resetGame() {
+            soundOn = false;
+            gameOver = false;
+            showFeedback = false;
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border
+            ctx.strokeStyle = colors.text;
+            ctx.lineWidth = 6;
+            ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Wrap text for mobile
+            if (isMobile) {
+                ctx.fillText("Water boils at 100 degrees", canvas.width / 2, canvas.height / 2 - 160);
+                ctx.fillText("Celsius at sea level.", canvas.width / 2, canvas.height / 2 - 130);
+            } else {
+                ctx.fillText("Water boils at 100 degrees Celsius at sea level.", canvas.width / 2, canvas.height / 2 - 150);
+            }
+            
+            // Instructions
+            ctx.font = `${isMobile ? 18 : 22}px sans-serif`;
+            ctx.fillText("Turn sound ON for TRUE, OFF for FALSE", canvas.width / 2, canvas.height / 2 - 80);
+            ctx.font = `${isMobile ? 16 : 18}px sans-serif`;
+            ctx.fillText("Press SPACE or 'S' key (or click button below)", canvas.width / 2, canvas.height / 2 - 50);
+            
+            // Draw sound toggle button
+            const toggleBtnX = canvas.width / 2 - 120;
+            const toggleBtnY = canvas.height / 2 - 30;
+            const toggleBtnHovered = 
+                mouseX >= toggleBtnX && mouseX <= toggleBtnX + 240 &&
+                mouseY >= toggleBtnY && mouseY <= toggleBtnY + 60;
+            
+            drawButton(toggleBtnX, toggleBtnY, 240, 60, "TOGGLE SOUND", toggleBtnHovered);
+            
+            // Draw speaker icon
+            drawSpeaker(canvas.width / 2 + 80, canvas.height / 2 - 25, 50);
+            
+            // Submit button
+            if (!gameOver) {
+                const submitBtnX = canvas.width / 2 - 100;
+                const submitBtnY = canvas.height / 2 + 60;
+                const submitBtnHovered = 
+                    mouseX >= submitBtnX && mouseX <= submitBtnX + 200 &&
+                    mouseY >= submitBtnY && mouseY <= submitBtnY + 50;
+                
+                drawButton(submitBtnX, submitBtnY, 200, 50, "SUBMIT ANSWER", submitBtnHovered);
+            }
+            
+            // Show feedback
+            if (showFeedback) {
+                ctx.fillStyle = success ? colors.success : colors.failure;
+                ctx.font = `${isMobile ? 28 : 36}px sans-serif`;
+                ctx.fillText(success ? "CORRECT!" : "WRONG!", canvas.width / 2, canvas.height / 2 + 60);
+                
+                // Explanation
+                ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+                ctx.fillText("Water DOES boil at 100°C at sea level (TRUE)", canvas.width / 2, canvas.height / 2 + 100);
+                
+                // Countdown feedback timer
+                if (feedbackTimer > 0) {
+                    feedbackTimer--;
+                }
+                
+                // Draw restart button
+                const restartBtnX = canvas.width / 2 - 80;
+                const restartBtnY = canvas.height / 2 + 140;
+                const restartBtnHovered = 
+                    mouseX >= restartBtnX && mouseX <= restartBtnX + 160 &&
+                    mouseY >= restartBtnY && mouseY <= restartBtnY + 50;
+                
+                drawButton(restartBtnX, restartBtnY, 160, 50, "RESTART", restartBtnHovered);
+            }
+            
+            // Continue the game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game loop
+        gameLoop();
+    </script>
+</body>
+</html>

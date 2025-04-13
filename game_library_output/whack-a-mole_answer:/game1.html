@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Whack-A-Mole: Capitals Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if we're on mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - limited 8-bit style palette
+        const COLORS = {
+            background: '#5A94FF',
+            ground: '#8B5A2B',
+            hole: '#3A2A0B',
+            mole: '#CE9178',
+            moleNose: '#FF6B6B',
+            moleEyes: '#000000',
+            moleWhacked: '#FF0000',
+            textBg: '#333333',
+            textColor: '#FFFFFF',
+            correctFeedback: '#00FF00',
+            wrongFeedback: '#FF0000'
+        };
+        
+        // Game variables
+        let gameOver = false;
+        let moles = [];
+        let holes = [];
+        const correctAnswer = "Paris";
+        const wrongAnswers = ["London", "Berlin", "Rome", "Madrid"];
+        let timeLeft = 10; // 10 seconds total
+        let lastTime = 0;
+        
+        // Create 5 holes
+        const holeRadius = isMobile ? 30 : 50;
+        const holeCount = 5;
+        
+        // Audio context for simple sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Simple beep sound functions
+        function playPopSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.value = 220;
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playCorrectSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(550, audioCtx.currentTime + 0.2);
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playWrongSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.1);
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            oscillator.stop(audioCtx.currentTime + 0.2);
+        }
+        
+        // Initialize the game
+        function init() {
+            gameOver = false;
+            moles = [];
+            holes = [];
+            timeLeft = 10;
+            
+            // Create holes
+            const holeSpacingX = canvas.width / (holeCount + 1);
+            const rowCount = 2;
+            const holeSpacingY = canvas.height / (rowCount + 2);
+            
+            for (let row = 0; row < rowCount; row++) {
+                for (let i = 0; i < Math.ceil(holeCount/rowCount); i++) {
+                    if (holes.length < holeCount) {
+                        holes.push({
+                            x: holeSpacingX * (i + 1),
+                            y: holeSpacingY * (row + 1.5),
+                            radius: holeRadius
+                        });
+                    }
+                }
+            }
+            
+            // Start mole appearance logic
+            scheduleMole();
+            
+            // Start game loop
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Schedule a new mole to appear
+        function scheduleMole() {
+            if (gameOver) return;
+            
+            // 1.5 second max wait
+            const delay = Math.random() * 1500 + 500;
+            setTimeout(() => {
+                if (gameOver) return;
+                createMole();
+                scheduleMole();
+            }, delay);
+        }
+        
+        // Create a new mole
+        function createMole() {
+            if (moles.length >= holes.length || gameOver) return;
+            
+            // Find an empty hole
+            let availableHoles = holes.filter(hole => 
+                !moles.some(mole => mole.holeIndex === holes.indexOf(hole)));
+            
+            if (!availableHoles.length) return;
+            
+            const holeIndex = holes.indexOf(availableHoles[Math.floor(Math.random() * availableHoles.length)]);
+            const hole = holes[holeIndex];
+            
+            // Decide if this mole will show correct answer (1 in 3 chance)
+            const showCorrect = Math.random() < 0.3 || 
+                               (moles.length === 0 && timeLeft < 8); // Make sure at least one correct appears early
+            
+            let answer = showCorrect ? 
+                correctAnswer : 
+                wrongAnswers[Math.floor(Math.random() * wrongAnswers.length)];
+            
+            const moleLife = Math.random() * 1500 + 1000; // 1-2.5 seconds
+            
+            moles.push({
+                holeIndex: holeIndex,
+                x: hole.x,
+                y: hole.y,
+                radius: hole.radius * 0.8,
+                answer: answer,
+                isCorrect: answer === correctAnswer,
+                showHeight: 0,
+                targetHeight: hole.radius * 1.5,
+                state: 'rising', // rising, visible, falling, dead
+                timeLeft: moleLife,
+                whacked: false
+            });
+            
+            playPopSound();
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Update timer
+            if (!gameOver) {
+                timeLeft -= deltaTime / 1000;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    endGame(false);
+                }
+            }
+            
+            // Update moles
+            moles.forEach(mole => {
+                if (mole.state === 'rising') {
+                    mole.showHeight += deltaTime * 0.3;
+                    if (mole.showHeight >= mole.targetHeight) {
+                        mole.showHeight = mole.targetHeight;
+                        mole.state = 'visible';
+                    }
+                } else if (mole.state === 'visible') {
+                    mole.timeLeft -= deltaTime;
+                    if (mole.timeLeft <= 0) {
+                        mole.state = 'falling';
+                    }
+                } else if (mole.state === 'falling') {
+                    mole.showHeight -= deltaTime * 0.3;
+                    if (mole.showHeight <= 0) {
+                        mole.state = 'dead';
+                    }
+                }
+            });
+            
+            // Remove dead moles
+            moles = moles.filter(mole => mole.state !== 'dead');
+            
+            // Draw the game
+            draw();
+            
+            // Continue the game loop
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Draw everything
+        function draw() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the ground
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, canvas.height * 0.4, canvas.width, canvas.height);
+            
+            // Draw the question at the top
+            ctx.fillStyle = COLORS.textBg;
+            ctx.fillRect(0, 0, canvas.width, 60);
+            
+            ctx.fillStyle = COLORS.textColor;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 35);
+            
+            // Draw the holes
+            holes.forEach(hole => {
+                ctx.fillStyle = COLORS.hole;
+                ctx.beginPath();
+                ctx.ellipse(hole.x, hole.y, hole.radius, hole.radius * 0.4, 0, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Draw the moles
+            moles.forEach(mole => {
+                if (mole.showHeight <= 0) return;
+                
+                const hole = holes[mole.holeIndex];
+                const moleY = hole.y - mole.showHeight;
+                
+                // Mole body
+                ctx.fillStyle = mole.whacked ? COLORS.moleWhacked : COLORS.mole;
+                
+                // Draw mole head (circle)
+                ctx.beginPath();
+                ctx.arc(hole.x, moleY, mole.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw mole eyes
+                const eyeRadius = mole.radius * 0.15;
+                const eyeY = moleY - mole.radius * 0.2;
+                const eyeDistance = mole.radius * 0.4;
+                
+                ctx.fillStyle = COLORS.moleEyes;
+                ctx.beginPath();
+                ctx.arc(hole.x - eyeDistance, eyeY, eyeRadius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.arc(hole.x + eyeDistance, eyeY, eyeRadius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw mole nose
+                ctx.fillStyle = COLORS.moleNose;
+                ctx.beginPath();
+                ctx.arc(hole.x, moleY, mole.radius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw answer text
+                ctx.fillStyle = COLORS.textColor;
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(mole.answer, hole.x, moleY + mole.radius + 20);
+            });
+            
+            // Draw timer bar at the top
+            const timerWidth = (timeLeft / 10) * canvas.width;
+            ctx.fillStyle = timeLeft < 3 ? COLORS.wrongFeedback : '#FFFF00';
+            ctx.fillRect(0, 60, timerWidth, 10);
+            
+            // Draw game over message and restart button if game is over
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Restart button
+                const btnWidth = isMobile ? 120 : 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2;
+                
+                ctx.fillStyle = '#4A752C';
+                ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(btnX, btnY, btnWidth, btnHeight);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', canvas.width / 2, btnY + 30);
+            }
+        }
+        
+        // End the game
+        function endGame(isCorrect) {
+            gameOver = true;
+            
+            if (isCorrect) {
+                playCorrectSound();
+            } else {
+                playWrongSound();
+            }
+            
+            // Redraw with game over screen
+            draw();
+        }
+        
+        // Handle clicks/taps
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const btnWidth = isMobile ? 120 : 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2;
+                
+                if (clickX >= btnX && clickX <= btnX + btnWidth &&
+                    clickY >= btnY && clickY <= btnY + btnHeight) {
+                    init();
+                }
+            } else {
+                // Check if any mole was hit
+                for (let i = 0; i < moles.length; i++) {
+                    const mole = moles[i];
+                    if (mole.state !== 'rising' && mole.state !== 'visible') continue;
+                    
+                    const hole = holes[mole.holeIndex];
+                    const moleY = hole.y - mole.showHeight;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(clickX - hole.x, 2) + 
+                        Math.pow(clickY - moleY, 2)
+                    );
+                    
+                    if (distance <= mole.radius) {
+                        mole.whacked = true;
+                        if (mole.isCorrect) {
+                            endGame(true);
+                        } else {
+                            endGame(false);
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

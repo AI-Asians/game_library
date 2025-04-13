@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Phase-Tap True or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit style palette
+        const COLORS = {
+            background: '#0a1435',
+            question: '#ffffff',
+            trueBox: '#32CD32',
+            falseBox: '#FF4500',
+            trueText: '#000000',
+            falseText: '#000000',
+            correct: '#00FF00',
+            incorrect: '#FF0000',
+            hint: '#FFD700',
+            scanline: 'rgba(0, 0, 0, 0.1)'
+        };
+        
+        // Game state
+        const game = {
+            question: "The Great Wall of China is visible from space.",
+            answer: false, // The correct answer
+            gameOver: false,
+            restart: false,
+            hintTimer: 180, // Show a quick hint at start
+            scanlines: []
+        };
+        
+        // Setup phasing options
+        const options = [
+            { text: "TRUE", x: canvas.width * 0.3, y: canvas.height * 0.6, width: 120, height: 60, 
+              isCorrect: false, opacity: 0, phaseSpeed: 0.015, phaseDirection: 1 },
+            { text: "FALSE", x: canvas.width * 0.7, y: canvas.height * 0.6, width: 120, height: 60, 
+              isCorrect: true, opacity: 0, phaseSpeed: 0.02, phaseDirection: 1 }
+        ];
+        
+        // Initialize scanlines for retro effect
+        for (let i = 0; i < canvas.height; i += 4) {
+            game.scanlines.push(i);
+        }
+        
+        // Audio context for sounds
+        let audioCtx;
+        
+        // Initialize audio on first user interaction
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+        
+        // Simple retro sound effects
+        function playSound(type) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                    oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                    oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(349.23, audioCtx.currentTime); // F4
+                    oscillator.frequency.setValueAtTime(277.18, audioCtx.currentTime + 0.1); // C#4
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'phase':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Draw pixelated rectangle with scanline effect
+        function drawPixelRect(x, y, width, height, color, opacity = 1) {
+            const pixelSize = 4; // Size of each "pixel" for the 8-bit look
+            
+            ctx.save();
+            ctx.globalAlpha = opacity;
+            
+            // Draw as blocks to create pixelated effect
+            ctx.fillStyle = color;
+            for (let py = 0; py < height; py += pixelSize) {
+                for (let px = 0; px < width; px += pixelSize) {
+                    // Apply scanline effect
+                    let scanlineAlpha = 1;
+                    if (game.scanlines.includes((y + py) % canvas.height)) {
+                        scanlineAlpha = 0.8;
+                    }
+                    
+                    ctx.globalAlpha = opacity * scanlineAlpha;
+                    ctx.fillRect(
+                        Math.floor(x + px), 
+                        Math.floor(y + py), 
+                        pixelSize, 
+                        pixelSize
+                    );
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        // Draw text with a retro style
+        function drawText(text, x, y, color, size, align = 'center') {
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = align;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+        
+        // Handle player input
+        function handleClick(e) {
+            initAudio();
+            
+            if (game.gameOver) {
+                if (game.restart) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Check if player clicked an option
+            for (const option of options) {
+                if (
+                    clickX >= option.x - option.width/2 && 
+                    clickX <= option.x + option.width/2 && 
+                    clickY >= option.y - option.height/2 && 
+                    clickY <= option.y + option.height/2
+                ) {
+                    // Only register click if option is visible enough
+                    if (option.opacity > 0.6) {
+                        game.gameOver = true;
+                        game.playerCorrect = option.isCorrect;
+                        playSound(option.isCorrect ? 'correct' : 'incorrect');
+                        setTimeout(() => {
+                            game.restart = true;
+                        }, 1000);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Reset game state
+        function resetGame() {
+            game.gameOver = false;
+            game.restart = false;
+            game.hintTimer = 180;
+            
+            // Reset options
+            options.forEach(option => {
+                option.opacity = 0;
+                option.phaseDirection = 1;
+            });
+        }
+        
+        // Game loop
+        function update() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawText(
+                game.question, 
+                canvas.width / 2, 
+                canvas.height * 0.3, 
+                COLORS.question, 
+                isMobile ? 20 : 24
+            );
+            
+            // Update and draw options
+            let phaseSoundPlayed = false;
+            options.forEach((option, index) => {
+                // Update phase
+                if (!game.gameOver) {
+                    option.opacity += option.phaseSpeed * option.phaseDirection;
+                    
+                    // Change direction when limits reached
+                    if (option.opacity >= 1) {
+                        option.opacity = 1;
+                        option.phaseDirection = -1;
+                    } else if (option.opacity <= 0) {
+                        option.opacity = 0;
+                        option.phaseDirection = 1;
+                    }
+                    
+                    // Play sound when option becomes visible enough
+                    if (option.opacity > 0.8 && option.phaseDirection === 1 && !phaseSoundPlayed) {
+                        playSound('phase');
+                        phaseSoundPlayed = true;
+                    }
+                }
+                
+                // Draw option box with pixelated effect
+                const color = index === 0 ? COLORS.trueBox : COLORS.falseBox;
+                drawPixelRect(
+                    option.x - option.width/2, 
+                    option.y - option.height/2, 
+                    option.width, 
+                    option.height, 
+                    color, 
+                    option.opacity
+                );
+                
+                // Draw option text
+                if (option.opacity > 0.2) {
+                    drawText(
+                        option.text, 
+                        option.x, 
+                        option.y, 
+                        index === 0 ? COLORS.trueText : COLORS.falseText, 
+                        24, 
+                        'center'
+                    );
+                }
+                
+                // Draw hint initially
+                if (game.hintTimer > 0 && option.isCorrect) {
+                    ctx.save();
+                    ctx.globalAlpha = game.hintTimer / 180;
+                    ctx.strokeStyle = COLORS.hint;
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 3]);
+                    ctx.strokeRect(
+                        option.x - option.width/2 - 5, 
+                        option.y - option.height/2 - 5, 
+                        option.width + 10, 
+                        option.height + 10
+                    );
+                    ctx.restore();
+                    game.hintTimer--;
+                }
+            });
+            
+            // Draw game over state
+            if (game.gameOver) {
+                let resultText = game.playerCorrect ? "CORRECT!" : "INCORRECT!";
+                let resultColor = game.playerCorrect ? COLORS.correct : COLORS.incorrect;
+                
+                drawText(
+                    resultText, 
+                    canvas.width / 2, 
+                    canvas.height * 0.45, 
+                    resultColor, 
+                    32, 
+                    'center'
+                );
+                
+                if (game.restart) {
+                    drawPixelRect(
+                        canvas.width/2 - 60, 
+                        canvas.height * 0.75 - 25, 
+                        120, 
+                        50, 
+                        '#444'
+                    );
+                    
+                    drawText(
+                        "RESTART", 
+                        canvas.width / 2, 
+                        canvas.height * 0.75, 
+                        '#FFF', 
+                        20, 
+                        'center'
+                    );
+                }
+            }
+            
+            // Continue game loop
+            requestAnimationFrame(update);
+        }
+        
+        // Start game
+        canvas.addEventListener('click', handleClick);
+        update();
+    </script>
+</body>
+</html>

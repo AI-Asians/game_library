@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Path Chooser Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 10px;
+            padding: 5px 10px;
+            background-color: #333;
+            color: white;
+            border: 2px solid #555;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors (limited palette)
+        const COLORS = {
+            SKY: '#5C94FC',
+            GROUND: '#8B6914',
+            GRASS_PATH: '#007C00',
+            STONE_PATH: '#989898',
+            DIRT_PATH: '#C17137',
+            CHARACTER: '#FF6D00',
+            TEXT: '#FFFFFF',
+            TEXT_SHADOW: '#000000',
+            CORRECT: '#00FF00',
+            INCORRECT: '#FF0000',
+            SIGNPOST: '#A05A2C',
+            SIGNPOST_FRONT: '#C68642'
+        };
+
+        // Game state
+        let gameState = {
+            character: {
+                x: canvas.width / 2,
+                y: canvas.height - 100,
+                width: 20,
+                height: 30,
+                step: 0,
+                direction: 0
+            },
+            paths: [
+                { 
+                    label: 'Paris', 
+                    x: canvas.width * 0.2, 
+                    width: canvas.width * 0.2, 
+                    color: COLORS.GRASS_PATH, 
+                    isCorrect: true 
+                },
+                { 
+                    label: 'Lyon', 
+                    x: canvas.width * 0.5, 
+                    width: canvas.width * 0.2, 
+                    color: COLORS.STONE_PATH, 
+                    isCorrect: false 
+                },
+                { 
+                    label: 'Marseille', 
+                    x: canvas.width * 0.8, 
+                    width: canvas.width * 0.2, 
+                    color: COLORS.DIRT_PATH, 
+                    isCorrect: false 
+                }
+            ],
+            selectedPath: null,
+            gameActive: true,
+            question: "What is the capital of France?",
+            gameResult: null,
+            trees: [],
+            clouds: []
+        };
+
+        // Generate some trees and clouds for decoration
+        function setupDecoration() {
+            // Create trees
+            for (let i = 0; i < 15; i++) {
+                gameState.trees.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * (canvas.height - 200) + 150,
+                    size: Math.random() * 15 + 10
+                });
+            }
+            
+            // Create clouds
+            for (let i = 0; i < 8; i++) {
+                gameState.clouds.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * 100 + 20,
+                    width: Math.random() * 60 + 40,
+                    height: Math.random() * 20 + 15
+                });
+            }
+        }
+
+        // Initialize the game
+        function init() {
+            setupDecoration();
+            restartBtn.style.display = 'none';
+            gameState.gameActive = true;
+            gameState.selectedPath = null;
+            gameState.gameResult = null;
+            gameState.character.x = canvas.width / 2;
+            gameState.character.y = canvas.height - 100;
+            gameState.character.direction = 0;
+            
+            // Center paths based on canvas width
+            gameState.paths[0].x = canvas.width * 0.2;
+            gameState.paths[1].x = canvas.width * 0.5;
+            gameState.paths[2].x = canvas.width * 0.8;
+            
+            // Adjust path widths
+            gameState.paths.forEach(path => {
+                path.width = canvas.width * 0.2;
+            });
+            
+            // Start the game loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = 220;
+                gainNode.gain.value = 0.3;
+                oscillator.start();
+                setTimeout(() => oscillator.stop(), 150);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                gainNode.gain.value = 0.3;
+                oscillator.start();
+                setTimeout(() => oscillator.stop(), 300);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime + 0.1);
+                gainNode.gain.value = 0.3;
+                oscillator.start();
+                setTimeout(() => oscillator.stop(), 300);
+            }
+        }
+
+        // Draw the character
+        function drawCharacter() {
+            const char = gameState.character;
+            
+            // Body
+            ctx.fillStyle = COLORS.CHARACTER;
+            ctx.fillRect(char.x - char.width/2, char.y - char.height, char.width, char.height);
+            
+            // Head
+            ctx.fillRect(char.x - char.width/2 - 2, char.y - char.height - 15, char.width + 4, 15);
+            
+            // Arms
+            const armOffset = Math.sin(char.step) * 5;
+            ctx.fillRect(char.x - char.width/2 - 8, char.y - char.height + 5 + armOffset, 8, 8);
+            ctx.fillRect(char.x + char.width/2, char.y - char.height + 5 - armOffset, 8, 8);
+            
+            // Legs
+            const legOffset = Math.sin(char.step + Math.PI) * 5;
+            ctx.fillRect(char.x - char.width/2, char.y - 10 + legOffset, 8, 10);
+            ctx.fillRect(char.x + char.width/2 - 8, char.y - 10 - legOffset, 8, 10);
+        }
+
+        // Draw the scenery
+        function drawScenery() {
+            // Sky
+            ctx.fillStyle = COLORS.SKY;
+            ctx.fillRect(0, 0, canvas.width, canvas.height - 50);
+            
+            // Ground
+            ctx.fillStyle = COLORS.GROUND;
+            ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
+            
+            // Draw clouds
+            ctx.fillStyle = '#FFFFFF';
+            gameState.clouds.forEach(cloud => {
+                ctx.beginPath();
+                ctx.ellipse(cloud.x, cloud.y, cloud.width/2, cloud.height/2, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(cloud.x + 15, cloud.y - 5, cloud.width/3, cloud.height/2, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(cloud.x - 15, cloud.y + 5, cloud.width/4, cloud.height/3, 0, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Draw trees
+            gameState.trees.forEach(tree => {
+                // Tree trunk
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(tree.x - 4, tree.y - 10, 8, 20);
+                
+                // Tree foliage
+                ctx.fillStyle = '#097A00';
+                ctx.beginPath();
+                ctx.moveTo(tree.x, tree.y - 40);
+                ctx.lineTo(tree.x + tree.size, tree.y - 10);
+                ctx.lineTo(tree.x - tree.size, tree.y - 10);
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.moveTo(tree.x, tree.y - 50);
+                ctx.lineTo(tree.x + tree.size * 0.8, tree.y - 20);
+                ctx.lineTo(tree.x - tree.size * 0.8, tree.y - 20);
+                ctx.fill();
+            });
+        }
+
+        // Draw the paths
+        function drawPaths() {
+            gameState.paths.forEach(path => {
+                // Draw path
+                ctx.fillStyle = path.color;
+                ctx.fillRect(path.x - path.width/2, 100, path.width, canvas.height - 150);
+                
+                // Add path texture
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+                for (let y = 120; y < canvas.height - 50; y += 20) {
+                    for (let x = path.x - path.width/2 + 5; x < path.x + path.width/2; x += 20) {
+                        if (Math.random() > 0.5) {
+                            ctx.fillRect(x, y, 10, 10);
+                        }
+                    }
+                }
+                
+                // Draw signpost
+                ctx.fillStyle = COLORS.SIGNPOST;
+                ctx.fillRect(path.x - 25, 150, 50, 10);
+                ctx.fillRect(path.x - 5, 150, 10, 40);
+                
+                // Signpost front
+                ctx.fillStyle = COLORS.SIGNPOST_FRONT;
+                ctx.fillRect(path.x - 30, 125, 60, 30);
+                
+                // Option text
+                ctx.fillStyle = '#000000';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(path.label, path.x, 145);
+            });
+        }
+
+        // Draw the UI
+        function drawUI() {
+            // Question box
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(canvas.width/2 - 250, 20, 500, 50);
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(canvas.width/2 - 250, 20, 500, 50);
+            
+            // Question text
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width/2, 52);
+            
+            // Game result message
+            if (gameState.gameResult !== null) {
+                ctx.fillStyle = gameState.gameResult ? COLORS.CORRECT : COLORS.INCORRECT;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.gameResult ? "Correct!" : "Incorrect!", 
+                    canvas.width/2, 
+                    canvas.height/2
+                );
+            }
+        }
+
+        // Handle user input
+        function handlePathSelection(x, y) {
+            if (!gameState.gameActive || gameState.selectedPath !== null) return;
+            
+            for (let i = 0; i < gameState.paths.length; i++) {
+                const path = gameState.paths[i];
+                if (x >= path.x - path.width/2 && 
+                    x <= path.x + path.width/2 && 
+                    y >= 100 && 
+                    y <= canvas.height) {
+                    
+                    gameState.selectedPath = i;
+                    
+                    // Calculate direction to the selected path
+                    if (path.x > gameState.character.x) {
+                        gameState.character.direction = 1; // Right
+                    } else if (path.x < gameState.character.x) {
+                        gameState.character.direction = -1; // Left
+                    } else {
+                        gameState.character.direction = 0; // Forward
+                    }
+                    
+                    playSound('select');
+                    break;
+                }
+            }
+        }
+
+        // Update game state
+        function update() {
+            if (!gameState.gameActive) return;
+            
+            // Update character position if a path is selected
+            if (gameState.selectedPath !== null) {
+                const targetPath = gameState.paths[gameState.selectedPath];
+                const targetX = targetPath.x;
+                
+                // Move character towards the selected path
+                if (Math.abs(gameState.character.x - targetX) > 5) {
+                    gameState.character.x += (targetX - gameState.character.x) * 0.1;
+                    gameState.character.step += 0.2;
+                } else {
+                    // Move character up the path
+                    gameState.character.y -= 5;
+                    gameState.character.step += 0.2;
+                    
+                    // Check if character reached the top of the path
+                    if (gameState.character.y <= 120) {
+                        const isCorrect = targetPath.isCorrect;
+                        gameState.gameResult = isCorrect;
+                        gameState.gameActive = false;
+                        playSound(isCorrect ? 'correct' : 'incorrect');
+                        restartBtn.style.display = 'block';
+                    }
+                }
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update game state
+            update();
+            
+            // Draw game elements
+            drawScenery();
+            drawPaths();
+            drawCharacter();
+            drawUI();
+            
+            // Continue the loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            handlePathSelection(x, y);
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const x = e.touches[0].clientX - rect.left;
+            const y = e.touches[0].clientY - rect.top;
+            handlePathSelection(x, y);
+        });
+
+        restartBtn.addEventListener('click', init);
+
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

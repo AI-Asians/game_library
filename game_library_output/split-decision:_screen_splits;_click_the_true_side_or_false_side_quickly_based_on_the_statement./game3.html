@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Split Decision Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Device detection and sizing
+        const isMobile = window.innerWidth < 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            trueColor: '#4CAF50',      // Green
+            falseColor: '#F44336',     // Red
+            divider: '#FFEB3B',        // Yellow
+            text: '#FFFFFF',           // White
+            background: '#2C2C2C',     // Dark Gray
+            correct: '#8BC34A',        // Light Green
+            incorrect: '#FF5252'       // Light Red
+        };
+        
+        let gameState = {
+            isOver: false,
+            answer: false,             // The answer is FALSE
+            playerChoice: null,
+            timeLeft: 100,             // Timer percentage
+            dividerPos: canvas.width / 2,
+            dividerWidth: 8,
+            dividerWave: 0,
+            pulseSize: 0,
+            particles: [],
+            restartButton: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 60,
+                width: 120,
+                height: 40
+            }
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound functions
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function correctSound() {
+            playSound(523.25, 'square', 0.1); // C5
+            setTimeout(() => playSound(659.25, 'square', 0.15), 100); // E5
+            setTimeout(() => playSound(783.99, 'square', 0.2), 250); // G5
+        }
+        
+        function incorrectSound() {
+            playSound(311.13, 'square', 0.1); // E♭4
+            setTimeout(() => playSound(233.08, 'square', 0.3), 150); // B♭3
+        }
+        
+        function clickSound() {
+            playSound(440, 'square', 0.05); // A4
+        }
+        
+        function timerSound() {
+            playSound(330, 'square', 0.05); // E4
+        }
+        
+        // Create pixelated particles
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 8 + 4,
+                    speedX: (Math.random() - 0.5) * 10,
+                    speedY: (Math.random() - 0.5) * 10,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw True and False sides
+            ctx.fillStyle = colors.trueColor;
+            ctx.fillRect(0, 0, gameState.dividerPos - gameState.dividerWidth/2, canvas.height);
+            
+            ctx.fillStyle = colors.falseColor;
+            ctx.fillRect(gameState.dividerPos + gameState.dividerWidth/2, 0, 
+                         canvas.width - gameState.dividerPos - gameState.dividerWidth/2, canvas.height);
+            
+            // Draw animated divider
+            gameState.dividerWave += 0.1;
+            const waveHeight = 4;
+            ctx.fillStyle = colors.divider;
+            for (let y = 0; y < canvas.height; y += 8) {
+                const offset = Math.sin(gameState.dividerWave + y * 0.05) * waveHeight;
+                ctx.fillRect(gameState.dividerPos - gameState.dividerWidth/2 + offset, y, 
+                             gameState.dividerWidth, 6);
+            }
+            
+            // Draw TRUE and FALSE labels
+            ctx.font = isMobile ? '22px Arial' : '32px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // TRUE side
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText('TRUE', gameState.dividerPos/2, canvas.height/2);
+            
+            // Drawing a checkmark icon
+            const checkX = gameState.dividerPos/2;
+            const checkY = canvas.height/2 + 50;
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(checkX - 15, checkY);
+            ctx.lineTo(checkX - 5, checkY + 10);
+            ctx.lineTo(checkX + 15, checkY - 10);
+            ctx.stroke();
+            
+            // FALSE side
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText('FALSE', gameState.dividerPos + (canvas.width - gameState.dividerPos)/2, canvas.height/2);
+            
+            // Drawing an X icon
+            const xX = gameState.dividerPos + (canvas.width - gameState.dividerPos)/2;
+            const xY = canvas.height/2 + 50;
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.moveTo(xX - 15, xY - 15);
+            ctx.lineTo(xX + 15, xY + 15);
+            ctx.moveTo(xX + 15, xY - 15);
+            ctx.lineTo(xX - 15, xY + 15);
+            ctx.stroke();
+            
+            // Draw question
+            ctx.font = isMobile ? '18px Arial' : '24px Arial';
+            ctx.fillStyle = colors.text;
+            ctx.textAlign = 'center';
+            
+            // Draw with a pixelated outline effect
+            const question = "The Great Wall of China is visible from space.";
+            const questionY = canvas.height * 0.2;
+            
+            // Black outline (pixelated effect)
+            ctx.fillStyle = '#000000';
+            for (let i = -2; i <= 2; i += 2) {
+                for (let j = -2; j <= 2; j += 2) {
+                    if (i === 0 && j === 0) continue;
+                    ctx.fillText(question, canvas.width/2 + i, questionY + j);
+                }
+            }
+            
+            // Main text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(question, canvas.width/2, questionY);
+            
+            // Draw timer bar
+            const timerHeight = 20;
+            const timerWidth = canvas.width * 0.8;
+            const timerX = (canvas.width - timerWidth) / 2;
+            const timerY = canvas.height * 0.35;
+            
+            // Timer background
+            ctx.fillStyle = '#555555';
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Timer fill
+            ctx.fillStyle = gameState.timeLeft < 30 ? '#FF5252' : '#FFEB3B';
+            ctx.fillRect(timerX, timerY, timerWidth * (gameState.timeLeft / 100), timerHeight);
+            
+            // Timer border (pixelated)
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Draw pulse animation to encourage decisions
+            gameState.pulseSize = Math.sin(Date.now() * 0.01) * 5 + 5;
+            
+            // Pulse on TRUE side
+            ctx.beginPath();
+            ctx.arc(gameState.dividerPos/2, canvas.height/2 - 80, 20 + gameState.pulseSize, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fill();
+            
+            // Pulse on FALSE side
+            ctx.beginPath();
+            ctx.arc(gameState.dividerPos + (canvas.width - gameState.dividerPos)/2, 
+                    canvas.height/2 - 80, 20 + gameState.pulseSize, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fill();
+            
+            // Draw particles
+            gameState.particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            });
+            
+            // Draw result if game is over
+            if (gameState.isOver) {
+                const isCorrect = gameState.playerChoice === gameState.answer;
+                
+                // Full screen flash
+                ctx.fillStyle = isCorrect ? 'rgba(76, 175, 80, 0.3)' : 'rgba(244, 67, 54, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Result text
+                ctx.font = isMobile ? '28px Arial' : '36px Arial';
+                ctx.fillStyle = '#FFFFFF';
+                ctx.textAlign = 'center';
+                ctx.fillText(isCorrect ? 'CORRECT!' : 'INCORRECT!', 
+                             canvas.width/2, canvas.height/2 - 20);
+                
+                // Additional info text
+                ctx.font = isMobile ? '16px Arial' : '20px Arial';
+                ctx.fillText('The Great Wall is NOT visible from space with the naked eye.', 
+                             canvas.width/2, canvas.height/2 + 20);
+                
+                // Draw restart button
+                const btn = gameState.restartButton;
+                ctx.fillStyle = '#555555';
+                ctx.fillRect(btn.x, btn.y, btn.width, btn.height);
+                
+                // Button border
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(btn.x, btn.y, btn.width, btn.height);
+                
+                // Button text
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#FFFFFF';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('RESTART', btn.x + btn.width/2, btn.y + btn.height/2);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameState.isOver) {
+                // Update timer
+                gameState.timeLeft -= 0.3;
+                
+                // Play timer sound at intervals
+                if (Math.floor(gameState.timeLeft) % 20 === 0 && gameState.timeLeft > 0) {
+                    timerSound();
+                }
+                
+                // Check if time is up
+                if (gameState.timeLeft <= 0) {
+                    gameState.isOver = true;
+                    gameState.playerChoice = null; // No choice made
+                    incorrectSound();
+                }
+            }
+            
+            // Update particles
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                // Remove dead particles
+                if (p.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/tap events
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (!gameState.isOver) {
+                clickSound();
+                
+                // Check if click is on TRUE or FALSE side
+                if (x < gameState.dividerPos) {
+                    gameState.playerChoice = true;
+                } else {
+                    gameState.playerChoice = false;
+                }
+                
+                // Set game as over and play appropriate sound
+                gameState.isOver = true;
+                
+                if (gameState.playerChoice === gameState.answer) {
+                    correctSound();
+                    createParticles(x, y, colors.correct, 20);
+                } else {
+                    incorrectSound();
+                    createParticles(x, y, colors.incorrect, 20);
+                }
+            } else {
+                // Check if restart button was clicked
+                const btn = gameState.restartButton;
+                if (x >= btn.x && x <= btn.x + btn.width && 
+                    y >= btn.y && y <= btn.y + btn.height) {
+                    // Reset game
+                    clickSound();
+                    gameState.isOver = false;
+                    gameState.playerChoice = null;
+                    gameState.timeLeft = 100;
+                    gameState.particles = [];
+                }
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

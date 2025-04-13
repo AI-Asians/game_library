@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planet Quiz Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #000;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      border: 4px solid #333;
+    }
+    @media (max-width: 800px) {
+      canvas {
+        width: 360px;
+        height: 640px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+
+    // Game state
+    let gameOver = false;
+    let correct = false;
+    let restartBtnVisible = false;
+    let animationFrame = 0;
+    let hoverPlanet = null;
+
+    // Colors
+    const COLORS = {
+      background: '#0a0a2a',
+      text: '#ffffff',
+      mercury: ['#a7a9ac', '#8a8c8e'],
+      venus: ['#e7b417', '#c99a15'],
+      earth: ['#3ca0d0', '#228eb9'],
+      mars: ['#e04a34', '#c4382b'],
+      jupiter: ['#e8ae68', '#d49c60'],
+      saturn: ['#e4cf9e', '#c9b58e'],
+      neptune: ['#3454b4', '#2a4390'],
+      uranus: ['#76c7e4', '#62a5be'],
+      success: '#44ff44',
+      error: '#ff4444',
+      button: '#333366',
+      buttonHover: '#4444aa'
+    };
+
+    // Planet data
+    const planets = [
+      { name: 'Mercury', colors: COLORS.mercury, correct: false },
+      { name: 'Venus', colors: COLORS.venus, correct: false },
+      { name: 'Earth', colors: COLORS.earth, correct: false },
+      { name: 'Mars', colors: COLORS.mars, correct: true },
+      { name: 'Jupiter', colors: COLORS.jupiter, correct: false },
+      { name: 'Saturn', colors: COLORS.saturn, correct: false },
+      { name: 'Neptune', colors: COLORS.neptune, correct: false },
+      { name: 'Uranus', colors: COLORS.uranus, correct: false }
+    ];
+
+    // Position planets in circular pattern
+    for (let i = 0; i < planets.length; i++) {
+      const angle = (i / planets.length) * Math.PI * 2;
+      const radius = isMobile ? 120 : 200;
+      planets[i].x = canvas.width / 2 + Math.cos(angle) * radius;
+      planets[i].y = canvas.height / 2 + Math.sin(angle) * radius;
+      planets[i].radius = isMobile ? 25 : 40;
+      planets[i].pulseState = Math.random() * Math.PI * 2; // Randomize initial pulse state
+      planets[i].selectedScale = 1;
+      planets[i].hoverEffect = 0;
+    }
+
+    // Restart button
+    const restartBtn = {
+      x: canvas.width / 2,
+      y: canvas.height - (isMobile ? 80 : 100),
+      width: 120,
+      height: 40,
+      hover: false
+    };
+
+    // Sound generation (simple beeps)
+    function playSound(type) {
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        switch(type) {
+          case 'hover':
+            oscillator.type = 'sine';
+            oscillator.frequency.value = 440;
+            gainNode.gain.value = 0.1;
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), 50);
+            break;
+          case 'correct':
+            oscillator.type = 'square';
+            oscillator.frequency.value = 587.33;
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            
+            // Pitch up for success sound
+            oscillator.frequency.setValueAtTime(587.33, audioContext.currentTime);
+            oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.2);
+            
+            setTimeout(() => oscillator.stop(), 300);
+            break;
+          case 'wrong':
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.value = 196;
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            
+            // Pitch down for error sound
+            oscillator.frequency.setValueAtTime(196, audioContext.currentTime);
+            oscillator.frequency.linearRampToValueAtTime(98, audioContext.currentTime + 0.3);
+            
+            setTimeout(() => oscillator.stop(), 400);
+            break;
+          case 'click':
+            oscillator.type = 'sine';
+            oscillator.frequency.value = 660;
+            gainNode.gain.value = 0.15;
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), 100);
+            break;
+        }
+      } catch (e) {
+        console.log('Audio context not supported');
+      }
+    }
+
+    // Draw pixelated circle
+    function drawPixelatedCircle(x, y, radius, colors, pulseEffect = 0, selectedScale = 1, hoverEffect = 0) {
+      const pixelSize = 2;
+      const actualRadius = radius * (1 + pulseEffect * 0.05) * selectedScale * (1 + hoverEffect * 0.1);
+      
+      // Draw the planet with pixelated effect
+      for (let px = -actualRadius; px < actualRadius; px += pixelSize) {
+        for (let py = -actualRadius; py < actualRadius; py += pixelSize) {
+          const distSq = px * px + py * py;
+          if (distSq <= actualRadius * actualRadius) {
+            // Create some pixel noise for texture
+            const noiseValue = Math.random() > 0.7 ? 1 : 0;
+            const colorIndex = noiseValue;
+            
+            ctx.fillStyle = colors[colorIndex % colors.length];
+            ctx.fillRect(
+              Math.floor((x + px) / pixelSize) * pixelSize, 
+              Math.floor((y + py) / pixelSize) * pixelSize, 
+              pixelSize, pixelSize
+            );
+          }
+        }
+      }
+      
+      // Draw highlight if hovering
+      if (hoverEffect > 0) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x, y, actualRadius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Draw question mark indicator
+        if (hoverEffect > 0.5) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('?', x, y - actualRadius - 15);
+        }
+      }
+    }
+
+    // Main draw function
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw stars (background)
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < 50; i++) {
+        const x = Math.floor(Math.random() * canvas.width / 2) * 2;
+        const y = Math.floor(Math.random() * canvas.height / 2) * 2;
+        const size = Math.random() > 0.8 ? 2 : 1;
+        ctx.fillRect(x, y, size, size);
+      }
+      
+      // Draw question
+      ctx.fillStyle = COLORS.text;
+      ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, isMobile ? 60 : 80);
+
+      // Update animation frame
+      animationFrame += 0.05;
+      
+      // Draw planets
+      for (let i = 0; i < planets.length; i++) {
+        const planet = planets[i];
+        
+        // Update pulse effect
+        planet.pulseState += 0.03;
+        const pulseEffect = Math.sin(planet.pulseState);
+        
+        // Draw the planet
+        drawPixelatedCircle(
+          planet.x, 
+          planet.y, 
+          planet.radius, 
+          planet.colors, 
+          pulseEffect, 
+          planet.selectedScale,
+          planet.hoverEffect
+        );
+        
+        // Decrease hover effect over time
+        if (planet.hoverEffect > 0 && planet !== hoverPlanet) {
+          planet.hoverEffect -= 0.05;
+          if (planet.hoverEffect < 0) planet.hoverEffect = 0;
+        }
+        
+        // Animate selected scale
+        if (planet.selectedScale !== 1) {
+          if (gameOver) {
+            if (correct && planet.correct) {
+              planet.selectedScale += (1.2 - planet.selectedScale) * 0.1;
+            } else if (!correct && planet === hoverPlanet) {
+              planet.selectedScale += (0.8 - planet.selectedScale) * 0.1;
+            }
+          } else {
+            planet.selectedScale += (1 - planet.selectedScale) * 0.2;
+          }
+        }
+        
+        // Draw planet name
+        ctx.fillStyle = COLORS.text;
+        ctx.font = 'bold ' + (isMobile ? '12px' : '16px') + ' sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(planet.name, planet.x, planet.y + planet.radius + (isMobile ? 15 : 25));
+      }
+      
+      // Draw result text if game is over
+      if (gameOver) {
+        ctx.font = 'bold ' + (isMobile ? '20px' : '32px') + ' sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = correct ? COLORS.success : COLORS.error;
+        ctx.fillText(
+          correct ? 'Correct!' : 'Wrong!', 
+          canvas.width / 2, 
+          isMobile ? 120 : 160
+        );
+        
+        // Draw restart button
+        if (restartBtnVisible) {
+          ctx.fillStyle = restartBtn.hover ? COLORS.buttonHover : COLORS.button;
+          ctx.fillRect(
+            restartBtn.x - restartBtn.width / 2,
+            restartBtn.y - restartBtn.height / 2,
+            restartBtn.width,
+            restartBtn.height
+          );
+          
+          ctx.fillStyle = COLORS.text;
+          ctx.font = 'bold 16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('Play Again', restartBtn.x, restartBtn.y);
+        }
+      }
+      
+      requestAnimationFrame(draw);
+    }
+
+    // Check if coordinates are inside a planet
+    function isInsidePlanet(x, y, planet) {
+      const dx = x - planet.x;
+      const dy = y - planet.y;
+      return dx * dx + dy * dy < planet.radius * planet.radius;
+    }
+
+    // Check if coordinates are inside the restart button
+    function isInsideButton(x, y) {
+      return (
+        x >= restartBtn.x - restartBtn.width / 2 &&
+        x <= restartBtn.x + restartBtn.width / 2 &&
+        y >= restartBtn.y - restartBtn.height / 2 &&
+        y <= restartBtn.y + restartBtn.height / 2
+      );
+    }
+
+    // Handle mouse/touch movement
+    function handleMouseMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      let foundHover = false;
+      
+      // Check planet hover
+      if (!gameOver) {
+        for (const planet of planets) {
+          if (isInsidePlanet(x, y, planet)) {
+            if (hoverPlanet !== planet) {
+              if (hoverPlanet) hoverPlanet.hoverEffect = 0;
+              hoverPlanet = planet;
+              planet.hoverEffect = 1;
+              playSound('hover');
+            }
+            foundHover = true;
+            break;
+          }
+        }
+      }
+      
+      if (!foundHover && hoverPlanet) {
+        hoverPlanet.hoverEffect = 0;
+        hoverPlanet = null;
+      }
+      
+      // Check button hover
+      if (gameOver && restartBtnVisible) {
+        const wasHovering = restartBtn.hover;
+        restartBtn.hover = isInsideButton(x, y);
+        if (restartBtn.hover && !wasHovering) {
+          playSound('hover');
+        }
+      }
+    }
+
+    // Handle click/tap
+    function handleClick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Check restart button
+      if (gameOver && restartBtnVisible && isInsideButton(x, y)) {
+        playSound('click');
+        resetGame();
+        return;
+      }
+      
+      // Check planet selection
+      if (!gameOver) {
+        for (const planet of planets) {
+          if (isInsidePlanet(x, y, planet)) {
+            gameOver = true;
+            correct = planet.correct;
+            
+            // Apply animation effect
+            planet.selectedScale = correct ? 1.5 : 0.7;
+            
+            // Play sound
+            playSound(correct ? 'correct' : 'wrong');
+            
+            // Show restart button after a short delay
+            setTimeout(() => {
+              restartBtnVisible = true;
+            }, 1000);
+            
+            break;
+          }
+        }
+      }
+    }
+
+    // Reset the game
+    function resetGame() {
+      gameOver = false;
+      correct = false;
+      restartBtnVisible = false;
+      hoverPlanet = null;
+      
+      // Reset all planet animations
+      for (const planet of planets) {
+        planet.selectedScale = 1;
+        planet.hoverEffect = 0;
+      }
+    }
+
+    // Event listeners
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('click', handleClick);
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleClick(touch);
+    });
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleMouseMove(touch);
+    });
+
+    // Start the game
+    draw();
+  </script>
+</body>
+</html>

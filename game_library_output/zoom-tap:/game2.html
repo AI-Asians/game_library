@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planet Zoom Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #000;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      border: 4px solid #444;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #restartButton {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      padding: 8px 12px;
+      background-color: #333;
+      color: #fff;
+      border: 3px solid #666;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restartButton">Restart</button>
+  
+  <script>
+    // Set up canvas
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const planets = [];
+    let gameOver = false;
+    let correctAnswer = "Mars"; // Red Planet
+    let gameResult = "";
+    let timeLeft = 100; // Visual timer value
+    
+    // Planet colors and properties
+    const planetTypes = [
+      { name: "Mercury", color: "#A9A9A9", secondaryColor: "#808080", size: 0.7 },
+      { name: "Venus", color: "#E8D28A", secondaryColor: "#D4AF37", size: 0.8 },
+      { name: "Earth", color: "#3D85C6", secondaryColor: "#73A942", size: 0.8 },
+      { name: "Mars", color: "#CC4125", secondaryColor: "#AA2200", size: 0.75 },
+      { name: "Jupiter", color: "#E8C8A0", secondaryColor: "#C19A6B", size: 1.2 },
+      { name: "Saturn", color: "#DAB876", secondaryColor: "#C19653", size: 1.1, hasRing: true },
+      { name: "Uranus", color: "#B4D7E5", secondaryColor: "#89C7E5", size: 0.9 },
+      { name: "Neptune", color: "#5A82DB", secondaryColor: "#3A62BB", size: 0.9 }
+    ];
+    
+    // Sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContext();
+    
+    function createBeep(freq, duration, type = "square") {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start();
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+    
+    function playCorrectSound() {
+      createBeep(440, 0.1);
+      setTimeout(() => createBeep(660, 0.15), 100);
+      setTimeout(() => createBeep(880, 0.2), 250);
+    }
+    
+    function playIncorrectSound() {
+      createBeep(220, 0.2, "sawtooth");
+      setTimeout(() => createBeep(180, 0.3, "sawtooth"), 200);
+    }
+    
+    function playClickSound() {
+      createBeep(330, 0.05);
+    }
+    
+    // Create planets
+    function createPlanets() {
+      let planetChoices = [...planetTypes];
+      let selected = [];
+      
+      // Make sure Mars is included
+      const marsIndex = planetChoices.findIndex(p => p.name === "Mars");
+      selected.push(planetChoices.splice(marsIndex, 1)[0]);
+      
+      // Select 4 more random planets
+      while (selected.length < 5 && planetChoices.length > 0) {
+        const randomIndex = Math.floor(Math.random() * planetChoices.length);
+        selected.push(planetChoices.splice(randomIndex, 1)[0]);
+      }
+      
+      // Create planet objects
+      planets.length = 0;
+      for (let i = 0; i < selected.length; i++) {
+        const planetType = selected[i];
+        planets.push({
+          name: planetType.name,
+          baseSize: planetType.size * (isMobile ? 30 : 50),
+          color: planetType.color,
+          secondaryColor: planetType.secondaryColor,
+          hasRing: planetType.hasRing || false,
+          x: Math.random() * canvas.width,
+          y: Math.random() * (canvas.height - 100) + 50,
+          scale: 0.5 + Math.random() * 0.5,
+          scaleDir: Math.random() > 0.5 ? 0.01 : -0.01,
+          speedX: (Math.random() - 0.5) * 2,
+          speedY: (Math.random() - 0.5) * 2,
+          hover: false,
+          clickEffect: 0
+        });
+      }
+    }
+    
+    // Draw pixelated circle
+    function drawPixelatedCircle(x, y, radius, color) {
+      const pixelSize = isMobile ? 2 : 3;
+      const centerX = Math.round(x / pixelSize) * pixelSize;
+      const centerY = Math.round(y / pixelSize) * pixelSize;
+      
+      for (let py = centerY - radius; py <= centerY + radius; py += pixelSize) {
+        for (let px = centerX - radius; px <= centerX + radius; px += pixelSize) {
+          const dx = px - centerX;
+          const dy = py - centerY;
+          if (dx * dx + dy * dy <= radius * radius) {
+            ctx.fillStyle = color;
+            ctx.fillRect(px, py, pixelSize, pixelSize);
+          }
+        }
+      }
+    }
+    
+    // Draw planet
+    function drawPlanet(planet) {
+      const size = planet.baseSize * planet.scale;
+      let glow = 0;
+      
+      // Add glow effect
+      if (planet.hover || planet.clickEffect > 0) {
+        glow = planet.clickEffect > 0 ? planet.clickEffect * 20 : 10;
+        const glowColor = planet.name === correctAnswer ? 
+          `rgba(100, 255, 100, 0.3)` : `rgba(255, 255, 255, 0.2)`;
+        drawPixelatedCircle(planet.x, planet.y, size + glow, glowColor);
+      }
+      
+      // Planet base
+      drawPixelatedCircle(planet.x, planet.y, size, planet.color);
+      
+      // Planet details (craters, landmasses, etc.)
+      if (planet.name === "Mars") {
+        // Mars details (craters)
+        for (let i = 0; i < 3; i++) {
+          const angleOffset = i * (Math.PI * 2 / 3);
+          const craterX = planet.x + Math.cos(angleOffset) * (size * 0.5);
+          const craterY = planet.y + Math.sin(angleOffset) * (size * 0.5);
+          drawPixelatedCircle(craterX, craterY, size * 0.2, planet.secondaryColor);
+        }
+      } else if (planet.name === "Earth") {
+        // Earth continents
+        const continentSize = size * 0.4;
+        drawPixelatedCircle(planet.x - size * 0.3, planet.y, continentSize, planet.secondaryColor);
+        drawPixelatedCircle(planet.x + size * 0.2, planet.y - size * 0.2, continentSize * 0.8, planet.secondaryColor);
+      } else if (planet.name === "Jupiter") {
+        // Jupiter stripes
+        const stripeHeight = size * 0.15;
+        ctx.fillStyle = planet.secondaryColor;
+        for (let i = -2; i <= 2; i += 2) {
+          ctx.fillRect(planet.x - size, planet.y + i * stripeHeight, size * 2, stripeHeight);
+        }
+      } else if (planet.name === "Saturn" && planet.hasRing) {
+        // Saturn rings
+        ctx.fillStyle = planet.secondaryColor;
+        const ringThickness = size * 0.15;
+        ctx.fillRect(planet.x - size * 1.5, planet.y - ringThickness/2, size * 3, ringThickness);
+      } else {
+        // Generic details for other planets
+        drawPixelatedCircle(planet.x - size * 0.3, planet.y - size * 0.3, size * 0.25, planet.secondaryColor);
+      }
+    }
+    
+    // Update game state
+    function update() {
+      // Update timer
+      if (!gameOver) {
+        timeLeft -= 0.5;
+        if (timeLeft <= 0) {
+          gameOver = true;
+          gameResult = "Time's up!";
+          document.getElementById('restartButton').style.display = 'block';
+        }
+      }
+      
+      // Update planets
+      for (const planet of planets) {
+        // Update scale (zoom effect)
+        planet.scale += planet.scaleDir;
+        if (planet.scale > 1.2 || planet.scale < 0.4) {
+          planet.scaleDir *= -1;
+        }
+        
+        // Update position
+        planet.x += planet.speedX;
+        planet.y += planet.speedY;
+        
+        // Bounce off edges
+        const size = planet.baseSize * planet.scale;
+        if (planet.x < size || planet.x > canvas.width - size) {
+          planet.speedX *= -1;
+        }
+        if (planet.y < size || planet.y > canvas.height - size) {
+          planet.speedY *= -1;
+        }
+        
+        // Update click effect
+        if (planet.clickEffect > 0) {
+          planet.clickEffect -= 0.05;
+        }
+      }
+    }
+    
+    // Draw game
+    function draw() {
+      // Clear canvas with space background
+      ctx.fillStyle = '#0A0A22';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw stars
+      ctx.fillStyle = '#FFF';
+      for (let i = 0; i < 100; i++) {
+        const x = Math.floor(Math.random() * canvas.width);
+        const y = Math.floor(Math.random() * canvas.height);
+        const size = Math.random() > 0.9 ? 2 : 1;
+        ctx.fillRect(x, y, size, size);
+      }
+      
+      // Draw planets
+      for (const planet of planets) {
+        drawPlanet(planet);
+      }
+      
+      // Draw question
+      ctx.fillStyle = '#FFF';
+      ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 40);
+      
+      // Draw timer bar
+      const timerWidth = (canvas.width - 100) * (timeLeft / 100);
+      ctx.fillStyle = timeLeft > 30 ? '#6F6' : '#F66';
+      ctx.fillRect(50, canvas.height - 30, timerWidth, 15);
+      ctx.strokeStyle = '#FFF';
+      ctx.strokeRect(50, canvas.height - 30, canvas.width - 100, 15);
+      
+      // Draw game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = gameResult === "Correct!" ? '#6F6' : '#F66';
+        ctx.font = `${isMobile ? 32 : 48}px sans-serif`;
+        ctx.fillText(gameResult, canvas.width / 2, canvas.height / 2);
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      
+      if (!gameOver) {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+    
+    // Initialize game
+    function init() {
+      gameOver = false;
+      gameResult = "";
+      timeLeft = 100;
+      createPlanets();
+      document.getElementById('restartButton').style.display = 'none';
+      gameLoop();
+    }
+    
+    // Check if mouse/touch is over a planet
+    function isOverPlanet(x, y, planet) {
+      const size = planet.baseSize * planet.scale;
+      const dx = x - planet.x;
+      const dy = y - planet.y;
+      return dx * dx + dy * dy <= size * size;
+    }
+    
+    // Mouse move handler
+    canvas.addEventListener('mousemove', (e) => {
+      if (gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      // Update hover state for each planet
+      for (const planet of planets) {
+        planet.hover = isOverPlanet(mouseX, mouseY, planet);
+      }
+    });
+    
+    // Click/tap handler
+    canvas.addEventListener('click', (e) => {
+      if (gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      
+      for (const planet of planets) {
+        if (isOverPlanet(clickX, clickY, planet)) {
+          playClickSound();
+          planet.clickEffect = 1;
+          
+          // Check if correct planet was clicked
+          if (planet.name === correctAnswer) {
+            playCorrectSound();
+            gameResult = "Correct!";
+          } else {
+            playIncorrectSound();
+            gameResult = "Wrong!";
+          }
+          
+          gameOver = true;
+          document.getElementById('restartButton').style.display = 'block';
+          break;
+        }
+      }
+    });
+    
+    // Restart button handler
+    document.getElementById('restartButton').addEventListener('click', init);
+    
+    // Start the game
+    init();
+  </script>
+</body>
+</html>

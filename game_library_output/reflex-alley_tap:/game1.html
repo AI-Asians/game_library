@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reflex-Alley Tap</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+            user-select: none;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: #fff;
+            border: 2px solid #666;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">Restart</button>
+
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Detect if mobile based on screen dimensions
+        const isMobile = window.innerWidth <= 800;
+        
+        // Set canvas dimensions based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - 8-bit palette
+        const COLORS = {
+            background: '#0f380f',
+            targetZone: '#8bac0f',
+            targetBorder: '#9bbc0f',
+            questionText: '#e0f8d0',
+            answerText: '#0f380f',
+            correctAnswer: '#306230',
+            wrongAnswer: '#8bac0f',
+            particles: ['#9bbc0f', '#8bac0f', '#306230', '#0f380f']
+        };
+        
+        // Game state
+        let gameOver = false;
+        let gameResult = null; // 'correct' or 'incorrect'
+        let countdownTimer = 8; // 8 second countdown
+        let lastTime = 0;
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle answers
+        answers.sort(() => Math.random() - 0.5);
+        
+        // Create answer objects
+        const answerObjects = answers.map((answer, index) => {
+            return {
+                text: answer.text,
+                correct: answer.correct,
+                x: -200, // Start off-screen
+                y: canvas.height * (0.4 + index * 0.15),
+                width: ctx.measureText(answer.text).width + 40,
+                height: 40,
+                speed: 2 + Math.random() * 1.5,
+                entered: false
+            };
+        });
+        
+        // Target zone
+        const targetZone = {
+            x: canvas.width * 0.6,
+            width: 80,
+            particles: []
+        };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize audio context on first user interaction
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+        
+        // Sound effects
+        function playSound(frequency, type, duration) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playSoundCorrect() {
+            playSound(523.25, 'square', 0.1); // C5
+            setTimeout(() => playSound(659.25, 'square', 0.2), 100); // E5
+            setTimeout(() => playSound(783.99, 'square', 0.3), 200); // G5
+        }
+        
+        function playSoundIncorrect() {
+            playSound(196.00, 'square', 0.1); // G3
+            setTimeout(() => playSound(185.00, 'square', 0.3), 100); // F#3
+        }
+        
+        function playSoundClick() {
+            playSound(440.00, 'square', 0.05); // A4
+        }
+        
+        // Create particles
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 12; i++) {
+                targetZone.particles.push({
+                    x,
+                    y,
+                    size: 4 + Math.random() * 4,
+                    speedX: (Math.random() - 0.5) * 5,
+                    speedY: (Math.random() - 0.5) * 5,
+                    color: color || COLORS.particles[Math.floor(Math.random() * COLORS.particles.length)],
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = targetZone.particles.length - 1; i >= 0; i--) {
+                const particle = targetZone.particles[i];
+                particle.x += particle.speedX;
+                particle.y += particle.speedY;
+                particle.life -= 1;
+                
+                if (particle.life <= 0) {
+                    targetZone.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            targetZone.particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    Math.floor(particle.x),
+                    Math.floor(particle.y),
+                    Math.floor(particle.size),
+                    Math.floor(particle.size)
+                );
+            });
+        }
+        
+        // Draw target zone
+        function drawTargetZone() {
+            // Target zone background
+            ctx.fillStyle = COLORS.targetZone;
+            ctx.fillRect(targetZone.x, 0, targetZone.width, canvas.height);
+            
+            // Target zone border
+            ctx.fillStyle = COLORS.targetBorder;
+            ctx.fillRect(targetZone.x, 0, 8, canvas.height);
+            ctx.fillRect(targetZone.x + targetZone.width - 8, 0, 8, canvas.height);
+            
+            // Draw arch pattern at top and bottom
+            for (let i = 0; i < 10; i++) {
+                const width = 8;
+                const height = 16;
+                const spacing = targetZone.width / 10;
+                
+                // Top arch
+                ctx.fillRect(
+                    targetZone.x + i * spacing, 
+                    0, 
+                    width, 
+                    height
+                );
+                
+                // Bottom arch
+                ctx.fillRect(
+                    targetZone.x + i * spacing, 
+                    canvas.height - height, 
+                    width, 
+                    height
+                );
+            }
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.questionText;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 80);
+        }
+        
+        // Draw timer
+        function drawTimer() {
+            const timerWidth = canvas.width * 0.8;
+            const timerHeight = 12;
+            const timerX = (canvas.width - timerWidth) / 2;
+            const timerY = 120;
+            const fillWidth = (timerWidth * countdownTimer) / 8;
+            
+            // Timer border
+            ctx.fillStyle = COLORS.targetBorder;
+            ctx.fillRect(timerX - 4, timerY - 4, timerWidth + 8, timerHeight + 8);
+            
+            // Timer background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Timer fill
+            ctx.fillStyle = countdownTimer < 3 ? '#8b0000' : COLORS.targetZone;
+            ctx.fillRect(timerX, timerY, fillWidth, timerHeight);
+            
+            // Timer segments
+            for (let i = 1; i < 8; i++) {
+                ctx.fillStyle = COLORS.targetBorder;
+                ctx.fillRect(timerX + (timerWidth / 8) * i, timerY, 2, timerHeight);
+            }
+        }
+        
+        // Draw answers
+        function drawAnswers() {
+            answerObjects.forEach(answer => {
+                // Answer background
+                ctx.fillStyle = answer.correct ? COLORS.correctAnswer : COLORS.wrongAnswer;
+                
+                // Pixelated rounded rectangle effect
+                const x = Math.floor(answer.x);
+                const y = Math.floor(answer.y);
+                const width = answer.width;
+                const height = answer.height;
+                
+                // Main block
+                ctx.fillRect(x + 4, y, width - 8, height);
+                ctx.fillRect(x, y + 4, width, height - 8);
+                
+                // Corners
+                ctx.fillRect(x + 2, y + 2, 2, 2);
+                ctx.fillRect(x + width - 4, y + 2, 2, 2);
+                ctx.fillRect(x + 2, y + height - 4, 2, 2);
+                ctx.fillRect(x + width - 4, y + height - 4, 2, 2);
+                
+                // Answer text
+                ctx.fillStyle = COLORS.answerText;
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(answer.text, x + width / 2, y + height / 2 + 7);
+            });
+        }
+        
+        // Draw game over message
+        function drawGameOver() {
+            if (gameOver) {
+                ctx.fillStyle = gameResult === 'correct' ? 'rgba(0, 128, 0, 0.7)' : 'rgba(128, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameResult === 'correct' ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+                
+                restartButton.style.display = 'block';
+            }
+        }
+        
+        // Check if mouse/touch is over an answer
+        function checkClick(x, y) {
+            if (gameOver) return;
+            
+            for (const answer of answerObjects) {
+                if (x >= answer.x && x <= answer.x + answer.width &&
+                    y >= answer.y && y <= answer.y + answer.height) {
+                    
+                    // Check if in target zone
+                    if (answer.x < targetZone.x + targetZone.width && 
+                        answer.x + answer.width > targetZone.x) {
+                        
+                        gameOver = true;
+                        gameResult = answer.correct ? 'correct' : 'incorrect';
+                        
+                        if (answer.correct) {
+                            playSoundCorrect();
+                            createParticles(answer.x + answer.width / 2, answer.y + answer.height / 2, '#9bbc0f');
+                        } else {
+                            playSoundIncorrect();
+                            createParticles(answer.x + answer.width / 2, answer.y + answer.height / 2, '#8b0000');
+                        }
+                        
+                        setTimeout(() => restartButton.style.display = 'block', 1000);
+                    } else {
+                        // Clicked but not in target zone
+                        playSoundClick();
+                        createParticles(x, y);
+                    }
+                    return;
+                }
+            }
+            
+            // Clicked but not on any answer
+            playSoundClick();
+            createParticles(x, y);
+        }
+        
+        // Update game state
+        function update(deltaTime) {
+            if (gameOver) return;
+            
+            // Update timer
+            countdownTimer -= deltaTime;
+            if (countdownTimer <= 0) {
+                gameOver = true;
+                gameResult = 'incorrect';
+                playSoundIncorrect();
+                setTimeout(() => restartButton.style.display = 'block', 1000);
+                return;
+            }
+            
+            // Speed up as time progresses
+            const speedMultiplier = 1 + (1 - (countdownTimer / 8)) * 0.5;
+            
+            // Update answers
+            answerObjects.forEach(answer => {
+                answer.x += answer.speed * speedMultiplier;
+                
+                // Slightly bounce vertical position
+                answer.y += Math.sin(answer.x / 50) * 0.5;
+                
+                // Create entry particles
+                if (!answer.entered && answer.x > 0) {
+                    answer.entered = true;
+                    createParticles(answer.x, answer.y + answer.height / 2);
+                }
+                
+                // If an answer moved past screen without being clicked
+                if (answer.x > canvas.width && answer.correct) {
+                    gameOver = true;
+                    gameResult = 'incorrect';
+                    playSoundIncorrect();
+                    setTimeout(() => restartButton.style.display = 'block', 1000);
+                }
+            });
+            
+            // Update particles
+            updateParticles();
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawTargetZone();
+            drawQuestion();
+            drawTimer();
+            drawAnswers();
+            drawParticles();
+            drawGameOver();
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            initAudio();
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            checkClick(x, y);
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            initAudio();
+            const rect = canvas.getBoundingClientRect();
+            const x = e.touches[0].clientX - rect.left;
+            const y = e.touches[0].clientY - rect.top;
+            checkClick(x, y);
+        }, { passive: false });
+        
+        // Restart game
+        function restartGame() {
+            gameOver = false;
+            gameResult = null;
+            countdownTimer = 8;
+            targetZone.particles = [];
+            
+            // Reset and randomize answers
+            answerObjects.forEach((answer, index) => {
+                answer.x = -200 - (index * 200);
+                answer.y = canvas.height * (0.4 + index * 0.15);
+                answer.speed = 2 + Math.random() * 1.5;
+                answer.entered = false;
+            });
+            
+            // Shuffle answer positions
+            answerObjects.sort(() => Math.random() - 0.5);
+            
+            restartButton.style.display = 'none';
+        }
+        
+        restartButton.addEventListener('click', restartGame);
+        
+        // Start game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

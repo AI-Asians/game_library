@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>True or False Jump</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: sans-serif;
+    }
+    canvas {
+      border: 3px solid #444;
+      image-rendering: pixelated;
+    }
+    #restartBtn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 8px 16px;
+      background: #555;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-family: sans-serif;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restartBtn">Restart</button>
+  <script>
+    // Canvas setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      canvas.width = 360;
+      canvas.height = 640;
+    } else {
+      canvas.width = 800;
+      canvas.height = 600;
+    }
+    
+    // Game constants
+    const GROUND_HEIGHT = canvas.height - 100;
+    const PLAYER_WIDTH = 40;
+    const PLAYER_HEIGHT = 60;
+    const GRAVITY = 0.8;
+    const JUMP_FORCE = -16;
+    const GAME_SPEED = 5;
+    
+    // Game variables
+    let player = {
+      x: 100,
+      y: GROUND_HEIGHT - PLAYER_HEIGHT,
+      vy: 0,
+      jumping: false,
+      frame: 0,
+      frameCount: 0
+    };
+    
+    // The gap configuration
+    const gap = {
+      x: canvas.width + 300,
+      width: 140,
+      passed: false
+    };
+    
+    // Game state
+    let gameOver = false;
+    let gameResult = null; // 'correct' or 'incorrect'
+    let restartBtn = document.getElementById('restartBtn');
+    
+    // Colors
+    const COLORS = {
+      sky: '#87CEEB',
+      clouds: '#FFFFFF',
+      ground: '#8B4513',
+      player: '#FF6347',
+      gap: '#000000',
+      text: '#000000'
+    };
+    
+    // Clouds for parallax effect
+    const clouds = [];
+    for (let i = 0; i < 6; i++) {
+      clouds.push({
+        x: Math.random() * canvas.width,
+        y: 50 + Math.random() * 100,
+        width: 60 + Math.random() * 50,
+        speed: 0.5 + Math.random() * 1
+      });
+    }
+    
+    // Question data
+    const question = "The Great Wall of China is visible from space.";
+    const correctAnswer = false; // This statement is false
+    
+    // Audio context for sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Sound functions
+    function playJumpSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(500, audioCtx.currentTime);
+      osc.frequency.linearRampToValueAtTime(700, audioCtx.currentTime + 0.1);
+      
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    function playCorrectSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(330, audioCtx.currentTime);
+      osc.frequency.setValueAtTime(392, audioCtx.currentTime + 0.1);
+      osc.frequency.setValueAtTime(523, audioCtx.currentTime + 0.2);
+      
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    function playIncorrectSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+      osc.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+      osc.frequency.setValueAtTime(100, audioCtx.currentTime + 0.2);
+      
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    // Jump function
+    function jump() {
+      if (!player.jumping && !gameOver) {
+        player.vy = JUMP_FORCE;
+        player.jumping = true;
+        playJumpSound();
+        
+        // If player jumped (believes the statement is true)
+        checkAnswer(true);
+      }
+    }
+    
+    // Check if the player's action matches the correct answer
+    function checkAnswer(playerAction) {
+      // playerAction is true if they jumped, false if they didn't
+      
+      // If the player is in the gap region
+      if (player.x + PLAYER_WIDTH > gap.x && player.x < gap.x + gap.width && !gap.passed) {
+        gap.passed = true;
+        
+        if (playerAction === correctAnswer) {
+          // Correct decision
+          gameResult = 'correct';
+          playCorrectSound();
+        } else {
+          // Incorrect decision
+          gameResult = 'incorrect';
+          playIncorrectSound();
+        }
+        
+        // End the game after a short delay to show the result
+        setTimeout(() => {
+          gameOver = true;
+          restartBtn.style.display = 'block';
+        }, 1000);
+      }
+    }
+    
+    // Draw the player character with animation
+    function drawPlayer() {
+      ctx.fillStyle = COLORS.player;
+      
+      // Simple animation
+      if (player.jumping) {
+        // Jumping pose
+        ctx.fillRect(player.x, player.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+        
+        // Arms up
+        ctx.fillRect(player.x - 5, player.y + 15, 5, 10);
+        ctx.fillRect(player.x + PLAYER_WIDTH, player.y + 15, 5, 10);
+        
+        // Legs apart
+        ctx.fillRect(player.x + 10, player.y + PLAYER_HEIGHT, 8, 10);
+        ctx.fillRect(player.x + PLAYER_WIDTH - 18, player.y + PLAYER_HEIGHT, 8, 10);
+      } else {
+        // Running animation
+        player.frameCount++;
+        if (player.frameCount > 5) {
+          player.frame = (player.frame + 1) % 2;
+          player.frameCount = 0;
+        }
+        
+        ctx.fillRect(player.x, player.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+        
+        // Arms
+        ctx.fillRect(player.x - 5, player.y + 20, 5, 10);
+        ctx.fillRect(player.x + PLAYER_WIDTH, player.y + 20, 5, 10);
+        
+        // Legs in running position
+        if (player.frame === 0) {
+          ctx.fillRect(player.x + 5, player.y + PLAYER_HEIGHT, 10, 10);
+          ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + PLAYER_HEIGHT, 10, 10);
+        } else {
+          ctx.fillRect(player.x + 15, player.y + PLAYER_HEIGHT, 10, 10);
+          ctx.fillRect(player.x + PLAYER_WIDTH - 25, player.y + PLAYER_HEIGHT, 10, 10);
+        }
+      }
+      
+      // Eyes
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + 15, 8, 8);
+      
+      // Pupils
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(player.x + PLAYER_WIDTH - 12, player.y + 17, 4, 4);
+    }
+    
+    // Draw the game
+    function draw() {
+      // Clear the canvas
+      ctx.fillStyle = COLORS.sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw clouds with parallax effect
+      ctx.fillStyle = COLORS.clouds;
+      clouds.forEach(cloud => {
+        ctx.beginPath();
+        ctx.arc(cloud.x, cloud.y, cloud.width / 2, 0, Math.PI * 2);
+        ctx.arc(cloud.x + cloud.width * 0.3, cloud.y - 10, cloud.width / 3, 0, Math.PI * 2);
+        ctx.arc(cloud.x + cloud.width * 0.6, cloud.y, cloud.width / 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      
+      // Draw ground
+      ctx.fillStyle = COLORS.ground;
+      ctx.fillRect(0, GROUND_HEIGHT, canvas.width, canvas.height - GROUND_HEIGHT);
+      
+      // Draw gap
+      if (gap.x < canvas.width && gap.x + gap.width > 0) {
+        ctx.fillStyle = COLORS.gap;
+        ctx.fillRect(gap.x, GROUND_HEIGHT, gap.width, canvas.height - GROUND_HEIGHT);
+        
+        // Warning sign before the gap
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.7)';
+        ctx.fillRect(gap.x - 100, GROUND_HEIGHT - 40, 30, 30);
+        ctx.fillStyle = '#000';
+        ctx.font = '24px sans-serif';
+        ctx.fillText('!', gap.x - 90, GROUND_HEIGHT - 18);
+      }
+      
+      // Draw player
+      drawPlayer();
+      
+      // Draw question
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, 50);
+      
+      // Draw instruction
+      ctx.font = '16px sans-serif';
+      ctx.fillText('Press SPACE to jump only if the statement is TRUE', canvas.width / 2, 80);
+      
+      // Draw result if game is over
+      if (gameResult) {
+        ctx.fillStyle = gameResult === 'correct' ? '#00FF00' : '#FF0000';
+        ctx.font = '30px sans-serif';
+        ctx.fillText(gameResult === 'correct' ? 'CORRECT!' : 'INCORRECT!', canvas.width / 2, 150);
+        
+        ctx.font = '20px sans-serif';
+        ctx.fillText(`The statement is ${correctAnswer ? 'TRUE' : 'FALSE'}`, canvas.width / 2, 190);
+      }
+    }
+    
+    // Update game state
+    function update() {
+      if (gameOver) return;
+      
+      // Update player
+      player.y += player.vy;
+      player.vy += GRAVITY;
+      
+      // Check if player is back on the ground
+      if (player.y + PLAYER_HEIGHT >= GROUND_HEIGHT) {
+        player.y = GROUND_HEIGHT - PLAYER_HEIGHT;
+        player.vy = 0;
+        player.jumping = false;
+      }
+      
+      // Move gap
+      gap.x -= GAME_SPEED;
+      
+      // If player doesn't jump and passes the gap
+      if (player.x > gap.x + gap.width && !gap.passed) {
+        gap.passed = true;
+        
+        // Player didn't jump (believes the statement is false)
+        checkAnswer(false);
+      }
+      
+      // If player falls into the gap
+      if (player.x + PLAYER_WIDTH > gap.x && player.x < gap.x + gap.width && 
+          player.y + PLAYER_HEIGHT > GROUND_HEIGHT && !gameOver) {
+        gameOver = true;
+        gameResult = correctAnswer ? 'incorrect' : 'correct';
+        playIncorrectSound();
+        restartBtn.style.display = 'block';
+      }
+      
+      // Update clouds
+      clouds.forEach(cloud => {
+        cloud.x -= cloud.speed;
+        if (cloud.x + cloud.width < 0) {
+          cloud.x = canvas.width + cloud.width;
+          cloud.y = 50 + Math.random() * 100;
+        }
+      });
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Event listeners
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        jump();
+      }
+    });
+    
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      jump();
+    });
+    
+    restartBtn.addEventListener('click', () => {
+      // Reset game
+      player = {
+        x: 100,
+        y: GROUND_HEIGHT - PLAYER_HEIGHT,
+        vy: 0,
+        jumping: false,
+        frame: 0,
+        frameCount: 0
+      };
+      
+      gap.x = canvas.width + 300;
+      gap.passed = false;
+      
+      gameOver = false;
+      gameResult = null;
+      restartBtn.style.display = 'none';
+    });
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

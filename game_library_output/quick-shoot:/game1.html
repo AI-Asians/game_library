@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quick-Shoot</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+            cursor: none;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+
+        // Colors (limited 8-bit style palette)
+        const COLORS = {
+            bg: '#0f380f',       // Dark green background
+            text: '#8bac0f',     // Light green text
+            correct: '#9bbc0f',  // Light green for correct
+            wrong: '#e76e55',    // Red for wrong
+            highlight: '#f7e7c6', // Light beige
+            timer: '#d13800',    // Orange for timer
+            ui: '#306230'        // Medium green for UI
+        };
+
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        let timeLeft = 5.0; // 5 seconds timer
+        let answers = [];
+        let crosshair = { x: canvas.width/2, y: canvas.height/2, size: 20 };
+
+        // Sound context
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Simple sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'shoot') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.15);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            }
+        }
+
+        // Create answer blocks
+        function createAnswers() {
+            answers = [
+                {
+                    text: 'Paris',
+                    correct: true,
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: Math.random() * (canvas.height - 200) + 150,
+                    width: 80,
+                    height: 40,
+                    vx: (Math.random() - 0.5) * 3,
+                    vy: (Math.random() - 0.5) * 3,
+                    hit: false
+                },
+                {
+                    text: 'London',
+                    correct: false,
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: Math.random() * (canvas.height - 200) + 150,
+                    width: 80,
+                    height: 40,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    hit: false
+                },
+                {
+                    text: 'Berlin',
+                    correct: false,
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: Math.random() * (canvas.height - 200) + 150,
+                    width: 80,
+                    height: 40,
+                    vx: (Math.random() - 0.5) * 3.5,
+                    vy: (Math.random() - 0.5) * 3.5,
+                    hit: false
+                },
+                {
+                    text: 'Rome',
+                    correct: false,
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: Math.random() * (canvas.height - 200) + 150,
+                    width: 80,
+                    height: 40,
+                    vx: (Math.random() - 0.5) * 2.5,
+                    vy: (Math.random() - 0.5) * 2.5,
+                    hit: false
+                }
+            ];
+        }
+
+        // Initialize game
+        function init() {
+            gameOver = false;
+            gameWon = false;
+            timeLeft = 5.0;
+            createAnswers();
+        }
+
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            
+            // Draw as a grid of 4x4 pixels for pixelated effect
+            const pixelSize = 4;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x + i),
+                        Math.floor(y + j),
+                        pixelSize,
+                        pixelSize
+                    );
+                }
+            }
+        }
+
+        // Draw the crosshair
+        function drawCrosshair() {
+            const x = crosshair.x;
+            const y = crosshair.y;
+            const size = crosshair.size;
+            
+            // Outer ring
+            ctx.beginPath();
+            ctx.arc(x, y, size/2, 0, Math.PI * 2);
+            ctx.strokeStyle = COLORS.highlight;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Inner dot
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, Math.PI * 2);
+            ctx.fillStyle = COLORS.highlight;
+            ctx.fill();
+            
+            // Cross lines
+            ctx.beginPath();
+            ctx.moveTo(x - size/2, y);
+            ctx.lineTo(x + size/2, y);
+            ctx.moveTo(x, y - size/2);
+            ctx.lineTo(x, y + size/2);
+            ctx.stroke();
+        }
+
+        // Update game
+        function update(deltaTime) {
+            if (gameOver) return;
+            
+            // Update timer
+            timeLeft -= deltaTime;
+            if (timeLeft <= 0) {
+                timeLeft = 0;
+                gameOver = true;
+                return;
+            }
+            
+            // Update answers
+            answers.forEach(answer => {
+                // Move
+                answer.x += answer.vx;
+                answer.y += answer.vy;
+                
+                // Bounce off walls
+                if (answer.x < 0 || answer.x + answer.width > canvas.width) {
+                    answer.vx *= -1;
+                    answer.x = Math.max(0, Math.min(answer.x, canvas.width - answer.width));
+                }
+                if (answer.y < 100 || answer.y + answer.height > canvas.height) {
+                    answer.vy *= -1;
+                    answer.y = Math.max(100, Math.min(answer.y, canvas.height - answer.height));
+                }
+            });
+        }
+
+        // Draw game
+        function draw() {
+            // Clear screen with pixelated background
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width/2, 60);
+            
+            // Draw timer bar
+            const timerWidth = (timeLeft / 5.0) * (canvas.width - 40);
+            drawPixelRect(20, 80, canvas.width - 40, 10, COLORS.ui);
+            drawPixelRect(20, 80, timerWidth, 10, COLORS.timer);
+            
+            // Draw answers
+            answers.forEach(answer => {
+                if (answer.hit) return;
+                
+                // Draw box
+                const color = answer.correct ? COLORS.correct : COLORS.wrong;
+                drawPixelRect(answer.x, answer.y, answer.width, answer.height, color);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.bg;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(answer.text, answer.x + answer.width/2, answer.y + answer.height/2);
+            });
+            
+            // Draw crosshair
+            drawCrosshair();
+            
+            // Draw game over
+            if (gameOver) {
+                // Semi-transparent overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Game over text
+                ctx.fillStyle = gameWon ? COLORS.correct : COLORS.wrong;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameWon ? 'Correct!' : 'Wrong!', canvas.width/2, canvas.height/2 - 40);
+                
+                // Restart button
+                drawPixelRect(canvas.width/2 - 80, canvas.height/2 + 20, 160, 50, COLORS.ui);
+                ctx.fillStyle = COLORS.highlight;
+                ctx.font = '20px sans-serif';
+                ctx.fillText('Play Again', canvas.width/2, canvas.height/2 + 45);
+            }
+        }
+
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            // Calculate delta time
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            // Update and draw
+            update(deltaTime);
+            draw();
+            
+            // Next frame
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        init();
+        requestAnimationFrame(gameLoop);
+
+        // Mouse movement
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            crosshair.x = e.clientX - rect.left;
+            crosshair.y = e.clientY - rect.top;
+        });
+
+        // Click/shoot
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) {
+                // Check if clicked on restart button
+                if (e.offsetX > canvas.width/2 - 80 && 
+                    e.offsetX < canvas.width/2 + 80 && 
+                    e.offsetY > canvas.height/2 + 20 && 
+                    e.offsetY < canvas.height/2 + 70) {
+                    init();
+                }
+                return;
+            }
+            
+            playSound('shoot');
+            
+            // Check for hits
+            for (const answer of answers) {
+                if (answer.hit) continue;
+                
+                if (e.offsetX > answer.x && 
+                    e.offsetX < answer.x + answer.width && 
+                    e.offsetY > answer.y && 
+                    e.offsetY < answer.y + answer.height) {
+                    
+                    answer.hit = true;
+                    gameOver = true;
+                    gameWon = answer.correct;
+                    
+                    if (answer.correct) {
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    
+                    break;
+                }
+            }
+        });
+
+        // Handle touch events for mobile
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            crosshair.x = e.touches[0].clientX - rect.left;
+            crosshair.y = e.touches[0].clientY - rect.top;
+        }, { passive: false });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            const touchY = e.touches[0].clientY - rect.top;
+            
+            // Update crosshair position first
+            crosshair.x = touchX;
+            crosshair.y = touchY;
+            
+            if (gameOver) {
+                // Check if touched restart button
+                if (touchX > canvas.width/2 - 80 && 
+                    touchX < canvas.width/2 + 80 && 
+                    touchY > canvas.height/2 + 20 && 
+                    touchY < canvas.height/2 + 70) {
+                    init();
+                }
+                return;
+            }
+            
+            playSound('shoot');
+            
+            // Check for hits
+            for (const answer of answers) {
+                if (answer.hit) continue;
+                
+                if (touchX > answer.x && 
+                    touchX < answer.x + answer.width && 
+                    touchY > answer.y && 
+                    touchY < answer.y + answer.height) {
+                    
+                    answer.hit = true;
+                    gameOver = true;
+                    gameWon = answer.correct;
+                    
+                    if (answer.correct) {
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    
+                    break;
+                }
+            }
+        }, { passive: false });
+    </script>
+</body>
+</html>

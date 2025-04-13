@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Path Switcher Educational Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #333;
+            color: white;
+            border: 2px solid #555;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (8-bit style palette)
+        const COLORS = {
+            bg: '#0f380f',          // Dark green background
+            track: '#8bac0f',       // Light green track
+            trueTrack: '#306230',   // Deeper green for true
+            falseTrack: '#9c2c2c',  // Red for false
+            cart: '#e0f8d0',        // Light greenish cart
+            text: '#e0f8d0',        // Light text
+            trueZone: '#306230',    // True destination
+            falseZone: '#9c2c2c',   // False destination
+            junction: '#9c9c9c'     // Junction color
+        };
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        // Game variables
+        let gameState = 'playing'; // playing, success, failure
+        let cart = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            width: 24,
+            height: 24,
+            speed: 3
+        };
+        
+        const correctAnswer = true; // Water boils at 100 degrees Celsius at sea level (TRUE)
+        
+        // Path setup
+        const mainPathY = 180; // Y position where path splits
+        const junctionY = mainPathY + 150; // Y position of decision junction
+        const destinationY = 80; // Y position of destinations
+        
+        let currentPath = 'main'; // main, true, false
+        let switchTriggered = false;
+        
+        // Game initialization
+        function init() {
+            // Reset variables
+            cart.x = canvas.width / 2;
+            cart.y = canvas.height - 100;
+            currentPath = 'main';
+            switchTriggered = false;
+            gameState = 'playing';
+            restartBtn.style.display = 'none';
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawCart() {
+            // Draw cart body
+            drawPixelRect(cart.x - cart.width/2, cart.y - cart.height/2, cart.width, cart.height, COLORS.cart);
+            
+            // Draw cart details (8-bit style)
+            const detailColor = '#8BAC0F';
+            drawPixelRect(cart.x - cart.width/2 + 4, cart.y - cart.height/2 + 4, cart.width - 8, 6, detailColor);
+            drawPixelRect(cart.x - cart.width/2 + 6, cart.y + cart.height/2 - 8, 4, 4, '#333');
+            drawPixelRect(cart.x + cart.width/2 - 10, cart.y + cart.height/2 - 8, 4, 4, '#333');
+        }
+        
+        function drawPaths() {
+            const pathWidth = 30;
+            const junctionSize = 40;
+            
+            // Main path (vertical from bottom to split)
+            drawPixelRect(canvas.width/2 - pathWidth/2, junctionY, pathWidth, canvas.height - junctionY, COLORS.track);
+            
+            // Junction point
+            drawPixelRect(canvas.width/2 - junctionSize/2, junctionY - junctionSize/2, junctionSize, junctionSize, COLORS.junction);
+            
+            // True path (left side)
+            const trueX = canvas.width/4;
+            drawPixelRect(trueX - pathWidth/2, destinationY, pathWidth, junctionY - destinationY, COLORS.trueTrack);
+            // True destination
+            drawPixelRect(trueX - 50, destinationY - 40, 100, 40, COLORS.trueZone);
+            
+            // False path (right side)
+            const falseX = canvas.width * 3/4;
+            drawPixelRect(falseX - pathWidth/2, destinationY, pathWidth, junctionY - destinationY, COLORS.falseTrack);
+            // False destination
+            drawPixelRect(falseX - 50, destinationY - 40, 100, 40, COLORS.falseZone);
+            
+            // Connection paths from junction to true/false paths
+            drawPixelRect(canvas.width/2 - pathWidth/2, junctionY, (trueX - canvas.width/2), pathWidth, COLORS.trueTrack);
+            drawPixelRect(canvas.width/2, junctionY, (falseX - canvas.width/2), pathWidth, COLORS.falseTrack);
+            
+            // Add switch indicator when approaching junction
+            if (cart.y > junctionY && cart.y < junctionY + 100) {
+                const indicatorSize = 10;
+                ctx.fillStyle = '#FFFF00';
+                ctx.beginPath();
+                ctx.moveTo(canvas.width/2 - indicatorSize, junctionY + 20);
+                ctx.lineTo(canvas.width/2 + indicatorSize, junctionY + 20);
+                ctx.lineTo(canvas.width/2, junctionY);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+        
+        function drawText() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // Draw question at top
+            const question = "Water boils at 100 degrees Celsius at sea level.";
+            ctx.fillText(question, canvas.width/2, 30);
+            
+            // Draw true/false labels
+            ctx.font = '16px sans-serif';
+            ctx.fillText("TRUE", canvas.width/4, destinationY - 20);
+            ctx.fillText("FALSE", canvas.width * 3/4, destinationY - 20);
+            
+            // Draw instructions
+            ctx.font = '14px sans-serif';
+            const instruction = "Press SPACE or CLICK to switch tracks at the junction";
+            ctx.fillText(instruction, canvas.width/2, canvas.height - 20);
+        }
+        
+        function drawEndScreen() {
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                gameState === 'success' ? "Correct!" : "Incorrect!",
+                canvas.width/2, 
+                canvas.height/2
+            );
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        // Game logic
+        function updateCart() {
+            // Move cart upward
+            cart.y -= cart.speed;
+            
+            // Handle path switching
+            if (cart.y <= junctionY && currentPath === 'main') {
+                if (switchTriggered) {
+                    currentPath = 'false';
+                    playSound(200, 100);
+                } else {
+                    currentPath = 'true';
+                    playSound(300, 100);
+                }
+            }
+            
+            // Adjust x position based on current path
+            if (currentPath === 'true') {
+                // Move toward true path (left)
+                const targetX = canvas.width/4;
+                cart.x -= Math.min(cart.speed * 1.5, Math.abs(cart.x - targetX));
+            } else if (currentPath === 'false') {
+                // Move toward false path (right)
+                const targetX = canvas.width * 3/4;
+                cart.x += Math.min(cart.speed * 1.5, Math.abs(targetX - cart.x));
+            }
+            
+            // Check for reaching destination
+            if (cart.y <= destinationY) {
+                if ((currentPath === 'true' && correctAnswer) || 
+                    (currentPath === 'false' && !correctAnswer)) {
+                    gameState = 'success';
+                    playSound(440, 100, 'sine');
+                    setTimeout(() => playSound(660, 100, 'sine'), 100);
+                } else {
+                    gameState = 'failure';
+                    playSound(200, 100, 'sawtooth');
+                    setTimeout(() => playSound(150, 150, 'sawtooth'), 100);
+                }
+            }
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawPaths();
+            drawCart();
+            drawText();
+            
+            // Update game state
+            if (gameState === 'playing') {
+                updateCart();
+                requestAnimationFrame(gameLoop);
+            } else {
+                drawEndScreen();
+            }
+        }
+        
+        // Event listeners
+        function handleSwitch() {
+            if (gameState === 'playing' && cart.y > junctionY && cart.y < junctionY + 150) {
+                switchTriggered = true;
+                playSound(250, 50);
+            }
+        }
+        
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                handleSwitch();
+            }
+        });
+        
+        canvas.addEventListener('click', () => {
+            handleSwitch();
+        });
+        
+        restartBtn.addEventListener('click', init);
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

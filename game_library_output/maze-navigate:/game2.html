@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Maze Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background-color: #000; 
+            overflow: hidden;
+        }
+        canvas { 
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (limited palette)
+        const COLORS = {
+            background: '#0F0F2D',
+            wall: '#6B2D5C',
+            path: '#1A1A3A',
+            player: '#58C9B0',
+            text: '#FFFFFF',
+            correct: '#3DC24B',
+            incorrect: '#E5243F',
+            arrow: '#F9A31B'
+        };
+
+        // Sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function playMoveSound() {
+            playSound(220, 0.05);
+        }
+
+        function playCorrectSound() {
+            playSound(440, 0.1);
+            setTimeout(() => playSound(660, 0.1), 100);
+            setTimeout(() => playSound(880, 0.2), 200);
+        }
+
+        function playIncorrectSound() {
+            playSound(220, 0.1);
+            setTimeout(() => playSound(180, 0.1), 100);
+            setTimeout(() => playSound(140, 0.2), 200);
+        }
+
+        function playWallSound() {
+            playSound(110, 0.05, 'sawtooth');
+        }
+
+        // Game state
+        let gameOver = false;
+        let player = {
+            x: 5,
+            y: 5,
+            size: 20,
+            speed: 5
+        };
+
+        // Adjust player size for mobile
+        if (isMobile) {
+            player.size = 15;
+        }
+
+        // Maze: 0 = path, 1 = wall
+        const cellSize = player.size * 1.5;
+        let maze = [];
+
+        // Answer options
+        const answers = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+
+        let answerLocations = [];
+
+        // Create maze
+        function createMaze() {
+            const cols = Math.floor(canvas.width / cellSize);
+            const rows = Math.floor(canvas.height / cellSize);
+            
+            // Initialize with all walls
+            for (let y = 0; y < rows; y++) {
+                maze[y] = [];
+                for (let x = 0; x < cols; x++) {
+                    // Border walls
+                    if (x === 0 || y === 0 || x === cols - 1 || y === rows - 1) {
+                        maze[y][x] = 1;
+                    }
+                    // Create a simple maze pattern
+                    else if ((x % 3 === 0 && y % 2 === 0) || 
+                             (y % 3 === 0 && x % 2 === 0)) {
+                        maze[y][x] = 1;
+                    } else {
+                        maze[y][x] = 0;
+                    }
+                }
+            }
+            
+            // Ensure player starting position is a path
+            const playerGridX = Math.floor(player.x / cellSize);
+            const playerGridY = Math.floor(player.y / cellSize);
+            maze[playerGridY][playerGridX] = 0;
+            
+            // Place answers at different ends of the maze
+            answerLocations = [
+                { x: 3, y: rows - 3 },
+                { x: cols - 3, y: rows - 3 },
+                { x: cols - 3, y: 3 },
+                { x: cols / 2, y: rows - 3 }
+            ];
+            
+            // Make sure answer locations are paths
+            answerLocations.forEach(loc => {
+                maze[loc.y][loc.x] = 0;
+                
+                // Create clear paths to answers
+                createPathToAnswer(playerGridX, playerGridY, loc.x, loc.y);
+            });
+
+            // Shuffle answer locations
+            for (let i = answerLocations.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [answerLocations[i], answerLocations[j]] = [answerLocations[j], answerLocations[i]];
+            }
+        }
+        
+        // Create a simple path to an answer
+        function createPathToAnswer(startX, startY, endX, endY) {
+            // Just create a simple L-shaped path
+            let x = startX;
+            let y = startY;
+            
+            // Move horizontally first
+            while (x !== endX) {
+                x += (x < endX) ? 1 : -1;
+                maze[y][x] = 0;
+            }
+            
+            // Then move vertically
+            while (y !== endY) {
+                y += (y < endY) ? 1 : -1;
+                maze[y][x] = 0;
+            }
+        }
+
+        // Draw the maze
+        function drawMaze() {
+            for (let y = 0; y < maze.length; y++) {
+                for (let x = 0; x < maze[y].length; x++) {
+                    if (maze[y][x] === 1) {
+                        ctx.fillStyle = COLORS.wall;
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    } else {
+                        ctx.fillStyle = COLORS.path;
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    }
+                }
+            }
+        }
+
+        // Draw the player
+        function drawPlayer() {
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(player.x, player.y, player.size, player.size);
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 30);
+        }
+        
+        // Draw answer options
+        function drawAnswers() {
+            ctx.font = isMobile ? '14px sans-serif' : '16px sans-serif';
+            ctx.textAlign = 'center';
+            
+            for (let i = 0; i < answers.length; i++) {
+                const ansX = answerLocations[i].x * cellSize + cellSize / 2;
+                const ansY = answerLocations[i].y * cellSize + cellSize / 2;
+                
+                // Draw direction arrow
+                drawArrow(player.x + player.size/2, player.y + player.size/2, ansX, ansY);
+                
+                // Draw answer option
+                ctx.fillStyle = COLORS.text;
+                ctx.fillText(answers[i].text, ansX, ansY);
+                
+                // Draw answer marker
+                ctx.beginPath();
+                ctx.arc(ansX, ansY - 20, 10, 0, Math.PI * 2);
+                ctx.fillStyle = COLORS.arrow;
+                ctx.fill();
+            }
+        }
+        
+        // Draw an arrow pointing to an answer
+        function drawArrow(fromX, fromY, toX, toY) {
+            // Calculate the angle between player and answer
+            const angle = Math.atan2(toY - fromY, toX - fromX);
+            
+            // Find a point along the path for the arrow (not too close to player)
+            const distance = Math.min(100, Math.sqrt(Math.pow(toX - fromX, 2) + Math.pow(toY - fromY, 2)) / 2);
+            const arrowX = fromX + Math.cos(angle) * distance;
+            const arrowY = fromY + Math.sin(angle) * distance;
+            
+            // Only show arrows to nearby answers
+            if (distance < 100) {
+                ctx.strokeStyle = COLORS.arrow;
+                ctx.lineWidth = 2;
+                
+                // Draw the arrow body
+                ctx.beginPath();
+                ctx.moveTo(fromX, fromY);
+                ctx.lineTo(arrowX, arrowY);
+                ctx.stroke();
+                
+                // Draw arrowhead
+                const headlen = 10;
+                ctx.beginPath();
+                ctx.moveTo(arrowX, arrowY);
+                ctx.lineTo(
+                    arrowX - headlen * Math.cos(angle - Math.PI / 6),
+                    arrowY - headlen * Math.sin(angle - Math.PI / 6)
+                );
+                ctx.moveTo(arrowX, arrowY);
+                ctx.lineTo(
+                    arrowX - headlen * Math.cos(angle + Math.PI / 6),
+                    arrowY - headlen * Math.sin(angle + Math.PI / 6)
+                );
+                ctx.stroke();
+            }
+        }
+        
+        // Check if player collides with a wall
+        function checkWallCollision(x, y) {
+            const gridX1 = Math.floor(x / cellSize);
+            const gridY1 = Math.floor(y / cellSize);
+            const gridX2 = Math.floor((x + player.size) / cellSize);
+            const gridY2 = Math.floor((y + player.size) / cellSize);
+            
+            return maze[gridY1][gridX1] === 1 || 
+                   maze[gridY1][gridX2] === 1 || 
+                   maze[gridY2][gridX1] === 1 || 
+                   maze[gridY2][gridX2] === 1;
+        }
+        
+        // Check if player reached an answer
+        function checkAnswerCollision() {
+            for (let i = 0; i < answers.length; i++) {
+                const ansX = answerLocations[i].x * cellSize;
+                const ansY = answerLocations[i].y * cellSize;
+                
+                if (player.x < ansX + cellSize &&
+                    player.x + player.size > ansX &&
+                    player.y < ansY + cellSize &&
+                    player.y + player.size > ansY) {
+                    
+                    gameOver = true;
+                    if (answers[i].correct) {
+                        showResult(true);
+                        playCorrectSound();
+                    } else {
+                        showResult(false);
+                        playIncorrectSound();
+                    }
+                }
+            }
+        }
+        
+        // Show the result screen
+        function showResult(correct) {
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = correct ? COLORS.correct : COLORS.incorrect;
+            ctx.fillText(correct ? "Correct!" : "Incorrect!", canvas.width / 2, canvas.height / 2 - 20);
+            
+            // Show restart button
+            ctx.fillStyle = COLORS.path;
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = (canvas.width - buttonWidth) / 2;
+            const buttonY = canvas.height / 2 + 20;
+            
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.fillText("Restart", canvas.width / 2, buttonY + 25);
+            
+            // Add click event for restart
+            canvas.addEventListener('click', function restartClickHandler(e) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                if (clickX > buttonX && clickX < buttonX + buttonWidth &&
+                    clickY > buttonY && clickY < buttonY + buttonHeight) {
+                    resetGame();
+                    canvas.removeEventListener('click', restartClickHandler);
+                }
+            });
+        }
+        
+        // Reset the game
+        function resetGame() {
+            player.x = 5;
+            player.y = 5;
+            gameOver = false;
+            createMaze();
+        }
+        
+        // Handle keyboard input
+        const keys = {};
+        window.addEventListener('keydown', function(e) {
+            keys[e.key] = true;
+        });
+        
+        window.addEventListener('keyup', function(e) {
+            keys[e.key] = false;
+        });
+        
+        // Handle touch controls for mobile
+        let touchStartX = 0;
+        let touchStartY = 0;
+        
+        canvas.addEventListener('touchstart', function(e) {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            e.preventDefault();
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            if (!gameOver) {
+                const touchX = e.touches[0].clientX;
+                const touchY = e.touches[0].clientY;
+                
+                const diffX = touchX - touchStartX;
+                const diffY = touchY - touchStartY;
+                
+                // Determine swipe direction if it's a significant movement
+                if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) {
+                    // Horizontal movement is stronger
+                    if (Math.abs(diffX) > Math.abs(diffY)) {
+                        movePlayer(diffX > 0 ? 'right' : 'left');
+                    } 
+                    // Vertical movement is stronger
+                    else {
+                        movePlayer(diffY > 0 ? 'down' : 'up');
+                    }
+                    
+                    // Reset touch start position
+                    touchStartX = touchX;
+                    touchStartY = touchY;
+                }
+            }
+            e.preventDefault();
+        }, { passive: false });
+        
+        // Move the player
+        function movePlayer(direction) {
+            let newX = player.x;
+            let newY = player.y;
+            
+            switch(direction) {
+                case 'up':
+                    newY -= player.speed;
+                    break;
+                case 'down':
+                    newY += player.speed;
+                    break;
+                case 'left':
+                    newX -= player.speed;
+                    break;
+                case 'right':
+                    newX += player.speed;
+                    break;
+            }
+            
+            // Check for wall collision
+            if (!checkWallCollision(newX, newY)) {
+                player.x = newX;
+                player.y = newY;
+                playMoveSound();
+            } else {
+                playWallSound();
+            }
+        }
+        
+        // Update player position based on keyboard input
+        function updatePlayer() {
+            if (gameOver) return;
+            
+            if (keys['ArrowUp'] || keys['w']) {
+                movePlayer('up');
+            }
+            if (keys['ArrowDown'] || keys['s']) {
+                movePlayer('down');
+            }
+            if (keys['ArrowLeft'] || keys['a']) {
+                movePlayer('left');
+            }
+            if (keys['ArrowRight'] || keys['d']) {
+                movePlayer('right');
+            }
+            
+            checkAnswerCollision();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Update game state
+            if (!gameOver) {
+                updatePlayer();
+            }
+            
+            // Render game elements
+            drawMaze();
+            drawPlayer();
+            drawQuestion();
+            drawAnswers();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize and start game
+        createMaze();
+        gameLoop();
+    </script>
+</body>
+</html>

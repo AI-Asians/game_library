@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Truth Laser</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 2px solid #444;
+        }
+        #restart {
+            position: absolute;
+            padding: 10px 20px;
+            background: #222;
+            color: white;
+            border: 2px solid #444;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">RESTART</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        let targets = [];
+        let lasers = [];
+        let cannon = {
+            x: canvas.width / 2,
+            y: canvas.height - 50,
+            width: 60,
+            height: 40,
+            color: '#5588ff'
+        };
+        
+        // Colors
+        const COLORS = {
+            background: '#111133',
+            stars: ['#ffffff', '#aaaaff', '#7777aa'],
+            trueTarget: '#44ff44',
+            falseTarget: '#ff4444',
+            trueLaser: '#22dd22',
+            falseLaser: '#dd2222',
+            cannon: '#5588ff',
+            text: '#ffffff'
+        };
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        // The answer is FALSE
+        const correctAnswer = false;
+        
+        // Game elements
+        const stars = Array(100).fill().map(() => ({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            size: Math.random() * 2 + 1,
+            speed: Math.random() * 0.5 + 0.2,
+            color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)]
+        }));
+        
+        // Sound effects using AudioContext
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'laser':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(500, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'explosion':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(250, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'win':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(400, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(600, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'lose':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Generate targets
+        function spawnTargets() {
+            // Create 6 targets (3 true, 3 false) at different positions
+            for (let i = 0; i < 6; i++) {
+                const isTrue = i % 2 === 0;
+                targets.push({
+                    x: 100 + (Math.random() * (canvas.width - 200)),
+                    y: 80 + Math.random() * 200,
+                    speed: 1 + Math.random() * 2,
+                    size: 30 + Math.random() * 10,
+                    isTrue: isTrue,
+                    dx: Math.random() > 0.5 ? 1 : -1,
+                    color: isTrue ? COLORS.trueTarget : COLORS.falseTarget,
+                    text: isTrue ? 'T' : 'F'
+                });
+            }
+        }
+        
+        // Fire laser
+        function fireLaser(isTrue) {
+            playSound('laser');
+            
+            lasers.push({
+                x: cannon.x,
+                y: cannon.y - 10,
+                speed: 10,
+                width: 6,
+                height: 15,
+                isTrue: isTrue,
+                color: isTrue ? COLORS.trueLaser : COLORS.falseLaser
+            });
+            
+            // Check win/lose
+            for (let target of targets) {
+                if (target.y < 150 && Math.abs(target.x - cannon.x) < 30) {
+                    // If we hit a target and it matches the correct answer
+                    if ((isTrue && correctAnswer && target.isTrue) || 
+                        (!isTrue && !correctAnswer && !target.isTrue)) {
+                        gameWon = true;
+                        gameOver = true;
+                        playSound('win');
+                    } else {
+                        gameWon = false;
+                        gameOver = true;
+                        playSound('lose');
+                    }
+                }
+            }
+        }
+        
+        // Game loop
+        function update() {
+            if (gameOver) {
+                restartBtn.style.display = 'block';
+                return;
+            }
+            
+            // Update stars (background)
+            stars.forEach(star => {
+                star.y += star.speed;
+                if (star.y > canvas.height) {
+                    star.y = 0;
+                    star.x = Math.random() * canvas.width;
+                }
+            });
+            
+            // Update targets
+            targets.forEach(target => {
+                target.x += target.dx * target.speed;
+                
+                // Bounce off walls
+                if (target.x < 50 || target.x > canvas.width - 50) {
+                    target.dx *= -1;
+                }
+            });
+            
+            // Update lasers
+            lasers.forEach((laser, index) => {
+                laser.y -= laser.speed;
+                
+                // Check for collision with targets
+                targets.forEach(target => {
+                    const dx = Math.abs(laser.x - target.x);
+                    const dy = Math.abs(laser.y - target.y);
+                    
+                    if (dx < target.size/2 && dy < target.size/2) {
+                        // Hit!
+                        playSound('explosion');
+                        
+                        // Check if correct laser type hit correct target
+                        if (laser.isTrue === target.isTrue) {
+                            // If target matches the correct answer - win
+                            if ((target.isTrue && correctAnswer) || (!target.isTrue && !correctAnswer)) {
+                                gameWon = true;
+                                gameOver = true;
+                                playSound('win');
+                            } else {
+                                gameWon = false;
+                                gameOver = true;
+                                playSound('lose');
+                            }
+                        } else {
+                            // Wrong laser type hit target - game over
+                            gameWon = false;
+                            gameOver = true;
+                            playSound('lose');
+                        }
+                        
+                        // Remove laser
+                        lasers.splice(index, 1);
+                    }
+                });
+                
+                // Remove laser if off screen
+                if (laser.y < 0) {
+                    lasers.splice(index, 1);
+                }
+            });
+            
+            render();
+            requestAnimationFrame(update);
+        }
+        
+        // Render game
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            stars.forEach(star => {
+                ctx.fillStyle = star.color;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 40);
+            
+            // Draw controls
+            ctx.font = '18px sans-serif';
+            ctx.fillText('Press T for True, F for False', canvas.width / 2, canvas.height - 10);
+            
+            // Draw cannon
+            ctx.fillStyle = cannon.color;
+            ctx.beginPath();
+            // Draw cannon base (pixelated rectangle)
+            ctx.fillRect(cannon.x - cannon.width/2, cannon.y, cannon.width, cannon.height/2);
+            // Draw cannon top (pixelated triangle)
+            ctx.moveTo(cannon.x - cannon.width/2, cannon.y);
+            ctx.lineTo(cannon.x + cannon.width/2, cannon.y);
+            ctx.lineTo(cannon.x, cannon.y - cannon.height/2);
+            ctx.fill();
+            
+            // Draw targets
+            targets.forEach(target => {
+                // Draw pixelated circles
+                ctx.fillStyle = target.color;
+                
+                // Draw as a collection of squares to create pixel art effect
+                const pixelSize = 4;
+                const radius = target.size / 2;
+                
+                for (let x = -radius; x < radius; x += pixelSize) {
+                    for (let y = -radius; y < radius; y += pixelSize) {
+                        if (x*x + y*y < radius*radius) {
+                            ctx.fillRect(
+                                Math.floor(target.x + x),
+                                Math.floor(target.y + y),
+                                pixelSize,
+                                pixelSize
+                            );
+                        }
+                    }
+                }
+                
+                // Draw text on targets
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(target.text, target.x, target.y + 5);
+            });
+            
+            // Draw lasers
+            lasers.forEach(laser => {
+                ctx.fillStyle = laser.color;
+                ctx.fillRect(laser.x - laser.width/2, laser.y, laser.width, laser.height);
+            });
+            
+            // Game over screen
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameWon ? '#44ff44' : '#ff4444';
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameWon ? 'CORRECT!' : 'WRONG!', 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '24px sans-serif';
+                ctx.fillText(
+                    "The Great Wall of China is NOT visible from space.",
+                    canvas.width / 2,
+                    canvas.height / 2 + 50
+                );
+            }
+        }
+        
+        // Handle keyboard
+        document.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            
+            if (e.key.toLowerCase() === 't') {
+                fireLaser(true);
+            } else if (e.key.toLowerCase() === 'f') {
+                fireLaser(false);
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', () => {
+            gameOver = false;
+            gameWon = false;
+            targets = [];
+            lasers = [];
+            
+            restartBtn.style.display = 'none';
+            
+            spawnTargets();
+            requestAnimationFrame(update);
+        });
+        
+        // Start game
+        spawnTargets();
+        update();
+    </script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rhythm Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Colors (limited palette)
+        const colors = {
+            bg: '#0f0f1b',
+            grid: '#2a2a3a',
+            text: '#ffffff',
+            targetZone: '#4a4a8c',
+            targetPulse: '#5a5aac',
+            markerTrue: '#5ac54a',
+            markerFalse: '#c54a4a',
+            correct: '#5ac54a',
+            incorrect: '#c54a4a',
+            instruction: '#aaaaff'
+        };
+        
+        // Game state
+        let gameState = {
+            question: "Water boils at 100 degrees Celsius at sea level.",
+            answer: true,
+            gameOver: false,
+            result: null, // null, true (correct), false (incorrect)
+            markerY: -50,
+            targetY: 450,
+            targetSize: 60,
+            pulseSize: 0,
+            pulseDirection: 1,
+            showRestart: false,
+            tutorialAlpha: 1
+        };
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        }
+        
+        function playCorrect() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.2), 100); // E5
+            setTimeout(() => playSound(783.99, 0.3), 300); // G5
+        }
+        
+        function playIncorrect() {
+            playSound(392, 0.1); // G4
+            setTimeout(() => playSound(369.99, 0.3), 100); // F#4
+        }
+        
+        function playTick() {
+            playSound(660, 0.05, 'sine');
+        }
+        
+        // Draw functions
+        function drawRetroBackground() {
+            // Main background
+            ctx.fillStyle = colors.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Grid lines (vertical)
+            ctx.fillStyle = colors.grid;
+            ctx.fillRect(canvas.width / 2 - 5, 0, 10, canvas.height);
+            
+            // Grid lines (horizontal)
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.fillRect(0, y, canvas.width, 2);
+            }
+            
+            // Lane labels
+            ctx.fillStyle = colors.markerFalse;
+            ctx.fillRect(canvas.width / 4 - 40, canvas.height - 50, 80, 30);
+            ctx.fillStyle = colors.markerTrue;
+            ctx.fillRect(3 * canvas.width / 4 - 40, canvas.height - 50, 80, 30);
+            
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('FALSE', canvas.width / 4, canvas.height - 30);
+            ctx.fillText('TRUE', 3 * canvas.width / 4, canvas.height - 30);
+            
+            // Draw arrows
+            drawPixelArrow(canvas.width / 4, canvas.height - 80, 20, 'left');
+            drawPixelArrow(3 * canvas.width / 4, canvas.height - 80, 20, 'right');
+        }
+        
+        function drawPixelArrow(x, y, size, direction) {
+            ctx.fillStyle = colors.instruction;
+            
+            if (direction === 'left') {
+                for (let i = 0; i < size; i++) {
+                    ctx.fillRect(x + size - i, y - i, 4, 4);
+                    ctx.fillRect(x + size - i, y + i, 4, 4);
+                }
+                ctx.fillRect(x - 8, y - 2, size, 4);
+            } else {
+                for (let i = 0; i < size; i++) {
+                    ctx.fillRect(x - size + i, y - i, 4, 4);
+                    ctx.fillRect(x - size + i, y + i, 4, 4);
+                }
+                ctx.fillRect(x - 12, y - 2, size, 4);
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 100);
+            
+            // Draw keyboard instructions with fading effect
+            if (gameState.tutorialAlpha > 0) {
+                ctx.globalAlpha = gameState.tutorialAlpha;
+                ctx.fillStyle = colors.instruction;
+                ctx.font = '20px sans-serif';
+                ctx.fillText('Press LEFT ARROW for FALSE', canvas.width / 4, 150);
+                ctx.fillText('Press RIGHT ARROW for TRUE', 3 * canvas.width / 4, 150);
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        function drawTargetZone() {
+            // Target zone
+            ctx.fillStyle = colors.targetZone;
+            ctx.fillRect(0, gameState.targetY - gameState.targetSize / 2, canvas.width, gameState.targetSize);
+            
+            // Pulsing effect
+            ctx.fillStyle = colors.targetPulse;
+            ctx.globalAlpha = 0.5 - gameState.pulseSize / 100;
+            ctx.fillRect(0, gameState.targetY - gameState.targetSize / 2 - gameState.pulseSize, 
+                      canvas.width, gameState.targetSize + gameState.pulseSize * 2);
+            ctx.globalAlpha = 1;
+        }
+        
+        function drawMarker() {
+            if (gameState.markerY < canvas.height + 50) {
+                // Draw the marker only in the TRUE lane
+                const markerX = 3 * canvas.width / 4;
+                const markerSize = 40;
+                
+                ctx.fillStyle = colors.markerTrue;
+                ctx.fillRect(markerX - markerSize / 2, gameState.markerY - markerSize / 2, markerSize, markerSize);
+                
+                // Pixelated details
+                ctx.fillStyle = colors.bg;
+                ctx.fillRect(markerX - 10, gameState.markerY - 10, 5, 5);
+                ctx.fillRect(markerX + 5, gameState.markerY - 10, 5, 5);
+                ctx.fillRect(markerX - 10, gameState.markerY + 5, 5, 5);
+                ctx.fillRect(markerX + 5, gameState.markerY + 5, 5, 5);
+            }
+        }
+        
+        function drawResult() {
+            if (gameState.result !== null) {
+                const resultText = gameState.result ? "CORRECT!" : "INCORRECT!";
+                const resultColor = gameState.result ? colors.correct : colors.incorrect;
+                
+                // Pixelated result box
+                ctx.fillStyle = resultColor;
+                ctx.fillRect(canvas.width / 2 - 150, canvas.height / 2 - 50, 300, 100);
+                ctx.fillStyle = colors.bg;
+                ctx.fillRect(canvas.width / 2 - 145, canvas.height / 2 - 45, 290, 90);
+                ctx.fillStyle = resultColor;
+                
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(resultText, canvas.width / 2, canvas.height / 2 + 10);
+                
+                // Restart button
+                if (gameState.showRestart) {
+                    ctx.fillStyle = colors.targetZone;
+                    ctx.fillRect(canvas.width / 2 - 80, canvas.height / 2 + 50, 160, 40);
+                    ctx.fillStyle = colors.text;
+                    ctx.font = '20px sans-serif';
+                    ctx.fillText("RESTART", canvas.width / 2, canvas.height / 2 + 75);
+                }
+            }
+        }
+        
+        function checkHit(keyPressed) {
+            // Check if marker is in target zone
+            const inTargetZone = Math.abs(gameState.markerY - gameState.targetY) < gameState.targetSize / 2;
+            
+            if (!inTargetZone) {
+                // Early or late hit
+                playIncorrect();
+                gameState.result = false;
+                gameState.gameOver = true;
+                setTimeout(() => gameState.showRestart = true, 1000);
+                return;
+            }
+            
+            // Check if correct answer
+            const playerAnswer = keyPressed === 'right'; // right = true, left = false
+            
+            if (playerAnswer === gameState.answer) {
+                playCorrect();
+                gameState.result = true;
+            } else {
+                playIncorrect();
+                gameState.result = false;
+            }
+            
+            gameState.gameOver = true;
+            setTimeout(() => gameState.showRestart = true, 1000);
+        }
+        
+        function restartGame() {
+            gameState.gameOver = false;
+            gameState.result = null;
+            gameState.markerY = -50;
+            gameState.showRestart = false;
+            gameState.tutorialAlpha = 1;
+        }
+        
+        // Main update function
+        function update() {
+            if (!gameState.gameOver) {
+                // Update marker position
+                gameState.markerY += 3;
+                
+                // Pulsing effect for target zone
+                gameState.pulseSize += 0.5 * gameState.pulseDirection;
+                if (gameState.pulseSize > 20 || gameState.pulseSize < 0) {
+                    gameState.pulseDirection *= -1;
+                }
+                
+                // Play tick sound when marker enters visible area
+                if (gameState.markerY === 0) {
+                    playTick();
+                }
+                
+                // Fade tutorial text
+                if (gameState.tutorialAlpha > 0) {
+                    gameState.tutorialAlpha -= 0.01;
+                }
+                
+                // Auto-fail if marker passes target zone
+                if (gameState.markerY > gameState.targetY + gameState.targetSize / 2 + 20) {
+                    playIncorrect();
+                    gameState.result = false;
+                    gameState.gameOver = true;
+                    setTimeout(() => gameState.showRestart = true, 1000);
+                }
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            drawRetroBackground();
+            drawQuestion();
+            drawTargetZone();
+            drawMarker();
+            drawResult();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            if (gameState.gameOver) {
+                if (gameState.showRestart && e.key === ' ') {
+                    restartGame();
+                }
+                return;
+            }
+            
+            if (e.key === 'ArrowLeft') {
+                checkHit('left');
+            } else if (e.key === 'ArrowRight') {
+                checkHit('right');
+            }
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            if (gameState.gameOver && gameState.showRestart) {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                // Check if clicked on restart button
+                if (x > canvas.width / 2 - 80 && x < canvas.width / 2 + 80 &&
+                    y > canvas.height / 2 + 50 && y < canvas.height / 2 + 90) {
+                    restartGame();
+                }
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

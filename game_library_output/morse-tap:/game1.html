@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Morse-Tap Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit palette
+        const COLORS = {
+            bg: '#0f380f',         // Dark green background
+            text: '#9bbc0f',       // Light green text
+            highlight: '#8bac0f',  // Highlight green
+            uiDark: '#306230',     // UI dark green
+            uiMid: '#306230',      // UI mid green
+            uiLight: '#8bac0f',    // UI light green
+            correct: '#9bbc0f',    // Correct answer color
+            incorrect: '#e76e55',  // Incorrect answer color
+            transmitter: '#faef5d', // Transmitter yellow
+            reference: '#c4cfa1'   // Reference text
+        };
+        
+        // Game state
+        const game = {
+            question: "The Great Wall of China is visible from space.",
+            answer: false, // Correct answer to the question
+            playerInput: [],
+            pressStartTime: 0,
+            isPressed: false,
+            tapThreshold: 300, // ms, under this is a dot, over is a dash
+            result: null, // null, 'correct', or 'incorrect'
+            transmitterActive: false,
+            transmitterFeedback: '',
+            transmitterTimer: 0,
+            progressBar: 100,
+            progressSpeed: 5,
+            audioContext: null,
+            oscillator: null
+        };
+        
+        // Initialize audio context
+        function initAudio() {
+            game.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Play beep sound
+        function playBeep(duration, frequency, type = 'square') {
+            if (!game.audioContext) initAudio();
+            
+            const oscillator = game.audioContext.createOscillator();
+            const gainNode = game.audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(game.audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, game.audioContext.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+        }
+        
+        // Draw pixelated rectangle with slight shadow
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = COLORS.uiDark;
+            ctx.fillRect(x + 4, y + 4, width, height);
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+        }
+        
+        // Draw pixelated text
+        function drawText(text, x, y, size, color, align = 'center') {
+            ctx.font = `${size}px Arial`;
+            ctx.fillStyle = color;
+            ctx.textAlign = align;
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw the morse code transmitter
+        function drawTransmitter() {
+            const centerX = canvas.width / 2;
+            const transmitterY = canvas.height / 2 - 20;
+            
+            // Draw transmitter base
+            drawPixelRect(centerX - 80, transmitterY, 160, 100, COLORS.uiMid);
+            
+            // Draw transmitter light
+            const lightColor = game.transmitterActive ? COLORS.transmitter : COLORS.uiDark;
+            ctx.fillStyle = lightColor;
+            ctx.beginPath();
+            ctx.arc(centerX, transmitterY + 50, 30, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw transmitter input display
+            drawPixelRect(centerX - 70, transmitterY + 110, 140, 40, COLORS.uiMid);
+            
+            let inputDisplay = '';
+            for (const input of game.playerInput) {
+                inputDisplay += input === 'dot' ? '•' : '—';
+            }
+            
+            drawText(inputDisplay, centerX, transmitterY + 138, 32, COLORS.transmitter);
+            
+            // Draw feedback text
+            if (game.transmitterFeedback) {
+                const feedbackColor = game.transmitterFeedback === 'TRUE PATTERN' ? 
+                    COLORS.correct : COLORS.uiLight;
+                drawText(game.transmitterFeedback, centerX, transmitterY + 180, 20, feedbackColor);
+            }
+        }
+        
+        // Draw morse code reference
+        function drawMorseReference() {
+            const refY = canvas.height - 80;
+            drawPixelRect(20, refY, canvas.width - 40, 60, COLORS.uiDark);
+            
+            drawText("TRUE = •—", canvas.width / 4, refY + 35, 20, COLORS.reference);
+            drawText("FALSE = —•", canvas.width * 3/4, refY + 35, 20, COLORS.reference);
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            const questionY = 80;
+            drawPixelRect(20, questionY - 40, canvas.width - 40, 70, COLORS.uiMid);
+            drawText(game.question, canvas.width / 2, questionY + 5, 22, COLORS.text);
+        }
+        
+        // Draw progress bar
+        function drawProgressBar() {
+            const barWidth = canvas.width - 80;
+            const barHeight = 20;
+            const barX = 40;
+            const barY = 150;
+            
+            // Border
+            drawPixelRect(barX - 5, barY - 5, barWidth + 10, barHeight + 10, COLORS.uiDark);
+            
+            // Progress
+            const progress = (game.progressBar / 100) * barWidth;
+            ctx.fillStyle = game.progressBar < 30 ? COLORS.incorrect : COLORS.correct;
+            ctx.fillRect(barX, barY, progress, barHeight);
+        }
+        
+        // Draw restart button if game over
+        function drawRestartButton() {
+            if (game.result === null) return;
+            
+            const btnWidth = 150;
+            const btnHeight = 50;
+            const btnX = (canvas.width - btnWidth) / 2;
+            const btnY = canvas.height - 150;
+            
+            drawPixelRect(btnX, btnY, btnWidth, btnHeight, COLORS.uiMid);
+            drawText("RESTART", canvas.width / 2, btnY + 32, 20, COLORS.text);
+        }
+        
+        // Draw result screen
+        function drawResult() {
+            if (game.result === null) return;
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const resultText = game.result === 'correct' ? "CORRECT!" : "INCORRECT!";
+            const resultColor = game.result === 'correct' ? COLORS.correct : COLORS.incorrect;
+            
+            drawPixelRect(centerX - 150, centerY - 50, 300, 100, COLORS.uiMid);
+            drawText(resultText, centerX, centerY + 15, 30, resultColor);
+        }
+        
+        // Main render function
+        function render() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw UI elements
+            drawQuestion();
+            if (game.result === null) {
+                drawProgressBar();
+                drawTransmitter();
+            } else {
+                drawResult();
+            }
+            drawMorseReference();
+            drawRestartButton();
+            
+            // Game loop
+            requestAnimationFrame(render);
+        }
+        
+        // Check player input pattern
+        function checkPattern() {
+            if (game.playerInput.length !== 2) return;
+            
+            const truePattern = ['dot', 'dash'];
+            const falsePattern = ['dash', 'dot'];
+            
+            const inputStr = game.playerInput.join(',');
+            const trueStr = truePattern.join(',');
+            const falseStr = falsePattern.join(',');
+            
+            if (inputStr === trueStr) {
+                game.transmitterFeedback = 'TRUE PATTERN';
+                // After a brief pause, check against the answer
+                setTimeout(() => {
+                    game.result = game.answer === true ? 'correct' : 'incorrect';
+                    playBeep(500, game.result === 'correct' ? 660 : 220);
+                }, 500);
+            } else if (inputStr === falseStr) {
+                game.transmitterFeedback = 'FALSE PATTERN';
+                // After a brief pause, check against the answer
+                setTimeout(() => {
+                    game.result = game.answer === false ? 'correct' : 'incorrect';
+                    playBeep(500, game.result === 'correct' ? 660 : 220);
+                }, 500);
+            }
+        }
+        
+        // Update transmitter state
+        function updateTransmitter() {
+            if (game.result !== null) return;
+            
+            // Decay transmitter activity over time
+            if (game.transmitterActive && !game.isPressed) {
+                game.transmitterTimer++;
+                if (game.transmitterTimer > 5) {
+                    game.transmitterActive = false;
+                    game.transmitterTimer = 0;
+                }
+            }
+            
+            // Update progress bar
+            if (game.progressBar > 0 && game.result === null) {
+                game.progressBar -= game.progressSpeed * 0.1;
+                if (game.progressBar <= 0) {
+                    game.result = 'incorrect';
+                    playBeep(500, 220);
+                }
+            }
+        }
+        
+        // Reset the game
+        function resetGame() {
+            game.playerInput = [];
+            game.pressStartTime = 0;
+            game.isPressed = false;
+            game.result = null;
+            game.transmitterActive = false;
+            game.transmitterFeedback = '';
+            game.transmitterTimer = 0;
+            game.progressBar = 100;
+        }
+        
+        // Handle mouse/touch press
+        function handlePress(e) {
+            e.preventDefault();
+            
+            // Check if we're clicking the restart button
+            if (game.result !== null) {
+                const btnWidth = 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height - 150;
+                
+                // Get the position based on mouse or touch
+                let x, y;
+                if (e.type.includes('mouse')) {
+                    const rect = canvas.getBoundingClientRect();
+                    x = e.clientX - rect.left;
+                    y = e.clientY - rect.top;
+                } else {
+                    const rect = canvas.getBoundingClientRect();
+                    x = e.touches[0].clientX - rect.left;
+                    y = e.touches[0].clientY - rect.top;
+                }
+                
+                if (x >= btnX && x <= btnX + btnWidth && y >= btnY && y <= btnY + btnHeight) {
+                    resetGame();
+                    return;
+                }
+            }
+            
+            if (game.result !== null || game.playerInput.length >= 2) return;
+            
+            game.isPressed = true;
+            game.pressStartTime = Date.now();
+            game.transmitterActive = true;
+            game.transmitterTimer = 0;
+            
+            // Start the sound
+            if (!game.oscillator && game.audioContext) {
+                game.oscillator = game.audioContext.createOscillator();
+                const gainNode = game.audioContext.createGain();
+                
+                game.oscillator.type = 'square';
+                game.oscillator.frequency.value = 440;
+                game.oscillator.connect(gainNode);
+                gainNode.connect(game.audioContext.destination);
+                
+                gainNode.gain.setValueAtTime(0.2, game.audioContext.currentTime);
+                game.oscillator.start();
+            }
+        }
+        
+        // Handle mouse/touch release
+        function handleRelease(e) {
+            e.preventDefault();
+            
+            if (!game.isPressed || game.result !== null) return;
+            
+            game.isPressed = false;
+            const pressDuration = Date.now() - game.pressStartTime;
+            
+            // Stop the sound
+            if (game.oscillator) {
+                game.oscillator.stop();
+                game.oscillator = null;
+            }
+            
+            // Determine if dot or dash
+            if (pressDuration < game.tapThreshold) {
+                // Dot - short tap
+                game.playerInput.push('dot');
+                playBeep(100, 660);
+            } else {
+                // Dash - long press
+                game.playerInput.push('dash');
+                playBeep(300, 440);
+            }
+            
+            // Check pattern after second input
+            if (game.playerInput.length === 2) {
+                checkPattern();
+            }
+        }
+        
+        // Set up event listeners
+        canvas.addEventListener('mousedown', handlePress);
+        canvas.addEventListener('touchstart', handlePress);
+        document.addEventListener('mouseup', handleRelease);
+        document.addEventListener('touchend', handleRelease);
+        
+        // Game loop
+        function gameLoop() {
+            updateTransmitter();
+            setTimeout(gameLoop, 1000 / 30); // 30 FPS for retro feel
+        }
+        
+        // Start the game
+        initAudio();
+        gameLoop();
+        render();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            const isMobile = window.innerWidth < 600;
+            canvas.width = isMobile ? 360 : 800;
+            canvas.height = isMobile ? 640 : 600;
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Quiz Wave Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #555;
+            color: white;
+            border: 4px solid #777;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">RESTART</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set dimensions based on device
+        const isMobile = window.innerWidth <= 500;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let success = false;
+        
+        // Colors (16-color palette)
+        const COLORS = {
+            background: '#0f0f2d',
+            stars: ['#ffffff', '#aaaaff', '#5555aa'],
+            question: '#ffffff',
+            optionText: '#ffffff',
+            mars: '#ff5533',
+            earth: '#3355ff',
+            venus: '#ffaa22',
+            jupiter: '#aa7744',
+            correctHit: '#55ff55',
+            wrongHit: '#ff5555'
+        };
+        
+        // Stars for background
+        const stars = [];
+        for (let i = 0; i < 50; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.floor(Math.random() * 3) + 1,
+                color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)]
+            });
+        }
+        
+        // Answer options
+        const options = [
+            { text: "Mars", color: COLORS.mars, correct: true },
+            { text: "Earth", color: COLORS.earth, correct: false },
+            { text: "Venus", color: COLORS.venus, correct: false },
+            { text: "Jupiter", color: COLORS.jupiter, correct: false }
+        ];
+        
+        // Initialize option positions and speeds
+        options.forEach((option, index) => {
+            option.x = -100;  // Start off-screen
+            option.y = 0;
+            option.width = 120;
+            option.height = 60;
+            option.speed = 2 + (index * 0.5);  // Different speeds
+            option.amplitude = 80 + (index * 15);  // Different wave heights
+            option.frequency = 0.02 + (index * 0.005);  // Different frequencies
+            option.phase = index * Math.PI / 2;  // Different phases
+            option.hit = false;
+        });
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Sound functions
+        function playTone(frequency, duration, type = 'square') {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            // Add envelope
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function correctSound() {
+            playTone(523.25, 0.1); // C5
+            setTimeout(() => playTone(659.25, 0.1), 100); // E5
+            setTimeout(() => playTone(783.99, 0.2), 200); // G5
+        }
+        
+        function incorrectSound() {
+            playTone(196.00, 0.2, 'sawtooth'); // G3
+            setTimeout(() => playTone(185.00, 0.3, 'sawtooth'), 200); // F#3
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            const pixelSize = 4;
+            x = Math.floor(x / pixelSize) * pixelSize;
+            y = Math.floor(y / pixelSize) * pixelSize;
+            width = Math.ceil(width / pixelSize) * pixelSize;
+            height = Math.ceil(height / pixelSize) * pixelSize;
+            
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Add pixelated border
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillRect(x, y, width, pixelSize);
+            ctx.fillRect(x, y, pixelSize, height);
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(x, y + height - pixelSize, width, pixelSize);
+            ctx.fillRect(x + width - pixelSize, y, pixelSize, height);
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) return;
+            
+            // Update options positions with wave motion
+            options.forEach(option => {
+                if (!option.hit) {
+                    option.x += option.speed;
+                    // Pixelated wave movement (step changes)
+                    option.y = Math.floor(option.amplitude * 
+                        Math.sin(option.frequency * option.x + option.phase) / 8) * 8;
+                    
+                    // Center vertically and add offset
+                    option.y += canvas.height / 2 - option.height / 2;
+                    
+                    // Reset position if off screen
+                    if (option.x > canvas.width) {
+                        option.x = -option.width;
+                    }
+                }
+            });
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            stars.forEach(star => {
+                ctx.fillStyle = star.color;
+                ctx.fillRect(
+                    Math.floor(star.x / 4) * 4, 
+                    Math.floor(star.y / 4) * 4, 
+                    star.size, star.size
+                );
+            });
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = isMobile ? '20px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', 
+                canvas.width / 2, canvas.height / 5);
+            
+            // Draw options
+            options.forEach(option => {
+                if (!gameOver || option.hit) {
+                    drawPixelRect(
+                        option.x, option.y, 
+                        option.width, option.height, 
+                        option.hit ? (option.correct ? COLORS.correctHit : COLORS.wrongHit) : option.color
+                    );
+                    
+                    ctx.fillStyle = COLORS.optionText;
+                    ctx.font = '20px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(option.text, 
+                        option.x + option.width / 2, 
+                        option.y + option.height / 2);
+                }
+            });
+            
+            // Game over message
+            if (gameOver) {
+                ctx.fillStyle = success ? '#55ff55' : '#ff5555';
+                ctx.font = isMobile ? '24px sans-serif' : '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    success ? 'CORRECT!' : 'WRONG!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 50
+                );
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks/taps
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Check if click hits any option
+            options.forEach(option => {
+                if (!option.hit && 
+                    clickX >= option.x && clickX <= option.x + option.width &&
+                    clickY >= option.y && clickY <= option.y + option.height) {
+                    
+                    option.hit = true;
+                    gameOver = true;
+                    success = option.correct;
+                    
+                    if (option.correct) {
+                        correctSound();
+                    } else {
+                        incorrectSound();
+                    }
+                }
+            });
+        }
+        
+        // Restart game
+        function restart() {
+            gameOver = false;
+            success = false;
+            restartBtn.style.display = 'none';
+            
+            // Reset options
+            options.forEach((option, index) => {
+                option.x = -100 - (index * 150);  // Stagger starting positions
+                option.hit = false;
+            });
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', restart);
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

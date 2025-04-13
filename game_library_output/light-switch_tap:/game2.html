@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Light Switch True or False</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background-color: #222;
+        }
+        canvas { 
+            display: block; 
+            background-color: #0F0F1A; 
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game variables
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const correctAnswer = true;
+        let selectedAnswer = null;
+        let gameOver = false;
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 100,
+            width: 120,
+            height: 40
+        };
+
+        // Switch properties
+        const switches = [
+            { label: "TRUE", value: true, x: canvas.width / 4, y: canvas.height / 2, width: 120, height: 60, state: "off", color: "#4CAF50" },
+            { label: "FALSE", value: false, x: canvas.width * 3/4, y: canvas.height / 2, width: 120, height: 60, state: "off", color: "#F44336" }
+        ];
+
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Play a sound effect
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+
+        // Click/tap handler
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (x > restartButton.x && x < restartButton.x + restartButton.width &&
+                    y > restartButton.y && y < restartButton.y + restartButton.height) {
+                    resetGame();
+                    playSound(330, 'square', 100);
+                }
+                return;
+            }
+            
+            // Check if a switch was clicked
+            for (const sw of switches) {
+                if (x > sw.x - sw.width/2 && x < sw.x + sw.width/2 &&
+                    y > sw.y - sw.height/2 && y < sw.y + sw.height/2) {
+                    
+                    selectedAnswer = sw.value;
+                    sw.state = "on";
+                    
+                    // Play switch sound
+                    playSound(220, 'square', 100);
+                    
+                    // Play result sound after a short delay
+                    setTimeout(() => {
+                        if (selectedAnswer === correctAnswer) {
+                            playSound(660, 'square', 200);
+                        } else {
+                            playSound(110, 'sawtooth', 300);
+                        }
+                    }, 200);
+                    
+                    gameOver = true;
+                    break;
+                }
+            }
+        });
+
+        // Reset the game
+        function resetGame() {
+            selectedAnswer = null;
+            gameOver = false;
+            switches.forEach(sw => sw.state = "off");
+        }
+
+        // Draw a pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            const pixelSize = 4;
+            
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                }
+            }
+        }
+
+        // Draw a light switch
+        function drawSwitch(sw) {
+            // Switch base
+            drawPixelRect(sw.x - sw.width/2, sw.y - sw.height/2, sw.width, sw.height, "#333333");
+            
+            // Switch plate
+            drawPixelRect(sw.x - sw.width/2 + 10, sw.y - sw.height/2 + 10, sw.width - 20, sw.height - 20, "#222222");
+            
+            // Switch handle
+            const handleY = sw.state === "on" ? sw.y + 10 : sw.y - 10;
+            drawPixelRect(sw.x - 15, handleY - 15, 30, 30, sw.state === "on" ? sw.color : "#888888");
+            
+            // Light effect when on
+            if (sw.state === "on") {
+                ctx.fillStyle = sw.color + "77"; // Add transparency
+                ctx.beginPath();
+                ctx.arc(sw.x, sw.y - 20, 50, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Electricity particles
+                if (selectedAnswer === sw.value) {
+                    ctx.fillStyle = "#FFFF00";
+                    for (let i = 0; i < 6; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const distance = Math.random() * 40 + 20;
+                        const size = Math.random() * 4 + 2;
+                        ctx.fillRect(
+                            sw.x + Math.cos(angle) * distance,
+                            sw.y + Math.sin(angle) * distance,
+                            size, size
+                        );
+                    }
+                }
+            }
+            
+            // Highlight if correct answer
+            if (gameOver && sw.value === correctAnswer) {
+                ctx.strokeStyle = "#FFFF00";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(sw.x - sw.width/2 - 5, sw.y - sw.height/2 - 5, sw.width + 10, sw.height + 10);
+            }
+            
+            // Label
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(sw.label, sw.x, sw.y + sw.height/2 + 30);
+        }
+
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = "#0F0F1A";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixel border
+            ctx.strokeStyle = "#FFFFFF";
+            ctx.lineWidth = 4;
+            let dashLen = 16;
+            ctx.setLineDash([dashLen, dashLen]);
+            ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+            ctx.setLineDash([]);
+            
+            // Draw question
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 150);
+            
+            // Draw switches
+            switches.forEach(drawSwitch);
+            
+            // Draw result
+            if (gameOver) {
+                ctx.font = "32px Arial";
+                ctx.textAlign = "center";
+                
+                if (selectedAnswer === correctAnswer) {
+                    ctx.fillStyle = "#4CAF50";
+                    ctx.fillText("CORRECT!", canvas.width / 2, 100);
+                } else {
+                    ctx.fillStyle = "#F44336";
+                    ctx.fillText("INCORRECT!", canvas.width / 2, 100);
+                }
+                
+                // Draw restart button
+                drawPixelRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height, "#555555");
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "20px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("RESTART", canvas.width / 2, restartButton.y + 25);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Path Switcher Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #instruction {
+            position: absolute;
+            top: 10px;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="instruction">Press SPACE to switch tracks</div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+
+        // Game constants
+        const COLORS = {
+            bg: '#5A6988',
+            path: '#8595B1',
+            pathBorder: '#2D3F5D',
+            character: '#FF7755',
+            truePath: '#77DD77',
+            falsePath: '#FF6961',
+            junction: '#FFD700',
+            text: '#FFFFFF'
+        };
+        
+        // Game variables
+        let gameOver = false;
+        let restartBtn = {x: canvas.width/2 - 60, y: canvas.height/2 + 80, w: 120, h: 40};
+        
+        // The Great Wall of China is NOT visible from space (false)
+        const correctAnswer = false;
+        
+        // Path definition
+        const paths = {
+            start: {x: 400, y: 500, width: 60},
+            junction: {x: 400, y: 280, width: 80, flash: 0},
+            trueDest: {x: 200, y: 100, width: 100},
+            falseDest: {x: 600, y: 100, width: 100}
+        };
+
+        // Character
+        const character = {
+            x: paths.start.x,
+            y: paths.start.y,
+            size: 30,
+            speed: 2,
+            direction: 'up', // 'up', 'left', 'right'
+            onPath: 'start' // 'start', 'junction', 'true', 'false'
+        };
+
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'switch':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'junction':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+
+        // Game logic functions
+        function drawPixelatedRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+
+        function drawPath(startX, startY, endX, endY, width, color, borderColor) {
+            // Path border
+            ctx.fillStyle = borderColor;
+            ctx.beginPath();
+            ctx.rect(startX - width/2 - 5, startY, endX - startX + width + 10, endY - startY);
+            ctx.fill();
+            
+            // Path
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.rect(startX - width/2, startY, endX - startX + width, endY - startY);
+            ctx.fill();
+            
+            // Track lines (rail-like appearance)
+            ctx.fillStyle = borderColor;
+            ctx.fillRect(startX - width/4, startY, 5, endY - startY);
+            ctx.fillRect(startX + width/4, startY, 5, endY - startY);
+            
+            // Decorations along path
+            for (let i = startY + 20; i < endY; i += 40) {
+                // Small pixel decorations
+                drawPixelatedRect(startX - width/2 - 15, i, 8, 8, '#FFD700');
+                drawPixelatedRect(startX + width/2 + 8, i - 15, 6, 6, '#77CCFF');
+            }
+        }
+
+        function drawCharacter() {
+            // Draw character (pixelated)
+            drawPixelatedRect(character.x - character.size/2, character.y - character.size/2, 
+                            character.size, character.size, COLORS.character);
+            
+            // Draw character details (8-bit style)
+            // Eyes
+            drawPixelatedRect(character.x - character.size/4, character.y - character.size/5, 
+                            5, 5, '#FFFFFF');
+            drawPixelatedRect(character.x + character.size/4 - 5, character.y - character.size/5, 
+                            5, 5, '#FFFFFF');
+            
+            // Mouth
+            if (gameOver) {
+                if ((character.onPath === 'true' && correctAnswer) || 
+                    (character.onPath === 'false' && !correctAnswer)) {
+                    // Happy mouth
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.beginPath();
+                    ctx.arc(character.x, character.y + character.size/6, character.size/5, 0, Math.PI);
+                    ctx.fill();
+                } else {
+                    // Sad mouth
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.beginPath();
+                    ctx.arc(character.x, character.y + character.size/3, character.size/5, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else {
+                // Normal mouth
+                drawPixelatedRect(character.x - character.size/5, character.y + character.size/6, 
+                                character.size/2.5, 4, '#FFFFFF');
+            }
+        }
+        
+        function drawPaths() {
+            // Main path
+            drawPath(paths.start.x, paths.start.y, 
+                    paths.junction.x, paths.junction.y, 
+                    paths.start.width, COLORS.path, COLORS.pathBorder);
+            
+            // True path (left branch)
+            drawPath(paths.junction.x, paths.junction.y, 
+                    paths.trueDest.x, paths.trueDest.y, 
+                    paths.trueDest.width, COLORS.truePath, COLORS.pathBorder);
+            
+            // False path (right branch)
+            drawPath(paths.junction.x, paths.junction.y, 
+                    paths.falseDest.x, paths.falseDest.y, 
+                    paths.falseDest.width, COLORS.falsePath, COLORS.pathBorder);
+            
+            // Junction point (flashing)
+            if (character.y > paths.junction.y + 100 && character.y < paths.junction.y + 200) {
+                paths.junction.flash = (paths.junction.flash + 1) % 30;
+                if (paths.junction.flash > 15) {
+                    drawPixelatedRect(paths.junction.x - 20, paths.junction.y - 5, 40, 20, COLORS.junction);
+                    if (paths.junction.flash % 5 === 0) playSound('junction');
+                }
+            }
+            
+            // Destination markers
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText("TRUE", paths.trueDest.x, paths.trueDest.y + 10);
+            ctx.fillText("FALSE", paths.falseDest.x, paths.falseDest.y + 10);
+        }
+        
+        function updateCharacter() {
+            if (gameOver) return;
+            
+            // Increase speed as character moves
+            character.speed += 0.01;
+            
+            // Move character based on direction
+            if (character.direction === 'up') {
+                character.y -= character.speed;
+                
+                // Check for junction point
+                if (character.y <= paths.junction.y) {
+                    character.y = paths.junction.y;
+                    character.direction = 'right'; // Default to right/false path
+                    character.onPath = 'junction';
+                }
+            } else if (character.direction === 'left') {
+                character.x -= character.speed;
+                character.y -= character.speed * 0.5;
+                
+                // Check for true destination
+                if (character.x <= paths.trueDest.x) {
+                    character.x = paths.trueDest.x;
+                    character.y = paths.trueDest.y;
+                    character.onPath = 'true';
+                    endGame();
+                }
+            } else if (character.direction === 'right') {
+                character.x += character.speed;
+                character.y -= character.speed * 0.5;
+                
+                // Check for false destination
+                if (character.x >= paths.falseDest.x) {
+                    character.x = paths.falseDest.x;
+                    character.y = paths.falseDest.y;
+                    character.onPath = 'false';
+                    endGame();
+                }
+            }
+        }
+        
+        function switchPath() {
+            if (gameOver) return;
+            
+            // Only allow switching at junction
+            if (character.onPath === 'junction' || 
+                (character.onPath === 'start' && character.y < paths.start.y + 100)) {
+                character.direction = 'left';
+                playSound('switch');
+            }
+        }
+        
+        function endGame() {
+            gameOver = true;
+            
+            if ((character.onPath === 'true' && correctAnswer) || 
+                (character.onPath === 'false' && !correctAnswer)) {
+                playSound('correct');
+            } else {
+                playSound('wrong');
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.font = '22px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText("The Great Wall of China is visible from space.", canvas.width/2, 40);
+        }
+        
+        function drawResult() {
+            if (!gameOver) return;
+            
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            
+            if ((character.onPath === 'true' && correctAnswer) || 
+                (character.onPath === 'false' && !correctAnswer)) {
+                ctx.fillStyle = '#77DD77';
+                ctx.fillText("CORRECT!", canvas.width/2, canvas.height/2);
+            } else {
+                ctx.fillStyle = '#FF6961';
+                ctx.fillText("INCORRECT!", canvas.width/2, canvas.height/2);
+            }
+            
+            // Draw restart button
+            ctx.fillStyle = '#444';
+            ctx.fillRect(restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '20px sans-serif';
+            ctx.fillText("RESTART", restartBtn.x + restartBtn.w/2, restartBtn.y + restartBtn.h/2 + 7);
+        }
+        
+        function restart() {
+            gameOver = false;
+            character.x = paths.start.x;
+            character.y = paths.start.y;
+            character.speed = 2;
+            character.direction = 'up';
+            character.onPath = 'start';
+            paths.junction.flash = 0;
+        }
+        
+        function update() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw paths and destinations
+            drawPaths();
+            
+            // Draw character
+            drawCharacter();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Update character position
+            updateCharacter();
+            
+            // Show result if game over
+            drawResult();
+            
+            // Continue game loop
+            requestAnimationFrame(update);
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', function(e) {
+            if (e.code === 'Space') {
+                switchPath();
+            } else if (e.code === 'Enter' && gameOver) {
+                restart();
+            }
+        });
+        
+        canvas.addEventListener('click', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (gameOver && 
+                x >= restartBtn.x && x <= restartBtn.x + restartBtn.w &&
+                y >= restartBtn.y && y <= restartBtn.y + restartBtn.h) {
+                restart();
+            } else {
+                switchPath();
+            }
+        });
+        
+        // Start the game
+        update();
+    </script>
+</body>
+</html>

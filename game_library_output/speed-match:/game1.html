@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Speed Match</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if we're on mobile
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (limited palette)
+        const COLORS = {
+            background: '#0f380f',
+            border: '#8bac0f',
+            borderDark: '#306230',
+            text: '#e0f8d0',
+            highlight: '#9bbc0f',
+            option: '#306230',
+            optionBorder: '#8bac0f',
+            correct: '#73c936',
+            incorrect: '#d13b27',
+            timer: '#e0f8d0',
+            timerBg: '#306230'
+        };
+        
+        // Game variables
+        const question = "What is the capital of France?";
+        const correctAnswer = "Paris";
+        const options = ["London", "Berlin", "Paris", "Madrid", "Rome", "Vienna"];
+        
+        let currentOption = "";
+        let gameActive = true;
+        let gameOver = false;
+        let timerWidth = 0;
+        let maxTimerWidth = canvas.width - 80;
+        let timerDuration = 1500; // ms
+        let timerStart = 0;
+        let countdownValue = 3;
+        let countdownTimer = null;
+        let inCountdown = true;
+        let optionDisplayTime = 1500; // ms
+        let lastOptionTime = 0;
+        let pulseSize = 0;
+        let flashIntensity = 0;
+        let showCorrectFeedback = false;
+        let showIncorrectFeedback = false;
+        let restartBtnVisible = false;
+
+        // Sound generation
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                if (type === "correct") {
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime); // E5
+                    oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.1); // G5
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                } else if (type === "incorrect") {
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4
+                    oscillator.frequency.setValueAtTime(349.23, audioContext.currentTime + 0.1); // F4
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                } else if (type === "tick") {
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                } else if (type === "appear") {
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                }
+            } catch(e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        // Draw pixel-art border
+        function drawBorder() {
+            // Outer border
+            ctx.fillStyle = COLORS.borderDark;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Inner border
+            ctx.fillStyle = COLORS.border;
+            ctx.fillRect(10, 10, canvas.width - 20, canvas.height - 20);
+            
+            // Game area
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(20, 20, canvas.width - 40, canvas.height - 40);
+            
+            // Pixelated corners (small squares)
+            ctx.fillStyle = COLORS.borderDark;
+            ctx.fillRect(10, 10, 10, 10);
+            ctx.fillRect(canvas.width - 20, 10, 10, 10);
+            ctx.fillRect(10, canvas.height - 20, 10, 10);
+            ctx.fillRect(canvas.width - 20, canvas.height - 20, 10, 10);
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 22 : 28}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width/2, canvas.height * 0.2);
+        }
+        
+        // Draw the current option
+        function drawOption() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const boxWidth = isMobile ? 250 : 300;
+            const boxHeight = 80;
+            
+            // Option background with flash effect
+            ctx.fillStyle = COLORS.option;
+            if (flashIntensity > 0) {
+                const flashColor = `rgba(255, 255, 255, ${flashIntensity})`;
+                ctx.fillStyle = flashColor;
+                flashIntensity -= 0.04;
+            }
+            
+            // Draw option box with pixelated border
+            ctx.fillRect(centerX - boxWidth/2, centerY - boxHeight/2, boxWidth, boxHeight);
+            
+            // Pixelated border
+            ctx.fillStyle = COLORS.optionBorder;
+            
+            // Top border
+            ctx.fillRect(centerX - boxWidth/2, centerY - boxHeight/2, boxWidth, 4);
+            // Bottom border
+            ctx.fillRect(centerX - boxWidth/2, centerY + boxHeight/2 - 4, boxWidth, 4);
+            // Left border
+            ctx.fillRect(centerX - boxWidth/2, centerY - boxHeight/2, 4, boxHeight);
+            // Right border
+            ctx.fillRect(centerX + boxWidth/2 - 4, centerY - boxHeight/2, 4, boxHeight);
+            
+            // Draw option text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 24 : 28}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText(currentOption, centerX, centerY + 10);
+            
+            // Draw pulse effect for correct answer
+            if (showCorrectFeedback && pulseSize < 50) {
+                ctx.strokeStyle = COLORS.correct;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, boxWidth/2 + pulseSize, 0, Math.PI * 2);
+                ctx.stroke();
+                pulseSize += 2;
+            }
+        }
+        
+        // Draw timer bar
+        function drawTimer() {
+            const now = Date.now();
+            const elapsed = now - timerStart;
+            const remaining = Math.max(0, optionDisplayTime - elapsed);
+            timerWidth = (remaining / optionDisplayTime) * maxTimerWidth;
+            
+            // Timer background
+            ctx.fillStyle = COLORS.timerBg;
+            ctx.fillRect(40, canvas.height - 60, maxTimerWidth, 20);
+            
+            // Timer foreground
+            ctx.fillStyle = COLORS.timer;
+            ctx.fillRect(40, canvas.height - 60, timerWidth, 20);
+            
+            // Pixelated edge markers
+            for (let i = 0; i < maxTimerWidth; i += 20) {
+                ctx.fillStyle = COLORS.borderDark;
+                ctx.fillRect(40 + i, canvas.height - 60, 2, 4);
+                ctx.fillRect(40 + i, canvas.height - 44, 2, 4);
+            }
+        }
+        
+        // Draw countdown
+        function drawCountdown() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 60 : 80}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText(countdownValue.toString(), canvas.width/2, canvas.height/2);
+        }
+        
+        // Draw game over message
+        function drawGameOver() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Draw result box
+            ctx.fillStyle = showCorrectFeedback ? COLORS.correct : COLORS.incorrect;
+            ctx.fillRect(centerX - 150, centerY - 60, 300, 120);
+            
+            // Pixelated border for result box
+            ctx.fillStyle = COLORS.optionBorder;
+            ctx.fillRect(centerX - 150, centerY - 60, 300, 5);
+            ctx.fillRect(centerX - 150, centerY + 55, 300, 5);
+            ctx.fillRect(centerX - 150, centerY - 60, 5, 120);
+            ctx.fillRect(centerX + 145, centerY - 60, 5, 120);
+            
+            // Draw result text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 24 : 28}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText(showCorrectFeedback ? "Correct!" : "Wrong!", centerX, centerY - 10);
+            ctx.fillText(`Answer: ${correctAnswer}`, centerX, centerY + 30);
+            
+            // Draw restart button
+            if (restartBtnVisible) {
+                ctx.fillStyle = COLORS.option;
+                ctx.fillRect(centerX - 80, centerY + 70, 160, 50);
+                
+                // Button border
+                ctx.fillStyle = COLORS.optionBorder;
+                ctx.fillRect(centerX - 80, centerY + 70, 160, 4);
+                ctx.fillRect(centerX - 80, centerY + 116, 160, 4);
+                ctx.fillRect(centerX - 80, centerY + 70, 4, 50);
+                ctx.fillRect(centerX + 76, centerY + 70, 4, 50);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+                ctx.fillText("Restart", centerX, centerY + 100);
+            }
+        }
+        
+        // Get a random option
+        function getRandomOption() {
+            const filteredOptions = options.filter(opt => opt !== currentOption);
+            return filteredOptions[Math.floor(Math.random() * filteredOptions.length)];
+        }
+        
+        // Display a new option
+        function displayNewOption() {
+            const now = Date.now();
+            
+            // Change option if enough time has passed
+            if (now - lastOptionTime > optionDisplayTime) {
+                // Random chance to show correct answer (1 in 4)
+                const showCorrect = Math.random() < 0.25;
+                currentOption = showCorrect ? correctAnswer : getRandomOption();
+                
+                // Reset timer
+                timerStart = now;
+                lastOptionTime = now;
+                
+                // Flash effect
+                flashIntensity = 0.9;
+                
+                // Play sound
+                playSound("appear");
+                
+                // Gradually decrease option display time for increased difficulty
+                optionDisplayTime = Math.max(800, optionDisplayTime - 50);
+            }
+        }
+        
+        // Start countdown
+        function startCountdown() {
+            playSound("tick");
+            countdownTimer = setInterval(() => {
+                countdownValue--;
+                playSound("tick");
+                
+                if (countdownValue <= 0) {
+                    clearInterval(countdownTimer);
+                    inCountdown = false;
+                    gameActive = true;
+                    timerStart = Date.now();
+                    lastOptionTime = Date.now();
+                    currentOption = getRandomOption();
+                }
+            }, 1000);
+        }
+        
+        // Check player answer
+        function checkAnswer(clickedOption) {
+            if (clickedOption === correctAnswer) {
+                playSound("correct");
+                showCorrectFeedback = true;
+            } else {
+                playSound("incorrect");
+                showIncorrectFeedback = true;
+            }
+            
+            gameActive = false;
+            gameOver = true;
+            
+            // Show restart button after a short delay
+            setTimeout(() => {
+                restartBtnVisible = true;
+            }, 1000);
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameActive = false;
+            gameOver = false;
+            inCountdown = true;
+            countdownValue = 3;
+            pulseSize = 0;
+            flashIntensity = 0;
+            showCorrectFeedback = false;
+            showIncorrectFeedback = false;
+            restartBtnVisible = false;
+            timerWidth = 0;
+            optionDisplayTime = 1500;
+            currentOption = "";
+            startCountdown();
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Handle option click
+            if (gameActive) {
+                const boxWidth = isMobile ? 250 : 300;
+                const boxHeight = 80;
+                
+                if (
+                    clickX >= centerX - boxWidth/2 && 
+                    clickX <= centerX + boxWidth/2 && 
+                    clickY >= centerY - boxHeight/2 && 
+                    clickY <= centerY + boxHeight/2
+                ) {
+                    checkAnswer(currentOption);
+                }
+            }
+            
+            // Handle restart button click
+            if (gameOver && restartBtnVisible) {
+                if (
+                    clickX >= centerX - 80 && 
+                    clickX <= centerX + 80 && 
+                    clickY >= centerY + 70 && 
+                    clickY <= centerY + 120
+                ) {
+                    resetGame();
+                }
+            }
+        });
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBorder();
+            drawQuestion();
+            
+            if (inCountdown) {
+                drawCountdown();
+            } else if (gameActive) {
+                displayNewOption();
+                drawOption();
+                drawTimer();
+            } else if (gameOver) {
+                drawOption();
+                drawGameOver();
+            }
+            
+            // Continue game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

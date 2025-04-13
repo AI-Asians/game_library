@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Maze Navigator Quiz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #222;
+            image-rendering: pixelated;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            display: none;
+        }
+        button {
+            width: 60px;
+            height: 60px;
+            margin: 5px;
+            font-size: 20px;
+            background-color: #555;
+            color: white;
+            border: 3px solid #777;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="controls">
+        <button id="up">↑</button><br>
+        <button id="left">←</button>
+        <button id="down">↓</button>
+        <button id="right">→</button>
+    </div>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+            document.getElementById('controls').style.display = 'block';
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors
+        const COLORS = {
+            background: '#352879',
+            wall: '#5a6988',
+            floor: '#101652',
+            player: '#ff6b97',
+            text: '#ffffff',
+            correct: '#7bce52',
+            incorrect: '#e83b3b',
+            hint: '#7878ff'
+        };
+
+        // Game variables
+        let gameOver = false;
+        let restart = false;
+        
+        // Question
+        const question = "What is the capital of France?";
+        const options = [
+            { text: "London", correct: false },
+            { text: "Paris", correct: true },
+            { text: "Rome", correct: false },
+            { text: "Berlin", correct: false }
+        ];
+        
+        // Maze layout (0 = path, 1 = wall)
+        const tileSize = isMobile ? 30 : 40;
+        const maze = [
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+            [1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1],
+            [1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1],
+            [1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+            [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1],
+            [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        ];
+        
+        // Define player
+        const player = {
+            x: tileSize * 1.5,
+            y: tileSize * 1.5,
+            width: tileSize * 0.8,
+            height: tileSize * 0.8,
+            speed: tileSize / 10,
+            vx: 0,
+            vy: 0
+        };
+        
+        // Define answer positions
+        const answerPositions = [
+            { x: 2, y: 7 },  // London
+            { x: 13, y: 5 }, // Paris (correct)
+            { x: 7, y: 9 },  // Rome
+            { x: 7, y: 1 }   // Berlin
+        ];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+        }
+        
+        function playMoveSound() {
+            playSound(200, 'square', 50);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 'square', 100);
+            setTimeout(() => playSound(660, 'square', 200), 100);
+        }
+        
+        function playIncorrectSound() {
+            playSound(200, 'sawtooth', 200);
+            setTimeout(() => playSound(150, 'sawtooth', 300), 200);
+        }
+        
+        // Wall collision detection
+        function checkWallCollision(x, y) {
+            const tileX = Math.floor(x / tileSize);
+            const tileY = Math.floor(y / tileSize);
+            
+            // Check corners of player hitbox
+            const points = [
+                { x: x, y: y },
+                { x: x + player.width, y: y },
+                { x: x, y: y + player.height },
+                { x: x + player.width, y: y + player.height }
+            ];
+            
+            for (let point of points) {
+                const pointTileX = Math.floor(point.x / tileSize);
+                const pointTileY = Math.floor(point.y / tileSize);
+                
+                if (pointTileY >= 0 && pointTileY < maze.length && 
+                    pointTileX >= 0 && pointTileX < maze[0].length) {
+                    if (maze[pointTileY][pointTileX] === 1) {
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+        }
+        
+        // Check if player reached an answer
+        function checkAnswerCollision() {
+            const playerCenterX = player.x + player.width / 2;
+            const playerCenterY = player.y + player.height / 2;
+            const playerTileX = Math.floor(playerCenterX / tileSize);
+            const playerTileY = Math.floor(playerCenterY / tileSize);
+            
+            for (let i = 0; i < answerPositions.length; i++) {
+                const answerPos = answerPositions[i];
+                if (playerTileX === answerPos.x && playerTileY === answerPos.y) {
+                    gameOver = true;
+                    if (options[i].correct) {
+                        playCorrectSound();
+                    } else {
+                        playIncorrectSound();
+                    }
+                    return options[i];
+                }
+            }
+            return null;
+        }
+        
+        // Handle keyboard input
+        const keys = { up: false, down: false, left: false, right: false };
+        
+        window.addEventListener('keydown', (e) => {
+            if (gameOver) {
+                if (e.key === 'Enter' || e.key === ' ') restart = true;
+                return;
+            }
+            
+            switch(e.key) {
+                case 'ArrowUp': case 'w': keys.up = true; break;
+                case 'ArrowDown': case 's': keys.down = true; break;
+                case 'ArrowLeft': case 'a': keys.left = true; break;
+                case 'ArrowRight': case 'd': keys.right = true; break;
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            switch(e.key) {
+                case 'ArrowUp': case 'w': keys.up = false; break;
+                case 'ArrowDown': case 's': keys.down = false; break;
+                case 'ArrowLeft': case 'a': keys.left = false; break;
+                case 'ArrowRight': case 'd': keys.right = false; break;
+            }
+        });
+        
+        // Mobile controls
+        if (isMobile) {
+            document.getElementById('up').addEventListener('touchstart', () => { keys.up = true; });
+            document.getElementById('down').addEventListener('touchstart', () => { keys.down = true; });
+            document.getElementById('left').addEventListener('touchstart', () => { keys.left = true; });
+            document.getElementById('right').addEventListener('touchstart', () => { keys.right = true; });
+            
+            document.getElementById('up').addEventListener('touchend', () => { keys.up = false; });
+            document.getElementById('down').addEventListener('touchend', () => { keys.down = false; });
+            document.getElementById('left').addEventListener('touchend', () => { keys.left = false; });
+            document.getElementById('right').addEventListener('touchend', () => { keys.right = false; });
+        }
+        
+        // Draw functions
+        function drawMaze() {
+            for (let y = 0; y < maze.length; y++) {
+                for (let x = 0; x < maze[y].length; x++) {
+                    if (maze[y][x] === 1) {
+                        ctx.fillStyle = COLORS.wall;
+                        ctx.fillRect(x * tileSize, y * tileSize + 60, tileSize, tileSize);
+                        
+                        // Add some texture to walls
+                        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                        ctx.fillRect(x * tileSize + 2, y * tileSize + 62, tileSize - 4, tileSize - 4);
+                    } else {
+                        ctx.fillStyle = COLORS.floor;
+                        ctx.fillRect(x * tileSize, y * tileSize + 60, tileSize, tileSize);
+                        
+                        // Add some texture to floor
+                        if ((x + y) % 2 === 0) {
+                            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+                            ctx.fillRect(x * tileSize, y * tileSize + 60, tileSize, tileSize);
+                        }
+                    }
+                }
+            }
+        }
+        
+        function drawPlayer() {
+            // Draw body
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            
+            // Draw face details
+            ctx.fillStyle = '#000';
+            ctx.fillRect(player.x + player.width * 0.25, player.y + player.height * 0.3, 
+                         player.width * 0.15, player.height * 0.15);
+            ctx.fillRect(player.x + player.width * 0.6, player.y + player.height * 0.3, 
+                         player.width * 0.15, player.height * 0.15);
+            
+            // Draw smile
+            ctx.beginPath();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.arc(player.x + player.width/2, player.y + player.height * 0.6, 
+                    player.width * 0.25, 0.1, Math.PI - 0.1);
+            ctx.stroke();
+        }
+        
+        function drawAnswers() {
+            for (let i = 0; i < answerPositions.length; i++) {
+                const pos = answerPositions[i];
+                
+                // Draw treasure chest
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(pos.x * tileSize + tileSize/4, 
+                            pos.y * tileSize + 60 + tileSize/4, 
+                            tileSize/2, tileSize/2);
+                
+                // Chest details
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(pos.x * tileSize + tileSize/3, 
+                            pos.y * tileSize + 60 + tileSize/3, 
+                            tileSize/3, tileSize/10);
+                
+                // Draw answer text above chest
+                ctx.font = `${tileSize/3}px Arial`;
+                ctx.fillStyle = '#FFF';
+                ctx.textAlign = 'center';
+                ctx.fillText(options[i].text, 
+                            pos.x * tileSize + tileSize/2, 
+                            pos.y * tileSize + 60 - 5);
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, 60);
+            
+            ctx.font = '24px Arial';
+            ctx.fillStyle = '#FFF';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 35);
+        }
+        
+        function drawResult(answer) {
+            ctx.fillStyle = answer.correct ? 'rgba(0,255,0,0.3)' : 'rgba(255,0,0,0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '30px Arial';
+            ctx.fillStyle = '#FFF';
+            ctx.textAlign = 'center';
+            ctx.fillText(answer.correct ? 'Correct!' : 'Incorrect!', canvas.width / 2, canvas.height / 2 - 50);
+            
+            ctx.font = '24px Arial';
+            ctx.fillText(`The answer is: Paris`, canvas.width / 2, canvas.height / 2);
+            
+            ctx.fillText('Press any key to restart', canvas.width / 2, canvas.height / 2 + 50);
+            
+            // Draw restart button for mobile
+            if (isMobile) {
+                ctx.fillStyle = '#555';
+                const buttonWidth = 200;
+                const buttonHeight = 60;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height / 2 + 80;
+                
+                ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                ctx.strokeStyle = '#777';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '24px Arial';
+                ctx.fillText('Restart', canvas.width / 2, buttonY + 40);
+                
+                // Add touch event for restart button
+                canvas.addEventListener('touchstart', function(e) {
+                    if (!gameOver) return;
+                    
+                    const rect = canvas.getBoundingClientRect();
+                    const touchX = e.touches[0].clientX - rect.left;
+                    const touchY = e.touches[0].clientY - rect.top;
+                    
+                    if (touchX >= buttonX && touchX <= buttonX + buttonWidth &&
+                        touchY >= buttonY && touchY <= buttonY + buttonHeight) {
+                        restart = true;
+                    }
+                });
+            }
+        }
+        
+        // Hint system - subtle path to correct answer
+        function drawHint() {
+            const correctPos = answerPositions[1]; // Paris is at index 1
+            
+            // Draw a subtle path
+            ctx.strokeStyle = 'rgba(120, 120, 255, 0.1)';
+            ctx.lineWidth = tileSize / 5;
+            
+            // Create a path to the correct answer
+            ctx.beginPath();
+            ctx.moveTo(tileSize * 1.5, tileSize * 1.5);
+            ctx.lineTo(tileSize * 1.5, tileSize * 5.5);
+            ctx.lineTo(tileSize * 7.5, tileSize * 5.5);
+            ctx.lineTo(tileSize * 7.5, tileSize * 3.5);
+            ctx.lineTo(tileSize * 11.5, tileSize * 3.5);
+            ctx.lineTo(tileSize * 11.5, tileSize * 5.5);
+            ctx.lineTo(tileSize * (correctPos.x + 0.5), tileSize * (correctPos.y + 0.5));
+            ctx.stroke();
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) {
+                if (restart) {
+                    gameOver = false;
+                    restart = false;
+                    player.x = tileSize * 1.5;
+                    player.y = tileSize * 1.5;
+                    player.vx = 0;
+                    player.vy = 0;
+                }
+                return;
+            }
+            
+            // Calculate movement
+            let dx = 0;
+            let dy = 0;
+            
+            if (keys.up) dy -= player.speed;
+            if (keys.down) dy += player.speed;
+            if (keys.left) dx -= player.speed;
+            if (keys.right) dx += player.speed;
+            
+            // Normalize diagonal movement
+            if (dx !== 0 && dy !== 0) {
+                dx *= 0.7071; // Math.sqrt(0.5)
+                dy *= 0.7071;
+            }
+            
+            // Apply movement with collision detection
+            if (dx !== 0) {
+                if (!checkWallCollision(player.x + dx, player.y)) {
+                    player.x += dx;
+                    if (Math.random() < 0.05) playMoveSound();
+                }
+            }
+            
+            if (dy !== 0) {
+                if (!checkWallCollision(player.x, player.y + dy)) {
+                    player.y += dy;
+                    if (Math.random() < 0.05) playMoveSound();
+                }
+            }
+            
+            // Check if player reached an answer
+            const answer = checkAnswerCollision();
+            if (answer) {
+                selectedAnswer = answer;
+            }
+        }
+        
+        // Main game loop
+        let selectedAnswer = null;
+        let lastTime = 0;
+        
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawQuestion();
+            drawHint();
+            drawMaze();
+            drawAnswers();
+            
+            if (!gameOver) {
+                drawPlayer();
+            }
+            
+            // Update game state
+            update();
+            
+            // Draw result screen if game is over
+            if (selectedAnswer) {
+                drawResult(selectedAnswer);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

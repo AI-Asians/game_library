@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>True or False Space Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            background-color: #000;
+        }
+        #restart {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: #FF5555;
+            color: white;
+            border: 4px solid #FFAA00;
+            font-family: sans-serif;
+            padding: 8px 16px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">RESTART</button>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Check if on mobile
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on platform
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Colors in 8-bit style
+        const colors = {
+            background: '#222034',
+            questionBox: '#45283c',
+            trueSide: '#3e8948',
+            falseSide: '#854c30',
+            projectile: '#ffcd75',
+            slingshot: '#d95763',
+            rubber: '#df7126',
+            text: '#ffffff',
+            highlight: '#fee761',
+            shadow: '#29366f'
+        };
+        
+        // Game states
+        const GAME_STATE = {
+            PLAYING: 0,
+            CORRECT: 1,
+            INCORRECT: 2
+        };
+        
+        // Game variables
+        let gameState = GAME_STATE.PLAYING;
+        let projectile = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            radius: 15,
+            velocityX: 0,
+            velocityY: 0,
+            isLaunched: false,
+            restX: canvas.width / 2,
+            restY: canvas.height - 100,
+            grabOffsetX: 0,
+            grabOffsetY: 0,
+            isGrabbed: false
+        };
+        
+        // Target areas
+        const trueArea = {
+            x: canvas.width / 4,
+            y: canvas.height / 4,
+            width: canvas.width / 4,
+            height: canvas.height / 4,
+            text: "TRUE"
+        };
+        
+        const falseArea = {
+            x: canvas.width * 3 / 4 - canvas.width / 4,
+            y: canvas.height / 4,
+            width: canvas.width / 4, 
+            height: canvas.height / 4,
+            text: "FALSE"
+        };
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        const correctAnswer = false; // The correct answer is FALSE
+        
+        // Physics variables
+        const gravity = 0.25;
+        const friction = 0.98;
+        const elasticity = 0.7;
+        const maxPull = 150;
+        
+        // Screen shake
+        let screenShake = 0;
+        
+        // Particles
+        let particles = [];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Function to create a simple sound effect
+        function playSound(freq, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Function to create particle effects
+        function createParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    velocityX: (Math.random() - 0.5) * 8,
+                    velocityY: (Math.random() - 0.5) * 8,
+                    size: Math.random() * 6 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Draw game function
+        function draw() {
+            // Clear canvas with screen shake effect
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (screenShake > 0) {
+                ctx.save();
+                const shakeX = (Math.random() - 0.5) * screenShake;
+                const shakeY = (Math.random() - 0.5) * screenShake;
+                ctx.translate(shakeX, shakeY);
+                screenShake -= 0.5;
+            }
+            
+            // Draw background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw target areas
+            drawPixelatedRect(trueArea.x, trueArea.y, trueArea.width, trueArea.height, colors.trueSide);
+            drawPixelatedRect(falseArea.x, falseArea.y, falseArea.width, falseArea.height, colors.falseSide);
+            
+            // Draw text on target areas
+            ctx.fillStyle = colors.text;
+            ctx.font = '30px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(trueArea.text, trueArea.x + trueArea.width / 2, trueArea.y + trueArea.height / 2);
+            ctx.fillText(falseArea.text, falseArea.x + falseArea.width / 2, falseArea.y + falseArea.height / 2);
+            
+            // Draw question box
+            drawPixelatedRect(canvas.width / 2 - 350, canvas.height / 2 - 30, 700, 80, colors.questionBox);
+            
+            // Draw question text
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, canvas.height / 2);
+            
+            // Draw slingshot base
+            drawPixelatedRect(projectile.restX - 30, projectile.restY + 10, 60, 20, colors.slingshot);
+            
+            // Draw rubber bands if not launched
+            if (!projectile.isLaunched) {
+                ctx.strokeStyle = colors.rubber;
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(projectile.restX - 20, projectile.restY + 10);
+                ctx.lineTo(projectile.x, projectile.y);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(projectile.restX + 20, projectile.restY + 10);
+                ctx.lineTo(projectile.x, projectile.y);
+                ctx.stroke();
+                
+                // Draw power meter
+                const distance = Math.sqrt(
+                    Math.pow(projectile.x - projectile.restX, 2) + 
+                    Math.pow(projectile.y - projectile.restY, 2)
+                );
+                const power = Math.min(distance / maxPull, 1);
+                
+                ctx.fillStyle = colors.highlight;
+                drawPixelatedRect(20, canvas.height - 30, 200, 20, colors.shadow);
+                drawPixelatedRect(20, canvas.height - 30, 200 * power, 20, colors.highlight);
+            }
+            
+            // Draw projectile
+            drawPixelatedCircle(projectile.x, projectile.y, projectile.radius, colors.projectile);
+            
+            // Draw particles
+            particles.forEach(particle => {
+                drawPixelatedRect(particle.x, particle.y, particle.size, particle.size, particle.color);
+            });
+            
+            if (screenShake > 0) {
+                ctx.restore();
+            }
+        }
+        
+        // Function to draw pixelated rectangle for 8-bit style
+        function drawPixelatedRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+            
+            // Add highlight edge
+            ctx.fillStyle = lightenColor(color, 30);
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), 3);
+            ctx.fillRect(Math.floor(x), Math.floor(y), 3, Math.floor(height));
+            
+            // Add shadow edge
+            ctx.fillStyle = darkenColor(color, 30);
+            ctx.fillRect(Math.floor(x), Math.floor(y + height - 3), Math.floor(width), 3);
+            ctx.fillRect(Math.floor(x + width - 3), Math.floor(y), 3, Math.floor(height));
+        }
+        
+        // Function to draw pixelated circle for 8-bit style
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 2;
+            x = Math.floor(x);
+            y = Math.floor(y);
+            radius = Math.floor(radius);
+            
+            for (let i = -radius; i <= radius; i += pixelSize) {
+                for (let j = -radius; j <= radius; j += pixelSize) {
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillStyle = color;
+                        if (i*i + j*j >= (radius-pixelSize)*(radius-pixelSize)) {
+                            ctx.fillStyle = darkenColor(color, 30);
+                        }
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        // Helper functions to lighten/darken colors
+        function lightenColor(color, amount) {
+            return color;
+        }
+        
+        function darkenColor(color, amount) {
+            return color;
+        }
+        
+        // Update game function
+        function update() {
+            if (gameState === GAME_STATE.PLAYING) {
+                // Update projectile physics if launched
+                if (projectile.isLaunched) {
+                    projectile.velocityY += gravity;
+                    projectile.velocityX *= friction;
+                    projectile.velocityY *= friction;
+                    
+                    projectile.x += projectile.velocityX;
+                    projectile.y += projectile.velocityY;
+                    
+                    // Bounce off walls
+                    if (projectile.x - projectile.radius < 0 || projectile.x + projectile.radius > canvas.width) {
+                        projectile.velocityX *= -elasticity;
+                        if (projectile.x - projectile.radius < 0) {
+                            projectile.x = projectile.radius;
+                        } else {
+                            projectile.x = canvas.width - projectile.radius;
+                        }
+                        playSound(150, 'square', 0.15);
+                    }
+                    
+                    if (projectile.y - projectile.radius < 0) {
+                        projectile.velocityY *= -elasticity;
+                        projectile.y = projectile.radius;
+                        playSound(150, 'square', 0.15);
+                    }
+                    
+                    if (projectile.y + projectile.radius > canvas.height) {
+                        projectile.velocityY *= -elasticity;
+                        projectile.y = canvas.height - projectile.radius;
+                        playSound(100, 'square', 0.15);
+                    }
+                    
+                    // Check collision with true area
+                    if (
+                        projectile.x > trueArea.x && 
+                        projectile.x < trueArea.x + trueArea.width &&
+                        projectile.y > trueArea.y && 
+                        projectile.y < trueArea.y + trueArea.height
+                    ) {
+                        screenShake = 10;
+                        createParticles(projectile.x, projectile.y, 30, colors.highlight);
+                        
+                        if (correctAnswer === true) {
+                            gameState = GAME_STATE.CORRECT;
+                            playSound(440, 'sine', 0.3);
+                            setTimeout(() => playSound(660, 'sine', 0.3), 200);
+                        } else {
+                            gameState = GAME_STATE.INCORRECT;
+                            playSound(200, 'sawtooth', 0.3);
+                            setTimeout(() => playSound(150, 'sawtooth', 0.5), 200);
+                        }
+                        
+                        restartBtn.style.display = 'block';
+                    }
+                    
+                    // Check collision with false area
+                    if (
+                        projectile.x > falseArea.x && 
+                        projectile.x < falseArea.x + falseArea.width &&
+                        projectile.y > falseArea.y && 
+                        projectile.y < falseArea.y + falseArea.height
+                    ) {
+                        screenShake = 10;
+                        createParticles(projectile.x, projectile.y, 30, colors.highlight);
+                        
+                        if (correctAnswer === false) {
+                            gameState = GAME_STATE.CORRECT;
+                            playSound(440, 'sine', 0.3);
+                            setTimeout(() => playSound(660, 'sine', 0.3), 200);
+                        } else {
+                            gameState = GAME_STATE.INCORRECT;
+                            playSound(200, 'sawtooth', 0.3);
+                            setTimeout(() => playSound(150, 'sawtooth', 0.5), 200);
+                        }
+                        
+                        restartBtn.style.display = 'block';
+                    }
+                }
+            }
+            
+            // Update particles
+            particles.forEach((particle, index) => {
+                particle.x += particle.velocityX;
+                particle.y += particle.velocityY;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    particles.splice(index, 1);
+                }
+            });
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners for mouse/touch input
+        function getInputPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || e.touches[0].clientX;
+            const clientY = e.clientY || e.touches[0].clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+        
+        function checkCollision(x, y, circle) {
+            return Math.sqrt(Math.pow(x - circle.x, 2) + Math.pow(y - circle.y, 2)) < circle.radius;
+        }
+        
+        canvas.addEventListener('mousedown', function(e) {
+            if (gameState !== GAME_STATE.PLAYING || projectile.isLaunched) return;
+            
+            const pos = getInputPos(e);
+            if (checkCollision(pos.x, pos.y, projectile)) {
+                projectile.isGrabbed = true;
+                projectile.grabOffsetX = pos.x - projectile.x;
+                projectile.grabOffsetY = pos.y - projectile.y;
+                playSound(220, 'sine', 0.1);
+            }
+        });
+        
+        canvas.addEventListener('touchstart', function(e) {
+            if (gameState !== GAME_STATE.PLAYING || projectile.isLaunched) return;
+            
+            const pos = getInputPos(e);
+            if (checkCollision(pos.x, pos.y, projectile)) {
+                projectile.isGrabbed = true;
+                projectile.grabOffsetX = pos.x - projectile.x;
+                projectile.grabOffsetY = pos.y - projectile.y;
+                playSound(220, 'sine', 0.1);
+            }
+            e.preventDefault();
+        });
+        
+        function handleMove(e) {
+            if (!projectile.isGrabbed || projectile.isLaunched) return;
+            
+            const pos = getInputPos(e);
+            projectile.x = pos.x - projectile.grabOffsetX;
+            projectile.y = pos.y - projectile.grabOffsetY;
+            
+            // Limit pull distance
+            const dx = projectile.x - projectile.restX;
+            const dy = projectile.y - projectile.restY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > maxPull) {
+                const angle = Math.atan2(dy, dx);
+                projectile.x = projectile.restX + Math.cos(angle) * maxPull;
+                projectile.y = projectile.restY + Math.sin(angle) * maxPull;
+            }
+        }
+        
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', function(e) {
+            handleMove(e);
+            e.preventDefault();
+        });
+        
+        function handleEnd() {
+            if (projectile.isGrabbed && !projectile.isLaunched) {
+                // Calculate velocity based on distance from rest position
+                const dx = projectile.restX - projectile.x;
+                const dy = projectile.restY - projectile.y;
+                
+                projectile.velocityX = dx * 0.2;
+                projectile.velocityY = dy * 0.2;
+                
+                projectile.isLaunched = true;
+                projectile.isGrabbed = false;
+                
+                // Play launch sound
+                playSound(330, 'triangle', 0.2);
+            }
+        }
+        
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchend', function(e) {
+            handleEnd();
+            e.preventDefault();
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            // Reset the game
+            gameState = GAME_STATE.PLAYING;
+            projectile = {
+                x: canvas.width / 2,
+                y: canvas.height - 100,
+                radius: 15,
+                velocityX: 0,
+                velocityY: 0,
+                isLaunched: false,
+                restX: canvas.width / 2,
+                restY: canvas.height - 100,
+                grabOffsetX: 0,
+                grabOffsetY: 0,
+                isGrabbed: false
+            };
+            particles = [];
+            screenShake = 0;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start the game
+        gameLoop();
+        
+    </script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orbit-Tap: Capital of France</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        @media (max-width: 800px) {
+            canvas {
+                width: 360px;
+                height: 640px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive canvas sizing
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game state
+        let gameOver = false;
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const orbitRadius = Math.min(canvas.width, canvas.height) * 0.3;
+        const options = [
+            { text: "Paris", correct: true, color: "#FF5555", angle: 0 },
+            { text: "London", correct: false, color: "#55FF55", angle: Math.PI * 0.5 },
+            { text: "Berlin", correct: false, color: "#5555FF", angle: Math.PI },
+            { text: "Rome", correct: false, color: "#FFFF55", angle: Math.PI * 1.5 }
+        ];
+        
+        // Stars background
+        const stars = [];
+        for (let i = 0; i < 50; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 3 + 1,
+                blinkRate: Math.random() * 0.1
+            });
+        }
+        
+        // Colors (limited palette)
+        const colors = {
+            background: "#000022",
+            questionBg: "#3333AA",
+            questionText: "#FFFFFF",
+            orbitPath: "#555599",
+            correctFeedback: "#FFFF00",
+            incorrectFeedback: "#FF0000"
+        };
+        
+        // Create audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effect functions
+        function playCorrectSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = 0.1;
+            oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(600, audioCtx.currentTime + 0.1);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.2);
+        }
+        
+        function playIncorrectSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = 0.1;
+            oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(100, audioCtx.currentTime + 0.2);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        // Draw functions
+        function drawPixelatedCircle(x, y, radius, color) {
+            // Drawing a pixelated circle by using squares
+            const pixelSize = 4;
+            
+            for (let px = -radius; px < radius; px += pixelSize) {
+                for (let py = -radius; py < radius; py += pixelSize) {
+                    const dist = Math.sqrt(px * px + py * py);
+                    if (dist < radius) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(Math.floor(x + px), Math.floor(y + py), pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        function drawStars() {
+            for (const star of stars) {
+                // Make stars blink by varying opacity
+                const blink = Math.sin(Date.now() * star.blinkRate) * 0.5 + 0.5;
+                ctx.fillStyle = `rgba(255, 255, 255, ${blink})`;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            }
+        }
+        
+        function drawOrbitPath() {
+            // Draw pixelated orbit path as dotted line
+            const segments = 32;
+            const segmentAngle = (Math.PI * 2) / segments;
+            
+            for (let i = 0; i < segments; i++) {
+                if (i % 2 === 0) {
+                    const angle = i * segmentAngle;
+                    const startX = centerX + Math.cos(angle) * orbitRadius;
+                    const startY = centerY + Math.sin(angle) * orbitRadius;
+                    const endX = centerX + Math.cos(angle + segmentAngle) * orbitRadius;
+                    const endY = centerY + Math.sin(angle + segmentAngle) * orbitRadius;
+                    
+                    ctx.strokeStyle = colors.orbitPath;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(startX, startY);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            // Draw central planet/question area
+            drawPixelatedCircle(centerX, centerY, orbitRadius * 0.5, colors.questionBg);
+            
+            // Draw question text
+            ctx.fillStyle = colors.questionText;
+            ctx.font = "16px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            const question = "What is the capital of France?";
+            ctx.fillText(question, centerX, centerY);
+        }
+        
+        function drawOptions() {
+            // Draw orbiting answer options
+            const optionRadius = orbitRadius * 0.2;
+            
+            for (const option of options) {
+                const x = centerX + Math.cos(option.angle) * orbitRadius;
+                const y = centerY + Math.sin(option.angle) * orbitRadius;
+                
+                drawPixelatedCircle(x, y, optionRadius, option.color);
+                
+                // Draw text
+                ctx.fillStyle = "#000000";
+                ctx.font = "14px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(option.text, x, y);
+            }
+        }
+        
+        function drawRestartButton() {
+            // Draw restart button
+            const buttonWidth = 100;
+            const buttonHeight = 40;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height - 80;
+            
+            // Pixelated button
+            ctx.fillStyle = "#AA5555";
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "16px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("Restart", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
+        }
+        
+        function drawFeedback(correct) {
+            // Draw game end feedback
+            ctx.fillStyle = correct ? colors.correctFeedback : colors.incorrectFeedback;
+            ctx.font = "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            const message = correct ? "Correct!" : "Wrong!";
+            ctx.fillText(message, centerX, centerY - orbitRadius - 40);
+        }
+        
+        // Game loop
+        function update() {
+            // Update option positions
+            if (!gameOver) {
+                for (const option of options) {
+                    option.angle += 0.02; // Adjust speed here
+                    if (option.angle > Math.PI * 2) {
+                        option.angle -= Math.PI * 2;
+                    }
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawStars();
+            drawOrbitPath();
+            drawQuestion();
+            drawOptions();
+            
+            if (gameOver) {
+                drawFeedback(selectedOption.correct);
+                drawRestartButton();
+            }
+        }
+        
+        let selectedOption = null;
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (event.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (event.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check restart button
+                const buttonWidth = 100;
+                const buttonHeight = 40;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height - 80;
+                
+                if (clickX >= buttonX && clickX <= buttonX + buttonWidth &&
+                    clickY >= buttonY && clickY <= buttonY + buttonHeight) {
+                    // Reset game
+                    gameOver = false;
+                    selectedOption = null;
+                    
+                    // Reset options positions
+                    for (let i = 0; i < options.length; i++) {
+                        options[i].angle = i * Math.PI * 0.5;
+                    }
+                }
+            } else {
+                // Check if an answer was clicked
+                const optionRadius = orbitRadius * 0.2;
+                
+                for (const option of options) {
+                    const optionX = centerX + Math.cos(option.angle) * orbitRadius;
+                    const optionY = centerY + Math.sin(option.angle) * orbitRadius;
+                    
+                    const distance = Math.sqrt((clickX - optionX) ** 2 + (clickY - optionY) ** 2);
+                    
+                    if (distance <= optionRadius * 1.5) { // Larger hit area for easier tapping
+                        selectedOption = option;
+                        gameOver = true;
+                        
+                        if (option.correct) {
+                            playCorrectSound();
+                        } else {
+                            playIncorrectSound();
+                        }
+                        
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

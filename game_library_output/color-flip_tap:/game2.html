@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Color Flip True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        let gameState = 'countdown'; // countdown, playing, correct, incorrect
+        let countdownTimer = 3;
+        let lastCountdownUpdate = 0;
+        let flipTimer = 0;
+        let flipDuration = 1000; // Time in ms for one complete flip cycle
+        let flipState = true; // true = blue (true), false = red (false)
+        let gameSpeed = 1;
+        let cardWobble = 0;
+        let cardWobbleDir = 1;
+        
+        // Colors (limited 8-bit style palette)
+        const colors = {
+            background: '#5A6988',
+            cardTrue: '#4466FF',
+            cardFalse: '#FF4455',
+            textLight: '#FFFFFF',
+            textDark: '#111111',
+            border: '#111111',
+            highlight: '#FFCC44',
+            shadow: '#222222'
+        };
+
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const correctAnswer = true;
+
+        // Create audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Simple beep sound effect function
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            const now = audioCtx.currentTime;
+            gainNode.gain.setValueAtTime(0.3, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
+            
+            oscillator.start();
+            oscillator.stop(now + duration);
+        }
+
+        function playCountdownSound() {
+            playSound(440, 'square', 0.1);
+        }
+
+        function playFlipSound() {
+            playSound(220 + Math.random() * 100, 'square', 0.05);
+        }
+
+        function playCorrectSound() {
+            playSound(660, 'square', 0.2);
+            setTimeout(() => playSound(880, 'square', 0.3), 200);
+        }
+
+        function playIncorrectSound() {
+            playSound(220, 'sawtooth', 0.3);
+        }
+
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+
+        // Draw pixelated text
+        function drawText(text, x, y, size, color, align = 'center') {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = align;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+
+        // Draw the game card
+        function drawCard() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const cardWidth = canvas.width * 0.7;
+            const cardHeight = canvas.height * 0.3;
+            
+            // Add wobble animation
+            const wobbleAmount = Math.sin(cardWobble) * 5;
+            
+            // Draw card background
+            ctx.fillStyle = flipState ? colors.cardTrue : colors.cardFalse;
+            ctx.strokeStyle = colors.border;
+            ctx.lineWidth = 8;
+            
+            // Card with wobble
+            ctx.beginPath();
+            ctx.rect(
+                centerX - cardWidth / 2 + wobbleAmount, 
+                centerY - cardHeight / 2,
+                cardWidth, 
+                cardHeight
+            );
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw True/False text
+            const textColor = flipState ? colors.textLight : colors.textLight;
+            const answerText = flipState ? "TRUE" : "FALSE";
+            
+            drawText(
+                answerText, 
+                centerX + wobbleAmount, 
+                centerY, 
+                cardHeight / 3, 
+                textColor
+            );
+            
+            // Draw pixel border details
+            const borderSize = 8;
+            ctx.fillStyle = colors.highlight;
+            
+            // Top-left corner pixel
+            drawPixelRect(
+                centerX - cardWidth / 2 + wobbleAmount, 
+                centerY - cardHeight / 2, 
+                borderSize, borderSize, 
+                colors.highlight
+            );
+            
+            // Bottom-right corner pixel
+            drawPixelRect(
+                centerX + cardWidth / 2 - borderSize + wobbleAmount, 
+                centerY + cardHeight / 2 - borderSize, 
+                borderSize, borderSize, 
+                colors.shadow
+            );
+        }
+
+        // Draw countdown
+        function drawCountdown() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (countdownTimer > 0) {
+                drawText(
+                    countdownTimer.toString(), 
+                    centerX, 
+                    centerY, 
+                    100, 
+                    colors.highlight
+                );
+            } else {
+                drawText(
+                    "GO!", 
+                    centerX, 
+                    centerY, 
+                    100, 
+                    colors.highlight
+                );
+            }
+        }
+
+        // Draw question
+        function drawQuestion() {
+            const centerX = canvas.width / 2;
+            const questionY = canvas.height / 5;
+            
+            // Split into multiple lines if needed
+            const maxWidth = canvas.width * 0.8;
+            const words = question.split(' ');
+            let line = '';
+            let lines = [];
+            
+            for (let word of words) {
+                const testLine = line + word + ' ';
+                ctx.font = '20px sans-serif';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && line !== '') {
+                    lines.push(line);
+                    line = word + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw each line
+            for (let i = 0; i < lines.length; i++) {
+                drawText(
+                    lines[i],
+                    centerX,
+                    questionY + (i * 30),
+                    20,
+                    colors.textLight
+                );
+            }
+        }
+
+        // Draw game result
+        function drawResult() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const resultY = centerY + canvas.height / 4;
+            
+            if (gameState === 'correct') {
+                drawText(
+                    "CORRECT!",
+                    centerX,
+                    resultY,
+                    40,
+                    colors.highlight
+                );
+            } else if (gameState === 'incorrect') {
+                drawText(
+                    "INCORRECT!",
+                    centerX,
+                    resultY,
+                    40,
+                    colors.cardFalse
+                );
+            }
+            
+            // Draw restart button
+            const buttonWidth = 150;
+            const buttonHeight = 60;
+            const buttonY = resultY + 80;
+            
+            ctx.fillStyle = colors.highlight;
+            ctx.fillRect(
+                centerX - buttonWidth / 2,
+                buttonY - buttonHeight / 2,
+                buttonWidth,
+                buttonHeight
+            );
+            
+            ctx.strokeStyle = colors.border;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(
+                centerX - buttonWidth / 2,
+                buttonY - buttonHeight / 2,
+                buttonWidth,
+                buttonHeight
+            );
+            
+            drawText(
+                "RESTART",
+                centerX,
+                buttonY,
+                24,
+                colors.textDark
+            );
+        }
+
+        // Handle player click/tap
+        function handleClick() {
+            if (gameState === 'playing') {
+                const playerAnswer = flipState;
+                
+                if (playerAnswer === correctAnswer) {
+                    gameState = 'correct';
+                    playCorrectSound();
+                } else {
+                    gameState = 'incorrect';
+                    playIncorrectSound();
+                }
+            } else if (gameState === 'correct' || gameState === 'incorrect') {
+                resetGame();
+            }
+        }
+
+        // Reset the game
+        function resetGame() {
+            gameState = 'countdown';
+            countdownTimer = 3;
+            lastCountdownUpdate = Date.now();
+            flipTimer = 0;
+            flipDuration = 1000;
+            flipState = true;
+            gameSpeed = 1;
+            cardWobble = 0;
+        }
+
+        // Update game state
+        function update() {
+            const now = Date.now();
+            
+            if (gameState === 'countdown') {
+                if (now - lastCountdownUpdate > 1000) {
+                    countdownTimer--;
+                    lastCountdownUpdate = now;
+                    playCountdownSound();
+                    
+                    if (countdownTimer < 0) {
+                        gameState = 'playing';
+                    }
+                }
+            } else if (gameState === 'playing') {
+                // Update flip timer
+                flipTimer += 16 * gameSpeed; // Adjust based on frame rate
+                
+                // Check if we should flip the card
+                if (flipTimer >= flipDuration / 2) {
+                    flipTimer = 0;
+                    flipState = !flipState;
+                    playFlipSound();
+                    
+                    // Increase game speed gradually
+                    gameSpeed += 0.05;
+                    flipDuration = Math.max(200, 1000 - (gameSpeed * 100));
+                }
+                
+                // Update card wobble
+                cardWobble += 0.1 * cardWobbleDir;
+                if (Math.abs(cardWobble) > 1) {
+                    cardWobbleDir *= -1;
+                }
+            }
+        }
+
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (gameState === 'countdown') {
+                drawCountdown();
+            } else {
+                drawQuestion();
+                
+                if (gameState === 'playing') {
+                    drawCard();
+                } else {
+                    drawCard(); // Show final card state
+                    drawResult();
+                }
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle input
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            handleClick();
+        });
+
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

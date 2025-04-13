@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sound-Match Capital Quiz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Setup canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if on mobile
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas dimensions
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const colors = {
+            background: '#0A1433',
+            text: '#FFFFFF',
+            correct: '#58C330',
+            wrong: '#D13438',
+            options: ['#FF5555', '#55FF55', '#5555FF', '#FFFF55']
+        };
+        
+        const question = "What is the capital of France?";
+        const options = ["Paris", "London", "Berlin", "Madrid"];
+        const correctAnswer = 0; // Index of correct answer (Paris)
+        
+        let currentOption = -1;
+        let soundInterval = 800; // Initial sound interval in ms
+        let lastSoundTime = 0;
+        let gameOver = false;
+        let tutorial = true;
+        let soundVisualizer = { amplitude: 0, decay: 0.9 };
+        
+        // Icons for each option (simple 8-bit style)
+        const icons = [
+            (x, y, size) => { // Eiffel Tower icon
+                ctx.fillStyle = colors.options[0];
+                ctx.fillRect(x-size/4, y-size/2, size/2, size);
+                ctx.fillRect(x-size/2, y+size/3, size, size/6);
+            },
+            (x, y, size) => { // Big Ben icon
+                ctx.fillStyle = colors.options[1];
+                ctx.fillRect(x-size/6, y-size/2, size/3, size);
+                ctx.fillRect(x-size/3, y-size/2-size/6, size*2/3, size/6);
+            },
+            (x, y, size) => { // Brandenburg Gate icon
+                ctx.fillStyle = colors.options[2];
+                ctx.fillRect(x-size/2, y-size/4, size, size/8);
+                for(let i=0; i<3; i++) {
+                    ctx.fillRect(x-size/3+i*size/3, y-size/4, size/8, size/2);
+                }
+            },
+            (x, y, size) => { // Bull icon
+                ctx.fillStyle = colors.options[3];
+                ctx.fillRect(x-size/3, y-size/6, size*2/3, size/3);
+                ctx.fillRect(x-size/2, y-size/6, size/6, size/2);
+                ctx.fillRect(x+size/3, y-size/6, size/6, size/2);
+            }
+        ];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Generate different sounds for each option
+        function playSound(index) {
+            if (gameOver) return;
+            
+            currentOption = index;
+            soundVisualizer.amplitude = 1;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            // Different sound characteristics for each option
+            switch(index) {
+                case 0: // Paris - ascending tone
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(440, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 1: // London - double beep
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime + 0.15);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.25);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 2: // Berlin - low tone
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(165, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 3: // Madrid - warble
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(275, audioCtx.currentTime + 0.15);
+                    oscillator.frequency.linearRampToValueAtTime(220, audioCtx.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        function playResultSound(correct) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (correct) {
+                // Correct answer sound - happy jingle
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else {
+                // Wrong answer sound - sad trombone
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(150, audioCtx.currentTime + 0.4);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.4);
+            }
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border
+            ctx.fillStyle = '#333';
+            for(let i = 0; i < canvas.width; i += 8) {
+                ctx.fillRect(i, 0, 4, 4);
+                ctx.fillRect(i, canvas.height - 4, 4, 4);
+            }
+            for(let i = 0; i < canvas.height; i += 8) {
+                ctx.fillRect(0, i, 4, 4);
+                ctx.fillRect(canvas.width - 4, i, 4, 4);
+            }
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 80);
+            
+            // Draw retro-style sound visualizer
+            drawSoundVisualizer();
+            
+            // Draw answer options
+            const optionHeight = 80;
+            const optionWidth = canvas.width * 0.8;
+            const startY = canvas.height / 2;
+            const spacing = optionHeight + 20;
+            
+            for (let i = 0; i < options.length; i++) {
+                const y = startY + (i - 1.5) * spacing;
+                drawOption(i, canvas.width / 2, y, optionWidth, optionHeight);
+            }
+            
+            // Draw tutorial hint if active
+            if (tutorial) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.fillRect(canvas.width / 2 - 150, canvas.height - 100, 300, 60);
+                ctx.fillStyle = '#000';
+                ctx.font = '16px sans-serif';
+                ctx.fillText('Listen for sounds and click when', canvas.width / 2, canvas.height - 75);
+                ctx.fillText('you hear the correct answer!', canvas.width / 2, canvas.height - 55);
+            }
+            
+            // Draw restart button if game over
+            if (gameOver) {
+                const btnWidth = 120;
+                const btnHeight = 40;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = canvas.height - 80;
+                
+                // Pixel-style button
+                ctx.fillStyle = '#555';
+                ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                ctx.fillStyle = '#777';
+                ctx.fillRect(btnX + 4, btnY + 4, btnWidth - 8, btnHeight - 8);
+                
+                ctx.fillStyle = '#FFF';
+                ctx.font = '16px sans-serif';
+                ctx.fillText('RESTART', canvas.width / 2, btnY + btnHeight / 2 + 5);
+            }
+        }
+        
+        function drawOption(index, centerX, centerY, width, height) {
+            const x = centerX - width / 2;
+            const y = centerY - height / 2;
+            
+            // Check if this is the current sound playing
+            const isActive = index === currentOption;
+            
+            // Flashing border effect for the active option
+            if (isActive) {
+                const borderSize = 4 + Math.floor(soundVisualizer.amplitude * 4);
+                ctx.fillStyle = colors.options[index];
+                ctx.fillRect(x - borderSize, y - borderSize, 
+                             width + borderSize * 2, height + borderSize * 2);
+            }
+            
+            // Option background
+            ctx.fillStyle = isActive ? colors.options[index] : '#444';
+            ctx.fillRect(x, y, width, height);
+            
+            // Inner background
+            ctx.fillStyle = '#222';
+            ctx.fillRect(x + 4, y + 4, width - 8, height - 8);
+            
+            // Draw icon
+            icons[index](x + 40, centerY, 40);
+            
+            // Option text
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(options[index], x + 80, centerY + 7);
+        }
+        
+        function drawSoundVisualizer() {
+            const visualizerHeight = 60;
+            const visualizerWidth = canvas.width * 0.8;
+            const x = canvas.width / 2 - visualizerWidth / 2;
+            const y = 120;
+            
+            // Draw visualizer background
+            ctx.fillStyle = '#111';
+            ctx.fillRect(x, y, visualizerWidth, visualizerHeight);
+            
+            // Draw retro equalizer bars
+            const barCount = 16;
+            const barWidth = visualizerWidth / barCount - 2;
+            
+            for (let i = 0; i < barCount; i++) {
+                // Only show active bars when sound is playing
+                if (currentOption >= 0) {
+                    // Create pattern based on current option
+                    let barHeight;
+                    switch(currentOption) {
+                        case 0: // Paris - ascending pattern
+                            barHeight = Math.sin(i / barCount * Math.PI) * visualizerHeight * 0.8 * soundVisualizer.amplitude;
+                            break;
+                        case 1: // London - alternating pattern
+                            barHeight = (i % 2 === 0 ? 0.8 : 0.4) * visualizerHeight * soundVisualizer.amplitude;
+                            break;
+                        case 2: // Berlin - decreasing pattern
+                            barHeight = (1 - i / barCount) * visualizerHeight * 0.8 * soundVisualizer.amplitude;
+                            break;
+                        case 3: // Madrid - random pattern based on index
+                            barHeight = Math.abs(Math.sin(i * 0.5)) * visualizerHeight * 0.8 * soundVisualizer.amplitude;
+                            break;
+                        default:
+                            barHeight = 0;
+                    }
+                    
+                    ctx.fillStyle = colors.options[currentOption];
+                    ctx.fillRect(x + i * (barWidth + 2) + 2, 
+                                y + visualizerHeight - barHeight, 
+                                barWidth, barHeight);
+                } else {
+                    // Idle state - low bars
+                    const barHeight = 5;
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(x + i * (barWidth + 2) + 2, 
+                                y + visualizerHeight - barHeight, 
+                                barWidth, barHeight);
+                }
+            }
+        }
+        
+        // Handle user input
+        function handleClick(e) {
+            if (tutorial) tutorial = false;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const btnWidth = 120;
+                const btnHeight = 40;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = canvas.height - 80;
+                
+                if (e.offsetX >= btnX && e.offsetX <= btnX + btnWidth &&
+                    e.offsetY >= btnY && e.offsetY <= btnY + btnHeight) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Get which option was clicked
+            const optionHeight = 80;
+            const startY = canvas.height / 2;
+            const spacing = optionHeight + 20;
+            const optionWidth = canvas.width * 0.8;
+            
+            for (let i = 0; i < options.length; i++) {
+                const y = startY + (i - 1.5) * spacing;
+                const x = canvas.width / 2 - optionWidth / 2;
+                
+                if (e.offsetX >= x && e.offsetX <= x + optionWidth &&
+                    e.offsetY >= y - optionHeight/2 && e.offsetY <= y + optionHeight/2) {
+                    // Check if answer is correct
+                    const isCorrect = (i === correctAnswer);
+                    
+                    // Play result sound
+                    playResultSound(isCorrect);
+                    
+                    // Game over
+                    gameOver = true;
+                    currentOption = isCorrect ? correctAnswer : i;
+                    break;
+                }
+            }
+        }
+        
+        // Add click event listener
+        canvas.addEventListener('click', function(e) {
+            // Calculate position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const clickEvent = {
+                offsetX: (e.clientX - rect.left) * scaleX,
+                offsetY: (e.clientY - rect.top) * scaleY
+            };
+            
+            handleClick(clickEvent);
+        });
+        
+        // For mobile touch support
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const touch = e.touches[0];
+            const clickEvent = {
+                offsetX: (touch.clientX - rect.left) * scaleX,
+                offsetY: (touch.clientY - rect.top) * scaleY
+            };
+            
+            handleClick(clickEvent);
+        });
+        
+        function resetGame() {
+            gameOver = false;
+            currentOption = -1;
+            soundInterval = 800;
+            lastSoundTime = 0;
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            // Update sound visualizer
+            soundVisualizer.amplitude *= soundVisualizer.decay;
+            
+            // Play sounds in sequence if game is active
+            if (!gameOver) {
+                if (timestamp - lastSoundTime > soundInterval) {
+                    // Play next sound in sequence
+                    const nextSound = (currentOption + 1) % options.length;
+                    playSound(nextSound);
+                    lastSoundTime = timestamp;
+                    
+                    // Speed up the sequence slightly over time
+                    soundInterval = Math.max(400, soundInterval - 5);
+                }
+            }
+            
+            // Draw game
+            draw();
+            
+            // Continue game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        resetGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

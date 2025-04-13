@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #game-container {
+            position: relative;
+        }
+        #restart-btn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background-color: #444;
+            color: #fff;
+            border: 2px solid #666;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restart-btn">Restart</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart-btn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 500;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let correctAnswerHit = false;
+        
+        // Audio context for sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Answers
+        const answers = [
+            { text: 'Paris', correct: true },
+            { text: 'London', correct: false },
+            { text: 'Berlin', correct: false },
+            { text: 'Rome', correct: false },
+            { text: 'Madrid', correct: false }
+        ];
+        
+        // Create answer objects with random positions and movements
+        const answerObjects = answers.map(answer => {
+            const size = isMobile ? 60 : 80;
+            return {
+                text: answer.text,
+                correct: answer.correct,
+                x: Math.random() * (canvas.width - size),
+                y: Math.random() * (canvas.height - size),
+                width: size,
+                height: size,
+                speedX: (Math.random() - 0.5) * 3,
+                speedY: (Math.random() - 0.5) * 3,
+                color: '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'),
+                pattern: Math.floor(Math.random() * 3), // 0: straight, 1: zigzag, 2: circular
+                angle: 0,
+                hovered: false
+            };
+        });
+        
+        // Function to play sound
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'hover') {
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Particle system
+        class ParticleSystem {
+            constructor() {
+                this.particles = [];
+            }
+            
+            createParticles(x, y, color, correct) {
+                const particleCount = correct ? 30 : 15;
+                for (let i = 0; i < particleCount; i++) {
+                    this.particles.push({
+                        x,
+                        y,
+                        size: Math.random() * 6 + 2,
+                        speedX: (Math.random() - 0.5) * 8,
+                        speedY: (Math.random() - 0.5) * 8,
+                        color,
+                        life: 30 + Math.random() * 20
+                    });
+                }
+            }
+            
+            update() {
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.speedX;
+                    p.y += p.speedY;
+                    p.life--;
+                    
+                    if (p.life <= 0) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+            }
+            
+            draw(ctx) {
+                ctx.save();
+                for (const p of this.particles) {
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                }
+                ctx.restore();
+            }
+        }
+        
+        const particleSystem = new ParticleSystem();
+        
+        // Draw pixel-style text
+        function drawPixelText(text, x, y, size, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+        
+        // Draw 8-bit style button
+        function drawPixelButton(x, y, width, height, text, color, hovered) {
+            ctx.save();
+            
+            // Button shadow (darker version of the color)
+            ctx.fillStyle = '#222';
+            ctx.fillRect(x + 4, y + 4, width, height);
+            
+            // Button base
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Button border
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = hovered ? '#fff' : '#000';
+            ctx.strokeRect(x, y, width, height);
+            
+            // Button highlight
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fillRect(x + 3, y + 3, width - 6, 3);
+            
+            // Button text
+            const textSize = Math.floor(height / 2.5);
+            drawPixelText(text, x + width / 2, y + height / 2, textSize, '#fff');
+            
+            ctx.restore();
+        }
+        
+        // Draw backgrounds with 8-bit patterns
+        function drawBackground() {
+            // Black base
+            ctx.fillStyle = '#000022';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Grid pattern
+            ctx.strokeStyle = '#0f0f3f';
+            ctx.lineWidth = 2;
+            const gridSize = 40;
+            
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // 8-bit stars
+            ctx.fillStyle = '#aaaaff';
+            for (let i = 0; i < 30; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const size = Math.floor(Math.random() * 3) + 1;
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) return;
+            
+            // Update answer objects
+            answerObjects.forEach(obj => {
+                // Update position based on pattern
+                switch (obj.pattern) {
+                    case 0: // Straight line
+                        obj.x += obj.speedX;
+                        obj.y += obj.speedY;
+                        break;
+                    case 1: // Zigzag
+                        obj.x += obj.speedX;
+                        obj.y += Math.sin(obj.angle) * 2;
+                        obj.angle += 0.05;
+                        break;
+                    case 2: // Circular
+                        obj.x += Math.cos(obj.angle) * obj.speedX;
+                        obj.y += Math.sin(obj.angle) * obj.speedY;
+                        obj.angle += 0.03;
+                        break;
+                }
+                
+                // Bounce off walls
+                if (obj.x <= 0 || obj.x + obj.width >= canvas.width) {
+                    obj.speedX *= -1;
+                }
+                
+                if (obj.y <= 0 || obj.y + obj.height >= canvas.height) {
+                    obj.speedY *= -1;
+                }
+            });
+            
+            particleSystem.update();
+        }
+        
+        // Draw game elements
+        function draw() {
+            drawBackground();
+            
+            // Draw question
+            const questionY = isMobile ? 50 : 60;
+            ctx.fillStyle = '#222255';
+            ctx.fillRect(0, 0, canvas.width, questionY + 50);
+            
+            drawPixelText("What is the capital of France?", 
+                canvas.width / 2, questionY, 
+                isMobile ? 24 : 32, 
+                '#ffffff');
+            
+            // Draw answer objects
+            answerObjects.forEach(obj => {
+                drawPixelButton(
+                    obj.x, obj.y, 
+                    obj.width, obj.height, 
+                    obj.text, 
+                    obj.color, 
+                    obj.hovered
+                );
+            });
+            
+            // Draw particles
+            particleSystem.draw(ctx);
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                const resultText = correctAnswerHit ? "CORRECT!" : "WRONG!";
+                const resultColor = correctAnswerHit ? "#44ff44" : "#ff4444";
+                drawPixelText(resultText, canvas.width / 2, canvas.height / 2, 
+                              isMobile ? 40 : 60, resultColor);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch input
+        function handlePointerDown(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let pointerX, pointerY;
+            
+            // Handle both mouse and touch
+            if (e.type === 'mousedown') {
+                pointerX = (e.clientX - rect.left) * scaleX;
+                pointerY = (e.clientY - rect.top) * scaleY;
+            } else { // touchstart
+                pointerX = (e.touches[0].clientX - rect.left) * scaleX;
+                pointerY = (e.touches[0].clientY - rect.top) * scaleY;
+            }
+            
+            // Check collision with answer objects
+            for (const obj of answerObjects) {
+                if (pointerX > obj.x && pointerX < obj.x + obj.width &&
+                    pointerY > obj.y && pointerY < obj.y + obj.height) {
+                    
+                    gameOver = true;
+                    correctAnswerHit = obj.correct;
+                    
+                    // Play sound and create particles
+                    playSound(obj.correct ? 'correct' : 'wrong');
+                    particleSystem.createParticles(obj.x + obj.width/2, obj.y + obj.height/2, 
+                                                 obj.color, obj.correct);
+                    
+                    // Show restart button after a short delay
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 1000);
+                    
+                    break;
+                }
+            }
+        }
+        
+        function handlePointerMove(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let pointerX, pointerY;
+            
+            // Handle both mouse and touch
+            if (e.type === 'mousemove') {
+                pointerX = (e.clientX - rect.left) * scaleX;
+                pointerY = (e.clientY - rect.top) * scaleY;
+            } else if (e.touches && e.touches.length > 0) { // touchmove
+                pointerX = (e.touches[0].clientX - rect.left) * scaleX;
+                pointerY = (e.touches[0].clientY - rect.top) * scaleY;
+            } else {
+                return;
+            }
+            
+            // Check hover state
+            let hoveredAny = false;
+            for (const obj of answerObjects) {
+                const prevHovered = obj.hovered;
+                obj.hovered = (
+                    pointerX > obj.x && pointerX < obj.x + obj.width &&
+                    pointerY > obj.y && pointerY < obj.y + obj.height
+                );
+                
+                // Play hover sound only when first hovering
+                if (!prevHovered && obj.hovered) {
+                    playSound('hover');
+                    hoveredAny = true;
+                }
+            }
+        }
+        
+        // Reset the game
+        function resetGame() {
+            gameOver = false;
+            correctAnswerHit = false;
+            restartBtn.style.display = 'none';
+            
+            // Reset answer objects
+            answerObjects.forEach(obj => {
+                obj.x = Math.random() * (canvas.width - obj.width);
+                obj.y = Math.random() * (canvas.height - obj.height);
+                obj.speedX = (Math.random() - 0.5) * 3;
+                obj.speedY = (Math.random() - 0.5) * 3;
+                obj.pattern = Math.floor(Math.random() * 3);
+                obj.angle = 0;
+                obj.hovered = false;
+            });
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handlePointerDown);
+        canvas.addEventListener('touchstart', handlePointerDown);
+        canvas.addEventListener('mousemove', handlePointerMove);
+        canvas.addEventListener('touchmove', handlePointerMove);
+        restartBtn.addEventListener('click', resetGame);
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Link Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            background-color: #0a0a2a;
+            max-width: 100%;
+            max-height: 100vh;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            background-color: #444;
+            color: white;
+            border: 3px solid #888;
+            padding: 5px 15px;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let isDrawing = false;
+        let startOption = null;
+        let currentMousePos = { x: 0, y: 0 };
+        let gameOver = false;
+        let correctAnswer = "Mars";
+        let particles = [];
+        
+        // Options and question
+        const question = {
+            text: "Which planet is known as the Red Planet?",
+            x: canvas.width / 2,
+            y: 100,
+            width: 280,
+            height: 80,
+            color: "#8844AA"
+        };
+        
+        const options = [
+            { text: "Earth", x: 150, y: 300, width: 120, height: 60, color: "#22AACC" },
+            { text: "Mars", x: 400, y: 400, width: 120, height: 60, color: "#CC4422" },
+            { text: "Venus", x: 600, y: 250, width: 120, height: 60, color: "#44AA22" },
+            { text: "Jupiter", x: 250, y: 500, width: 120, height: 60, color: "#BB8822" }
+        ];
+        
+        // For mobile layout
+        if (isMobile) {
+            question.x = canvas.width / 2;
+            question.y = 80;
+            question.width = 240;
+            
+            options[0].x = 90; 
+            options[0].y = 200;
+            
+            options[1].x = 220; 
+            options[1].y = 320;
+            
+            options[2].x = 90; 
+            options[2].y = 440;
+            
+            options[3].x = 220; 
+            options[3].y = 520;
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(500, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(700, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(100, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'click') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.05);
+            }
+        }
+        
+        // Create pixel particles
+        function createParticles(x, y, color, isSuccess) {
+            for (let i = 0; i < 20; i++) {
+                particles.push({
+                    x,
+                    y,
+                    size: isSuccess ? Math.random() * 6 + 3 : Math.random() * 4 + 2,
+                    speedX: (Math.random() - 0.5) * 5,
+                    speedY: (Math.random() - 0.5) * 5,
+                    color: color,
+                    life: isSuccess ? 40 : 20
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].speedX;
+                particles[i].y += particles[i].speedY;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x),
+                    Math.floor(p.y),
+                    Math.floor(p.size),
+                    Math.floor(p.size)
+                );
+            });
+        }
+        
+        // Draw pixelated rect
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+            
+            // Pixel border
+            ctx.fillStyle = "#000000";
+            for (let i = 0; i < width; i += 4) {
+                ctx.fillRect(Math.floor(x + i), Math.floor(y), 2, 2);
+                ctx.fillRect(Math.floor(x + i), Math.floor(y + height - 2), 2, 2);
+            }
+            
+            for (let i = 0; i < height; i += 4) {
+                ctx.fillRect(Math.floor(x), Math.floor(y + i), 2, 2);
+                ctx.fillRect(Math.floor(x + width - 2), Math.floor(y + i), 2, 2);
+            }
+        }
+        
+        // Draw pixelated line
+        function drawPixelLine(x1, y1, x2, y2, color) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const pixelGap = 6; // Gap between pixels for dotted effect
+            const steps = Math.floor(distance / pixelGap);
+            
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < steps; i++) {
+                const ratio = i / steps;
+                const x = Math.floor(x1 + dx * ratio);
+                const y = Math.floor(y1 + dy * ratio);
+                const size = 4;
+                
+                ctx.fillRect(x - size/2, y - size/2, size, size);
+            }
+        }
+        
+        // Draw question and options
+        function drawQuestion() {
+            // Draw question box with pixelated style
+            drawPixelRect(
+                question.x - question.width / 2,
+                question.y - question.height / 2,
+                question.width,
+                question.height,
+                question.color
+            );
+            
+            // Draw question text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? '16' : '18'}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Word wrap for question
+            const maxWidth = question.width - 20;
+            const words = question.text.split(' ');
+            let line = '';
+            let y = question.y - 10;
+            
+            for (let word of words) {
+                const testLine = line + word + ' ';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && line !== '') {
+                    ctx.fillText(line, question.x, y);
+                    line = word + ' ';
+                    y += 24;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, question.x, y);
+        }
+        
+        function drawOptions() {
+            options.forEach(option => {
+                drawPixelRect(
+                    option.x - option.width / 2,
+                    option.y - option.height / 2,
+                    option.width,
+                    option.height,
+                    option.color
+                );
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(option.text, option.x, option.y);
+            });
+        }
+        
+        // Game update function
+        function update() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background grid
+            ctx.fillStyle = '#0a0a2a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = '#1a1a4a';
+            ctx.lineWidth = 1;
+            const gridSize = 20;
+            
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            drawQuestion();
+            drawOptions();
+            
+            // Draw current line if drawing
+            if (isDrawing && startOption) {
+                drawPixelLine(
+                    startOption.x,
+                    startOption.y,
+                    currentMousePos.x,
+                    currentMousePos.y,
+                    startOption.color
+                );
+            }
+            
+            // Update and draw particles
+            updateParticles();
+            drawParticles();
+            
+            // If game is not over, continue animation
+            if (!gameOver) {
+                requestAnimationFrame(update);
+            }
+        }
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            particles = [];
+            restartBtn.style.display = 'none';
+            update();
+        }
+        
+        // Check if mouse position is inside an option
+        function checkOptionCollision(x, y, option) {
+            return x > option.x - option.width / 2 &&
+                   x < option.x + option.width / 2 &&
+                   y > option.y - option.height / 2 &&
+                   y < option.y + option.height / 2;
+        }
+        
+        // Handle touch/mouse events
+        function handleStart(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            // Only respond if game is active
+            if (!gameOver) {
+                // Check if starting from an option
+                for (const option of options) {
+                    if (checkOptionCollision(x, y, option)) {
+                        isDrawing = true;
+                        startOption = option;
+                        currentMousePos = { x, y };
+                        playSound('click');
+                        break;
+                    }
+                }
+            }
+        }
+        
+        function handleMove(e) {
+            e.preventDefault();
+            if (isDrawing) {
+                const rect = canvas.getBoundingClientRect();
+                currentMousePos.x = (e.clientX || e.touches[0].clientX) - rect.left;
+                currentMousePos.y = (e.clientY || e.touches[0].clientY) - rect.top;
+            }
+        }
+        
+        function handleEnd(e) {
+            e.preventDefault();
+            if (isDrawing && startOption) {
+                const rect = canvas.getBoundingClientRect();
+                const endX = (e.clientX || (e.changedTouches && e.changedTouches[0].clientX) || currentMousePos.x) - rect.left;
+                const endY = (e.clientY || (e.changedTouches && e.changedTouches[0].clientY) || currentMousePos.y) - rect.top;
+                
+                // Check if ending on the question
+                if (checkOptionCollision(endX, endY, question)) {
+                    if (startOption.text === correctAnswer) {
+                        // Correct answer
+                        playSound('correct');
+                        createParticles(question.x, question.y, startOption.color, true);
+                        gameOver = true;
+                        setTimeout(() => {
+                            restartBtn.style.display = 'block';
+                        }, 1000);
+                    } else {
+                        // Wrong answer
+                        playSound('wrong');
+                        createParticles(endX, endY, startOption.color, false);
+                    }
+                } else {
+                    // Didn't connect to question
+                    createParticles(endX, endY, '#444444', false);
+                }
+                
+                isDrawing = false;
+                startOption = null;
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('mouseleave', handleEnd);
+        
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('touchend', handleEnd);
+        
+        restartBtn.addEventListener('click', init);
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

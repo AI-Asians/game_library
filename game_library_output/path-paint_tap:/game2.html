@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Path-Paint Tap</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 5px 15px;
+            background-color: #333;
+            color: #fff;
+            border: 2px solid #555;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: '#0f380f',       // Dark green background
+            path: '#8bac0f',     // Light green path
+            filled: '#9bbc0f',   // Filled path
+            text: '#e0f8d0',     // Light green text
+            player: '#ffff00',   // Yellow player
+            trueEnd: '#306230',  // Dark green true end
+            falseEnd: '#aa0000', // Red false end
+            correct: '#00ff00',  // Bright green
+            incorrect: '#ff0000' // Bright red
+        };
+        
+        // Path points
+        let pathSegments = [];
+        let trueEndpoint = null;
+        let falseEndpoint = null;
+        let playerPos = null;
+        const segmentWidth = 16;
+        const segmentSpacing = 4;
+        
+        // Game state
+        let filledSegments = [];
+        let gameOver = false;
+        let animating = false;
+        let hintTimer = 0;
+        
+        // Audio context
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        }
+        
+        function playClickSound() {
+            playSound(440, 0.08);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1);
+            setTimeout(() => playSound(659.25, 0.1), 100);
+            setTimeout(() => playSound(783.99, 0.2), 200);
+        }
+        
+        function playIncorrectSound() {
+            playSound(330, 0.1);
+            setTimeout(() => playSound(277.18, 0.2), 100);
+        }
+        
+        function setupPath() {
+            pathSegments = [];
+            filledSegments = [];
+            
+            // Create starting point
+            const startX = canvas.width / 4;
+            const startY = canvas.height - 100;
+            playerPos = {x: startX, y: startY};
+            
+            // Generate main path
+            let currentX = startX;
+            let currentY = startY;
+            
+            // Generate vertical path upward
+            for (let i = 0; i < 9; i++) {
+                currentY -= (segmentWidth + segmentSpacing);
+                pathSegments.push({x: currentX, y: currentY});
+            }
+            
+            // Fork in the path
+            const forkY = currentY;
+            
+            // Left path (TRUE)
+            currentX = startX;
+            currentY = forkY;
+            for (let i = 0; i < 6; i++) {
+                currentX -= (segmentWidth + segmentSpacing);
+                currentY -= (segmentWidth + segmentSpacing) / 2;
+                pathSegments.push({x: currentX, y: currentY});
+            }
+            trueEndpoint = {x: currentX, y: currentY};
+            
+            // Right path (FALSE)
+            currentX = startX;
+            currentY = forkY;
+            for (let i = 0; i < 6; i++) {
+                currentX += (segmentWidth + segmentSpacing);
+                currentY -= (segmentWidth + segmentSpacing) / 2;
+                pathSegments.push({x: currentX, y: currentY});
+            }
+            falseEndpoint = {x: currentX, y: currentY};
+            
+            // Add first segment to filled segments
+            filledSegments.push({x: startX, y: startY});
+        }
+        
+        function drawPixelatedCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            
+            for (let dx = -radius; dx <= radius; dx++) {
+                for (let dy = -radius; dy <= radius; dy++) {
+                    if (dx*dx + dy*dy <= radius*radius) {
+                        ctx.fillRect(Math.floor(x + dx), Math.floor(y + dy), 1, 1);
+                    }
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw path
+            pathSegments.forEach(segment => {
+                ctx.fillStyle = COLORS.path;
+                ctx.fillRect(segment.x - segmentWidth/2, segment.y - segmentWidth/2, segmentWidth, segmentWidth);
+            });
+            
+            // Draw filled segments
+            filledSegments.forEach(segment => {
+                ctx.fillStyle = COLORS.filled;
+                ctx.fillRect(segment.x - segmentWidth/2, segment.y - segmentWidth/2, segmentWidth, segmentWidth);
+            });
+            
+            // Draw endpoints
+            ctx.fillStyle = COLORS.trueEnd;
+            ctx.fillRect(trueEndpoint.x - segmentWidth/2, trueEndpoint.y - segmentWidth/2, segmentWidth, segmentWidth);
+            
+            ctx.fillStyle = COLORS.falseEnd;
+            ctx.fillRect(falseEndpoint.x - segmentWidth/2, falseEndpoint.y - segmentWidth/2, segmentWidth, segmentWidth);
+            
+            // Draw player
+            drawPixelatedCircle(playerPos.x, playerPos.y, 6, COLORS.player);
+            
+            // Draw endpoint labels
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('TRUE', trueEndpoint.x, trueEndpoint.y - 15);
+            ctx.fillText('FALSE', falseEndpoint.x, falseEndpoint.y - 15);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Water boils at 100 degrees Celsius at sea level.', canvas.width / 2, 40);
+            
+            // Draw instruction
+            if (!gameOver && filledSegments.length === 1) {
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '14px sans-serif';
+                ctx.fillText('Tap to paint the path to your answer', canvas.width / 2, canvas.height - 40);
+            }
+            
+            // Hint animation
+            if (!gameOver && filledSegments.length > 0 && filledSegments.length < 3) {
+                hintTimer++;
+                if (hintTimer > 30) {
+                    let nextSegment = pathSegments[0];
+                    ctx.strokeStyle = `rgba(255,255,255,${0.3 + 0.2 * Math.sin(hintTimer / 10)})`;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(playerPos.x, playerPos.y);
+                    ctx.lineTo(nextSegment.x, nextSegment.y);
+                    ctx.stroke();
+                }
+                if (hintTimer > 90) hintTimer = 0;
+            }
+        }
+        
+        function getNearestSegment(x, y) {
+            let minDist = Infinity;
+            let nearest = null;
+            
+            pathSegments.forEach(segment => {
+                const dist = Math.sqrt(Math.pow(segment.x - x, 2) + Math.pow(segment.y - y, 2));
+                if (dist < minDist && !filledSegments.some(s => s.x === segment.x && s.y === segment.y)) {
+                    minDist = dist;
+                    nearest = segment;
+                }
+            });
+            
+            return nearest;
+        }
+        
+        function isNextToFilled(segment) {
+            for (let filled of filledSegments) {
+                const dist = Math.sqrt(Math.pow(segment.x - filled.x, 2) + Math.pow(segment.y - filled.y, 2));
+                if (dist <= segmentWidth * 1.5) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        function handleClick(x, y) {
+            if (gameOver || animating) return;
+            
+            const segment = getNearestSegment(x, y);
+            
+            if (segment && isNextToFilled(segment)) {
+                // Fill segment
+                filledSegments.push({...segment});
+                playClickSound();
+                
+                // Move player
+                animating = true;
+                const startX = playerPos.x;
+                const startY = playerPos.y;
+                const targetX = segment.x;
+                const targetY = segment.y;
+                const frameCount = 10;
+                let currentFrame = 0;
+                
+                function animatePlayer() {
+                    currentFrame++;
+                    playerPos.x = startX + (targetX - startX) * (currentFrame / frameCount);
+                    playerPos.y = startY + (targetY - startY) * (currentFrame / frameCount);
+                    
+                    if (currentFrame >= frameCount) {
+                        animating = false;
+                        // Check if player reached an endpoint
+                        if (Math.abs(playerPos.x - trueEndpoint.x) < 5 && Math.abs(playerPos.y - trueEndpoint.y) < 5) {
+                            endGame(true);
+                        } else if (Math.abs(playerPos.x - falseEndpoint.x) < 5 && Math.abs(playerPos.y - falseEndpoint.y) < 5) {
+                            endGame(false);
+                        }
+                        return;
+                    }
+                    
+                    requestAnimationFrame(animatePlayer);
+                }
+                
+                animatePlayer();
+            }
+        }
+        
+        function endGame(correct) {
+            gameOver = true;
+            
+            if (correct) {
+                playCorrectSound();
+            } else {
+                playIncorrectSound();
+            }
+            
+            // Draw result
+            ctx.fillStyle = correct ? COLORS.correct : COLORS.incorrect;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(correct ? 'CORRECT!' : 'INCORRECT!', canvas.width / 2, canvas.height / 2);
+            
+            // Show restart button
+            restartBtn.style.display = 'block';
+        }
+        
+        function init() {
+            setupPath();
+            gameOver = false;
+            animating = false;
+            hintTimer = 0;
+            restartBtn.style.display = 'none';
+            
+            // Loop
+            function gameLoop() {
+                draw();
+                if (!gameOver) {
+                    requestAnimationFrame(gameLoop);
+                }
+            }
+            
+            gameLoop();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            handleClick(x, y);
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const x = e.touches[0].clientX - rect.left;
+            const y = e.touches[0].clientY - rect.top;
+            handleClick(x, y);
+        });
+        
+        restartBtn.addEventListener('click', init);
+        
+        // Start game
+        init();
+    </script>
+</body>
+</html>

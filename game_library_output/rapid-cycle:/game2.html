@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Slot Machine</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            touch-action: manipulation;
+        }
+        canvas {
+            border: 4px solid #444;
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            display: none;
+            position: absolute;
+            padding: 10px 20px;
+            background-color: #222;
+            color: #fff;
+            border: 3px solid #555;
+            cursor: pointer;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let isCorrect = false;
+        let slotY = 0;
+        let slotSpeed = 15;
+        let initialSpeed = 15;
+        let slotDecelerating = false;
+        let slotPosition = 0;
+        let isSpinning = true;
+        
+        // Planet options (Mars is the correct answer)
+        const planets = ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
+        const planetColors = {
+            'Mercury': '#A9A9A9',
+            'Venus': '#FFDC73',
+            'Earth': '#4169E1',
+            'Mars': '#FF4500',
+            'Jupiter': '#FFA07A',
+            'Saturn': '#F4A460',
+            'Uranus': '#ADD8E6',
+            'Neptune': '#4B0082'
+        };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize audio
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Sound effects
+        function playTick() {
+            if (!audioCtx) initAudio();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.frequency.value = 220;
+            oscillator.type = 'square';
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.05);
+        }
+        
+        function playResult(correct) {
+            if (!audioCtx) initAudio();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            gainNode.gain.value = 0.2;
+            
+            if (correct) {
+                oscillator.frequency.value = 523.25; // C5
+                setTimeout(() => {
+                    oscillator.frequency.value = 659.25; // E5
+                    setTimeout(() => {
+                        oscillator.frequency.value = 783.99; // G5
+                    }, 100);
+                }, 100);
+            } else {
+                oscillator.frequency.value = 392.00; // G4
+                setTimeout(() => {
+                    oscillator.frequency.value = 369.99; // F#4
+                    setTimeout(() => {
+                        oscillator.frequency.value = 349.23; // F4
+                    }, 100);
+                }, 100);
+            }
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.5);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPlanet(x, y, name) {
+            const color = planetColors[name];
+            const size = 40;
+            
+            // Draw planet
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Add pixel-like texture
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 8; j++) {
+                    if ((i + j) % 2 === 0) {
+                        ctx.fillRect(x - size + i*10, y - size + j*10, 8, 8);
+                    }
+                }
+            }
+            
+            // Add planet-specific features
+            if (name === 'Saturn') {
+                ctx.strokeStyle = '#DEB887';
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.ellipse(x, y, size * 1.5, size * 0.5, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            if (name === 'Mars') {
+                // Red surface details
+                ctx.fillStyle = '#8B0000';
+                ctx.beginPath();
+                ctx.arc(x + 10, y - 5, size/4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x - 15, y + 10, size/5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        function drawSlot() {
+            const slotWidth = canvas.width * 0.8;
+            const slotHeight = 100;
+            const slotX = (canvas.width - slotWidth) / 2;
+            const slotMiddleY = canvas.height / 2;
+            
+            // Slot machine background
+            drawPixelRect(slotX - 20, slotMiddleY - slotHeight * 1.5, slotWidth + 40, slotHeight * 3, '#333');
+            drawPixelRect(slotX - 10, slotMiddleY - slotHeight * 1.5 + 10, slotWidth + 20, slotHeight * 3 - 20, '#222');
+            
+            // Slot window
+            drawPixelRect(slotX, slotMiddleY - slotHeight/2, slotWidth, slotHeight, '#111');
+            
+            // Decorative lights (flashing)
+            const lightColors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00'];
+            for (let i = 0; i < 10; i++) {
+                const color = lightColors[Math.floor(Date.now()/200 + i) % lightColors.length];
+                drawPixelRect(slotX - 15 + (slotWidth + 30) * (i/9), slotMiddleY - slotHeight * 1.5 - 5, 10, 10, color);
+                drawPixelRect(slotX - 15 + (slotWidth + 30) * (i/9), slotMiddleY + slotHeight * 1.5 - 5, 10, 10, color);
+            }
+            
+            // Draw indicator arrow
+            ctx.fillStyle = '#FF0000';
+            const arrowX = slotX + slotWidth / 2;
+            const arrowY = slotMiddleY - slotHeight/2 - 10;
+            ctx.beginPath();
+            ctx.moveTo(arrowX - 15, arrowY - 15);
+            ctx.lineTo(arrowX + 15, arrowY - 15);
+            ctx.lineTo(arrowX, arrowY);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Draw sweet spot
+            ctx.strokeStyle = gameOver ? (isCorrect ? '#00FF00' : '#FF0000') : '#FFFF00';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.rect(slotX, slotMiddleY - slotHeight/2, slotWidth, slotHeight);
+            ctx.stroke();
+            
+            // Draw scrolling planets
+            const planetHeight = slotHeight;
+            const totalHeight = planets.length * planetHeight;
+            
+            for (let i = 0; i < planets.length + 1; i++) {
+                const y = (slotMiddleY - slotHeight/2 + slotY + i * planetHeight) % totalHeight;
+                if (y < slotMiddleY - slotHeight/2 + slotHeight && y + planetHeight > slotMiddleY - slotHeight/2) {
+                    const index = (planets.length - Math.floor((slotY + i * planetHeight) / planetHeight) % planets.length) % planets.length;
+                    const planetName = planets[index];
+                    
+                    // Planet background
+                    drawPixelRect(slotX, y, slotWidth, planetHeight, '#000');
+                    
+                    // Planet icon
+                    drawPlanet(slotX + 60, y + planetHeight/2, planetName);
+                    
+                    // Planet name
+                    ctx.fillStyle = planetName === 'Mars' ? '#FF4500' : '#FFF';
+                    ctx.font = '24px sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(planetName, slotX + 110, y + planetHeight/2);
+                }
+            }
+            
+            // Add visible slot boundaries
+            drawPixelRect(slotX, slotMiddleY - slotHeight/2, slotWidth, 4, '#444');
+            drawPixelRect(slotX, slotMiddleY + slotHeight/2 - 4, slotWidth, 4, '#444');
+        }
+        
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = '#FFF';
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, canvas.height * 0.2);
+            
+            // Draw slot machine
+            drawSlot();
+            
+            // Draw instructions
+            if (!gameOver && !slotDecelerating) {
+                ctx.fillStyle = '#FFF';
+                ctx.font = '24px sans-serif';
+                ctx.fillText('CLICK/TAP to stop!', canvas.width / 2, canvas.height * 0.8);
+            }
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = isCorrect ? '#00FF00' : '#FF0000';
+                ctx.font = '32px sans-serif';
+                ctx.fillText(isCorrect ? 'CORRECT!' : 'WRONG!', canvas.width / 2, canvas.height * 0.8);
+            }
+        }
+        
+        // Game update function
+        function update() {
+            if (!gameOver && isSpinning) {
+                // Update slot position
+                slotY += slotSpeed;
+                
+                if (slotDecelerating) {
+                    slotSpeed *= 0.95;
+                    if (slotSpeed < 0.5) {
+                        slotSpeed = 0;
+                        isSpinning = false;
+                        
+                        // Check if player landed on Mars
+                        const visiblePlanetIndex = Math.floor(slotY / 100) % planets.length;
+                        const visiblePlanet = planets[(planets.length - visiblePlanetIndex) % planets.length];
+                        isCorrect = (visiblePlanet === 'Mars');
+                        gameOver = true;
+                        
+                        playResult(isCorrect);
+                        restartBtn.style.display = 'block';
+                    }
+                } else {
+                    // Slight randomization to make it more challenging
+                    slotSpeed = initialSpeed * (0.95 + Math.random() * 0.1);
+                    
+                    // Gradually slow down slightly
+                    initialSpeed = Math.max(10, initialSpeed * 0.995);
+                }
+                
+                // Ensure slot position wraps correctly
+                const totalHeight = planets.length * 100;
+                if (slotY >= totalHeight) {
+                    slotY %= totalHeight;
+                }
+                
+                // Play tick sound occasionally
+                if (Math.random() < 0.1) {
+                    playTick();
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        gameLoop();
+        
+        // Event listeners
+        function handleClick() {
+            if (!gameOver && !slotDecelerating && isSpinning) {
+                slotDecelerating = true;
+            } else if (gameOver) {
+                restartGame();
+            }
+        }
+        
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            handleClick();
+        });
+        
+        restartBtn.addEventListener('click', restartGame);
+        
+        function restartGame() {
+            gameOver = false;
+            isCorrect = false;
+            slotSpeed = 15;
+            initialSpeed = 15;
+            slotDecelerating = false;
+            isSpinning = true;
+            restartBtn.style.display = 'none';
+        }
+    </script>
+</body>
+</html>

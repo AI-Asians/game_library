@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rhythm Capital</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #fff;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px 10px;
+            background-color: #f00;
+            color: #fff;
+            border: 3px solid #fff;
+            font-family: sans-serif;
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00'];
+        const answers = ['Paris', 'London', 'Berlin', 'Rome'];
+        const correctAnswerIndex = 0; // Paris
+        
+        // Note properties
+        const noteWidth = isMobile ? 60 : 100;
+        const noteHeight = isMobile ? 60 : 100;
+        const noteSpeed = isMobile ? 3 : 5;
+        const targetX = canvas.width / 2 - noteWidth / 2;
+        const targetY = canvas.height - 150;
+        const targetWidth = noteWidth + 20;
+        const targetHeight = noteHeight + 20;
+        const noteSpacing = canvas.width / 4;
+        
+        // Game state
+        let notes = [];
+        let gameOver = false;
+        let flashTarget = false;
+        let flashTimer = 0;
+        let beatTimer = 0;
+        let beatInterval = 60;
+        let hitEffects = [];
+        
+        // Restart button
+        const restartBtn = document.getElementById('restart');
+        restartBtn.addEventListener('click', () => {
+            location.reload();
+        });
+        
+        // Sound functions
+        function playNote(frequency, duration) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = 0.2;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration);
+            } catch (error) {
+                console.error("Audio error:", error);
+            }
+        }
+        
+        function playCorrect() {
+            playNote(523.25, 100); // C5
+            setTimeout(() => playNote(659.25, 200), 100); // E5
+            setTimeout(() => playNote(783.99, 300), 300); // G5
+        }
+        
+        function playWrong() {
+            playNote(196.00, 300); // G3
+            setTimeout(() => playNote(185.00, 300), 300); // F#3
+        }
+        
+        function playMetronome() {
+            playNote(440, 50); // A4
+        }
+        
+        function playHit() {
+            playNote(587.33, 50); // D5
+        }
+        
+        // Initialize notes
+        function initializeNotes() {
+            notes = [];
+            for (let i = 0; i < answers.length; i++) {
+                notes.push({
+                    x: -noteWidth - i * 250,
+                    y: targetY,
+                    color: colors[i],
+                    answer: answers[i],
+                    isCorrect: i === correctAnswerIndex
+                });
+            }
+        }
+        
+        // Create hit effect
+        function createHitEffect(x, y, color, isCorrect) {
+            hitEffects.push({
+                x,
+                y,
+                color,
+                radius: 10,
+                maxRadius: isCorrect ? 50 : 30,
+                alpha: 1,
+                isCorrect
+            });
+        }
+        
+        // Draw functions
+        function drawNote(note) {
+            ctx.fillStyle = note.color;
+            ctx.fillRect(note.x, note.y, noteWidth, noteHeight);
+            
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(note.x, note.y, noteWidth, noteHeight);
+            
+            // Draw text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(note.answer, note.x + noteWidth / 2, note.y + noteHeight / 2);
+        }
+        
+        function drawTarget() {
+            ctx.fillStyle = flashTarget ? '#FFFFFF' : '#444444';
+            ctx.fillRect(targetX - 10, targetY - 10, targetWidth, targetHeight);
+            
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(targetX - 10, targetY - 10, targetWidth, targetHeight);
+        }
+        
+        function drawHitEffects() {
+            hitEffects.forEach(effect => {
+                ctx.globalAlpha = effect.alpha;
+                ctx.beginPath();
+                ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                ctx.fillStyle = effect.color;
+                ctx.fill();
+                
+                // Add pixelation effect
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.stroke();
+                
+                ctx.globalAlpha = 1;
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 24 : 28}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 50);
+        }
+        
+        function drawBeatIndicator() {
+            const beatSize = beatTimer < 10 ? 20 : 15;
+            ctx.fillStyle = beatTimer < 10 ? '#FFFFFF' : '#888888';
+            ctx.beginPath();
+            ctx.arc(canvas.width - 30, 30, beatSize, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Game logic
+        function update() {
+            if (gameOver) return;
+            
+            // Update beat timer
+            beatTimer++;
+            if (beatTimer >= beatInterval) {
+                beatTimer = 0;
+                playMetronome();
+            }
+            
+            // Update notes
+            notes.forEach(note => {
+                note.x += noteSpeed;
+            });
+            
+            // Check for hits in target zone
+            notes.forEach(note => {
+                const noteCenter = note.x + noteWidth / 2;
+                const targetCenter = targetX + targetWidth / 2;
+                
+                // If note is in target zone
+                if (Math.abs(noteCenter - targetCenter) < 20 && !gameOver) {
+                    flashTarget = true;
+                    flashTimer = 10;
+                }
+            });
+            
+            // Update flash effect
+            if (flashTimer > 0) {
+                flashTimer--;
+                if (flashTimer === 0) {
+                    flashTarget = false;
+                }
+            }
+            
+            // Update hit effects
+            for (let i = hitEffects.length - 1; i >= 0; i--) {
+                const effect = hitEffects[i];
+                effect.radius += effect.isCorrect ? 2 : 1;
+                effect.alpha -= 0.05;
+                
+                if (effect.radius >= effect.maxRadius || effect.alpha <= 0) {
+                    hitEffects.splice(i, 1);
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw target
+            drawTarget();
+            
+            // Draw notes
+            notes.forEach(note => {
+                drawNote(note);
+            });
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw beat indicator
+            drawBeatIndicator();
+            
+            // Draw hit effects
+            drawHitEffects();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle user input
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Check if click is in target zone
+            if (clickY >= targetY && clickY <= targetY + noteHeight) {
+                // Find which note is in the target zone
+                let hitNote = null;
+                
+                notes.forEach(note => {
+                    const noteCenter = note.x + noteWidth / 2;
+                    const targetCenter = targetX + targetWidth / 2;
+                    
+                    if (Math.abs(noteCenter - targetCenter) < 40) {
+                        hitNote = note;
+                    }
+                });
+                
+                if (hitNote) {
+                    playHit();
+                    createHitEffect(hitNote.x + noteWidth / 2, hitNote.y + noteHeight / 2, hitNote.color, hitNote.isCorrect);
+                    
+                    if (hitNote.isCorrect) {
+                        playCorrect();
+                        gameOver = true;
+                        restartBtn.style.display = 'block';
+                    } else {
+                        playWrong();
+                        gameOver = true;
+                        restartBtn.style.display = 'block';
+                    }
+                }
+            }
+        });
+        
+        // Start game
+        initializeNotes();
+        gameLoop();
+    </script>
+</body>
+</html>

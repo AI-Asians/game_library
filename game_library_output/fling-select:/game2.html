@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #333;
+            color: #fff;
+            border: 2px solid #666;
+            display: none;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas dimensions
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - 8-bit palette
+        const COLORS = {
+            BLACK: '#000000',
+            DARK_GRAY: '#333333',
+            GRAY: '#777777',
+            WHITE: '#FFFFFF',
+            RED: '#D62411',
+            DARK_RED: '#8B0000',
+            BLUE: '#0088FF',
+            DARK_BLUE: '#0044AA',
+            GREEN: '#00CC44',
+            DARK_GREEN: '#008833',
+            YELLOW: '#FFDD00',
+            ORANGE: '#FF7700',
+            PURPLE: '#8822CC',
+            BROWN: '#663311'
+        };
+        
+        // Game state
+        let gameState = {
+            question: "Which planet is known as the Red Planet?",
+            options: [
+                { text: "Venus", isCorrect: false, x: canvas.width * 0.25, y: canvas.height * 0.3, width: 120, height: 80, color: COLORS.YELLOW },
+                { text: "Mars", isCorrect: true, x: canvas.width * 0.75, y: canvas.height * 0.3, width: 120, height: 80, color: COLORS.RED },
+                { text: "Jupiter", isCorrect: false, x: canvas.width * 0.25, y: canvas.height * 0.6, width: 120, height: 80, color: COLORS.ORANGE },
+                { text: "Mercury", isCorrect: false, x: canvas.width * 0.75, y: canvas.height * 0.6, width: 120, height: 80, color: COLORS.BLUE }
+            ],
+            slingshot: {
+                x: canvas.width / 2,
+                y: canvas.height - 100,
+                radius: 15
+            },
+            projectiles: [],
+            maxProjectiles: 3,
+            usedProjectiles: 0,
+            dragging: false,
+            dragStart: { x: 0, y: 0 },
+            dragCurrent: { x: 0, y: 0 },
+            gameOver: false,
+            correct: null
+        };
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'shoot':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(110, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'hit':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(110, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+            }
+        }
+        
+        // Draw a pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 2;
+            ctx.fillStyle = color;
+            
+            for (let i = -radius; i <= radius; i += pixelSize) {
+                for (let j = -radius; j <= radius; j += pixelSize) {
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillRect(
+                            Math.floor(x + i), 
+                            Math.floor(y + j), 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw a pixelated box
+        function drawPixelatedBox(x, y, width, height, fillColor, borderColor) {
+            // Fill
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x, y, width, height);
+            
+            // Border
+            ctx.fillStyle = borderColor;
+            const borderWidth = 4;
+            
+            // Top border
+            ctx.fillRect(x, y, width, borderWidth);
+            // Bottom border
+            ctx.fillRect(x, y + height - borderWidth, width, borderWidth);
+            // Left border
+            ctx.fillRect(x, y, borderWidth, height);
+            // Right border
+            ctx.fillRect(x + width - borderWidth, y, borderWidth, height);
+            
+            // Pixelated corners
+            ctx.fillRect(x, y, borderWidth+2, borderWidth+2);
+            ctx.fillRect(x + width - borderWidth - 2, y, borderWidth+2, borderWidth+2);
+            ctx.fillRect(x, y + height - borderWidth - 2, borderWidth+2, borderWidth+2);
+            ctx.fillRect(x + width - borderWidth - 2, y + height - borderWidth - 2, borderWidth+2, borderWidth+2);
+        }
+        
+        // Draw slingshot
+        function drawSlingshot() {
+            const s = gameState.slingshot;
+            
+            // Base
+            ctx.fillStyle = COLORS.BROWN;
+            ctx.fillRect(s.x - 20, s.y - 10, 40, 30);
+            
+            // Top part
+            ctx.fillStyle = COLORS.DARK_GRAY;
+            drawPixelatedCircle(s.x, s.y - 10, 15, COLORS.DARK_GRAY);
+            
+            // If dragging, draw the pull back visualization
+            if (gameState.dragging) {
+                // Draw elastic band
+                ctx.strokeStyle = COLORS.GRAY;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(s.x - 15, s.y - 15);
+                ctx.lineTo(gameState.dragCurrent.x, gameState.dragCurrent.y);
+                ctx.lineTo(s.x + 15, s.y - 15);
+                ctx.stroke();
+                
+                // Draw trajectory guide
+                const dx = s.x - gameState.dragCurrent.x;
+                const dy = s.y - gameState.dragCurrent.y;
+                const power = Math.min(Math.sqrt(dx*dx + dy*dy) * 0.15, 15);
+                
+                if (power > 2) {
+                    ctx.strokeStyle = COLORS.WHITE;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    
+                    let projX = s.x;
+                    let projY = s.y - 20;
+                    let velX = (s.x - gameState.dragCurrent.x) * 0.1;
+                    let velY = (s.y - gameState.dragCurrent.y) * 0.1;
+                    
+                    for (let t = 0; t < 10; t++) {
+                        projX += velX;
+                        projY += velY;
+                        velY += 0.4; // Gravity
+                        
+                        ctx.lineTo(projX, projY);
+                        
+                        if (projY > canvas.height) break;
+                    }
+                    
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+                
+                // Draw the projectile at the drag position
+                drawPlanet(gameState.dragCurrent.x, gameState.dragCurrent.y, 12);
+            } else if (gameState.usedProjectiles < gameState.maxProjectiles) {
+                // Draw the next projectile ready on the slingshot
+                drawPlanet(s.x, s.y - 30, 12);
+            }
+        }
+        
+        // Draw a simple pixelated planet projectile
+        function drawPlanet(x, y, radius) {
+            // Main planet body
+            drawPixelatedCircle(x, y, radius, COLORS.RED);
+            
+            // Craters or surface details
+            drawPixelatedCircle(x - radius/2, y - radius/3, radius/4, COLORS.DARK_RED);
+            drawPixelatedCircle(x + radius/3, y + radius/2, radius/5, COLORS.DARK_RED);
+        }
+        
+        // Update projectile positions
+        function updateProjectiles() {
+            for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+                const p = gameState.projectiles[i];
+                
+                // Apply velocity
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Apply gravity
+                p.vy += 0.4;
+                
+                // Check if out of bounds
+                if (p.y > canvas.height + 50 || p.x < -50 || p.x > canvas.width + 50) {
+                    gameState.projectiles.splice(i, 1);
+                    continue;
+                }
+                
+                // Check for collision with answer boxes
+                for (const option of gameState.options) {
+                    if (
+                        p.x > option.x - option.width/2 && 
+                        p.x < option.x + option.width/2 && 
+                        p.y > option.y - option.height/2 && 
+                        p.y < option.y + option.height/2
+                    ) {
+                        playSound('hit');
+                        gameState.correct = option.isCorrect;
+                        gameState.gameOver = true;
+                        
+                        if (option.isCorrect) {
+                            playSound('correct');
+                        } else {
+                            playSound('wrong');
+                        }
+                        
+                        // Remove the projectile
+                        gameState.projectiles.splice(i, 1);
+                        
+                        // Show restart button
+                        restartBtn.style.display = 'block';
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.BLACK;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw starry background
+            ctx.fillStyle = COLORS.WHITE;
+            for (let i = 0; i < 100; i++) {
+                const x = Math.floor(Math.random() * canvas.width);
+                const y = Math.floor(Math.random() * canvas.height);
+                const size = Math.random() < 0.3 ? 2 : 1;
+                ctx.fillRect(x, y, size, size);
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = `${isMobile ? 18 : 24}px Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 50);
+            
+            // Draw answer options
+            gameState.options.forEach(option => {
+                // Highlight correct/incorrect answer if game is over
+                let borderColor = COLORS.WHITE;
+                
+                if (gameState.gameOver) {
+                    if (option.isCorrect) {
+                        borderColor = COLORS.GREEN;
+                    } else if (!option.isCorrect && gameState.correct === false) {
+                        borderColor = COLORS.RED;
+                    }
+                }
+                
+                drawPixelatedBox(
+                    option.x - option.width/2, 
+                    option.y - option.height/2, 
+                    option.width, 
+                    option.height, 
+                    option.color,
+                    borderColor
+                );
+                
+                // Draw option text
+                ctx.fillStyle = COLORS.WHITE;
+                ctx.font = `${isMobile ? 16 : 20}px Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, option.x, option.y + 5);
+            });
+            
+            // Draw slingshot
+            drawSlingshot();
+            
+            // Draw projectiles
+            gameState.projectiles.forEach(p => {
+                drawPlanet(p.x, p.y, 12);
+            });
+            
+            // Draw projectile counter
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = '16px Arial, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Projectiles left: ${gameState.maxProjectiles - gameState.usedProjectiles}`, 20, canvas.height - 20);
+            
+            // Draw game over message
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.correct ? COLORS.GREEN : COLORS.RED;
+                ctx.font = '24px Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.correct ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    canvas.height - 60
+                );
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            if (!gameState.gameOver) {
+                updateProjectiles();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch events
+        function getInputPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            return { x, y };
+        }
+        
+        function startDrag(e) {
+            if (gameState.gameOver || gameState.usedProjectiles >= gameState.maxProjectiles) return;
+            
+            const pos = getInputPos(e);
+            const s = gameState.slingshot;
+            
+            // Check if click is near slingshot
+            const dx = pos.x - s.x;
+            const dy = pos.y - s.y;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            
+            if (distance < 50) {
+                gameState.dragging = true;
+                gameState.dragStart = { x: s.x, y: s.y };
+                gameState.dragCurrent = { x: pos.x, y: pos.y };
+            }
+        }
+        
+        function updateDrag(e) {
+            if (!gameState.dragging) return;
+            
+            e.preventDefault();
+            gameState.dragCurrent = getInputPos(e);
+        }
+        
+        function endDrag() {
+            if (!gameState.dragging) return;
+            
+            const s = gameState.slingshot;
+            
+            // Calculate velocity based on drag distance
+            const dx = s.x - gameState.dragCurrent.x;
+            const dy = s.y - gameState.dragCurrent.y;
+            const power = Math.min(Math.sqrt(dx*dx + dy*dy) * 0.15, 15);
+            
+            // Only shoot if pulled back enough
+            if (power > 2) {
+                gameState.projectiles.push({
+                    x: s.x,
+                    y: s.y - 30,
+                    vx: dx * 0.1,
+                    vy: dy * 0.1
+                });
+                
+                gameState.usedProjectiles++;
+                playSound('shoot');
+            }
+            
+            gameState.dragging = false;
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', startDrag);
+        canvas.addEventListener('touchstart', startDrag);
+        
+        window.addEventListener('mousemove', updateDrag);
+        window.addEventListener('touchmove', updateDrag, { passive: false });
+        
+        window.addEventListener('mouseup', endDrag);
+        window.addEventListener('touchend', endDrag);
+        
+        // Restart button
+        restartBtn.addEventListener('click', () => {
+            gameState.projectiles = [];
+            gameState.usedProjectiles = 0;
+            gameState.gameOver = false;
+            gameState.correct = null;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

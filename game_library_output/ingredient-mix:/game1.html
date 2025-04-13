@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ingredient-Mix Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        const ingredients = [
+            { name: "Paris", x: 100, y: 400, width: 60, height: 60, color: "#FF5555", dragging: false, inCauldron: false },
+            { name: "Lyon", x: 200, y: 400, width: 60, height: 60, color: "#55FF55", dragging: false, inCauldron: false },
+            { name: "Nice", x: 300, y: 400, width: 60, height: 60, color: "#5555FF", dragging: false, inCauldron: false },
+            { name: "Marseille", x: 400, y: 400, width: 60, height: 60, color: "#FFFF55", dragging: false, inCauldron: false }
+        ];
+        
+        const cauldron = {
+            x: 400,
+            y: 200,
+            radius: 70,
+            color: "#553322",
+            bubbles: []
+        };
+        
+        const mixButton = {
+            x: 600,
+            y: 400,
+            width: 100,
+            height: 50,
+            color: "#775555",
+            active: false,
+            text: "MIX!"
+        };
+        
+        const restartButton = {
+            x: 600,
+            y: 500,
+            width: 100,
+            height: 40,
+            color: "#554444",
+            text: "RESTART"
+        };
+        
+        let gameOver = false;
+        let gameResult = "";
+        let message = "";
+        let particles = [];
+        let bubbleTimer = 0;
+        
+        // Sound functions
+        function playPickSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                
+                const gainNode = audioCtx.createGain();
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } catch(e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function playDropSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                
+                const gainNode = audioCtx.createGain();
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } catch(e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function playResultSound(correct) {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                oscillator.type = 'square';
+                
+                if (correct) {
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.2);
+                } else {
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.2);
+                }
+                
+                const gainNode = audioCtx.createGain();
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.4);
+            } catch(e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        // Mouse handlers
+        let mouseX = 0;
+        let mouseY = 0;
+        let mouseDown = false;
+        
+        canvas.addEventListener('mousedown', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            mouseDown = true;
+            
+            // Handle restart button
+            if (gameOver && isPointInRect(mouseX, mouseY, restartButton)) {
+                resetGame();
+                return;
+            }
+            
+            // Handle mix button
+            if (!gameOver && mixButton.active && isPointInRect(mouseX, mouseY, mixButton)) {
+                checkAnswer();
+                return;
+            }
+            
+            // Handle ingredients
+            if (!gameOver) {
+                for (const ingredient of ingredients) {
+                    if (!ingredient.inCauldron && isPointInRect(mouseX, mouseY, ingredient)) {
+                        ingredient.dragging = true;
+                        playPickSound();
+                        break;
+                    }
+                }
+            }
+        });
+        
+        canvas.addEventListener('mousemove', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Move dragged ingredient
+            if (mouseDown && !gameOver) {
+                for (const ingredient of ingredients) {
+                    if (ingredient.dragging) {
+                        ingredient.x = mouseX - ingredient.width / 2;
+                        ingredient.y = mouseY - ingredient.height / 2;
+                    }
+                }
+            }
+        });
+        
+        canvas.addEventListener('mouseup', function() {
+            mouseDown = false;
+            
+            // Check if ingredient is dropped in cauldron
+            if (!gameOver) {
+                for (const ingredient of ingredients) {
+                    if (ingredient.dragging) {
+                        if (isPointInCircle(ingredient.x + ingredient.width/2, ingredient.y + ingredient.height/2, 
+                                          cauldron.x, cauldron.y, cauldron.radius)) {
+                            ingredient.inCauldron = true;
+                            createBubbleEffect();
+                            playDropSound();
+                            // Add particles
+                            for (let i = 0; i < 20; i++) {
+                                particles.push({
+                                    x: cauldron.x,
+                                    y: cauldron.y,
+                                    vx: (Math.random() - 0.5) * 5,
+                                    vy: (Math.random() - 0.5) * 5,
+                                    life: 30 + Math.random() * 20,
+                                    color: ingredient.color,
+                                    size: 4 + Math.random() * 6
+                                });
+                            }
+                        }
+                        ingredient.dragging = false;
+                    }
+                }
+                
+                // Check if mix button should be active
+                updateMixButtonState();
+            }
+        });
+        
+        // Mobile touch support
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            mouseX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            mouseDown = true;
+            
+            // Handle restart button
+            if (gameOver && isPointInRect(mouseX, mouseY, restartButton)) {
+                resetGame();
+                return;
+            }
+            
+            // Handle mix button
+            if (!gameOver && mixButton.active && isPointInRect(mouseX, mouseY, mixButton)) {
+                checkAnswer();
+                return;
+            }
+            
+            // Handle ingredients
+            if (!gameOver) {
+                for (const ingredient of ingredients) {
+                    if (!ingredient.inCauldron && isPointInRect(mouseX, mouseY, ingredient)) {
+                        ingredient.dragging = true;
+                        playPickSound();
+                        break;
+                    }
+                }
+            }
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            mouseX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Move dragged ingredient
+            if (mouseDown && !gameOver) {
+                for (const ingredient of ingredients) {
+                    if (ingredient.dragging) {
+                        ingredient.x = mouseX - ingredient.width / 2;
+                        ingredient.y = mouseY - ingredient.height / 2;
+                    }
+                }
+            }
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            mouseDown = false;
+            
+            // Check if ingredient is dropped in cauldron
+            if (!gameOver) {
+                for (const ingredient of ingredients) {
+                    if (ingredient.dragging) {
+                        if (isPointInCircle(ingredient.x + ingredient.width/2, ingredient.y + ingredient.height/2, 
+                                          cauldron.x, cauldron.y, cauldron.radius)) {
+                            ingredient.inCauldron = true;
+                            createBubbleEffect();
+                            playDropSound();
+                            // Add particles
+                            for (let i = 0; i < 20; i++) {
+                                particles.push({
+                                    x: cauldron.x,
+                                    y: cauldron.y,
+                                    vx: (Math.random() - 0.5) * 5,
+                                    vy: (Math.random() - 0.5) * 5,
+                                    life: 30 + Math.random() * 20,
+                                    color: ingredient.color,
+                                    size: 4 + Math.random() * 6
+                                });
+                            }
+                        }
+                        ingredient.dragging = false;
+                    }
+                }
+                
+                // Check if mix button should be active
+                updateMixButtonState();
+            }
+        });
+        
+        // Utility functions
+        function isPointInRect(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+        
+        function isPointInCircle(x, y, cx, cy, r) {
+            const dx = x - cx;
+            const dy = y - cy;
+            return dx * dx + dy * dy <= r * r;
+        }
+        
+        function checkAnswer() {
+            gameOver = true;
+            
+            // Check if Paris is in cauldron and nothing else
+            let parisInCauldron = false;
+            let otherInCauldron = false;
+            
+            for (const ingredient of ingredients) {
+                if (ingredient.inCauldron) {
+                    if (ingredient.name === "Paris") {
+                        parisInCauldron = true;
+                    } else {
+                        otherInCauldron = true;
+                    }
+                }
+            }
+            
+            if (parisInCauldron && !otherInCauldron) {
+                gameResult = "CORRECT!";
+                message = "Paris is the capital of France!";
+                playResultSound(true);
+                
+                // Create celebration particles
+                for (let i = 0; i < 100; i++) {
+                    particles.push({
+                        x: cauldron.x + (Math.random() - 0.5) * 100,
+                        y: cauldron.y + (Math.random() - 0.5) * 100,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        life: 40 + Math.random() * 40,
+                        color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+                        size: 5 + Math.random() * 5
+                    });
+                }
+            } else {
+                gameResult = "WRONG!";
+                message = "Paris is the capital of France!";
+                playResultSound(false);
+            }
+        }
+        
+        function resetGame() {
+            for (const ingredient of ingredients) {
+                ingredient.inCauldron = false;
+                ingredient.dragging = false;
+            }
+            
+            // Reset positions
+            ingredients[0].x = 100;
+            ingredients[0].y = 400;
+            ingredients[1].x = 200;
+            ingredients[1].y = 400;
+            ingredients[2].x = 300;
+            ingredients[2].y = 400;
+            ingredients[3].x = 400;
+            ingredients[3].y = 400;
+            
+            gameOver = false;
+            gameResult = "";
+            message = "";
+            mixButton.active = false;
+            particles = [];
+            cauldron.bubbles = [];
+        }
+        
+        function updateMixButtonState() {
+            mixButton.active = false;
+            
+            for (const ingredient of ingredients) {
+                if (ingredient.inCauldron) {
+                    mixButton.active = true;
+                    break;
+                }
+            }
+        }
+        
+        function createBubbleEffect() {
+            for (let i = 0; i < 5; i++) {
+                cauldron.bubbles.push({
+                    x: cauldron.x + (Math.random() - 0.5) * cauldron.radius * 1.2,
+                    y: cauldron.y + (Math.random() - 0.5) * cauldron.radius * 0.8,
+                    size: 5 + Math.random() * 10,
+                    speed: 0.5 + Math.random() * 1.5,
+                    life: 30 + Math.random() * 30
+                });
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = "#442244";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw lab background elements
+            drawLabBackground();
+            
+            // Draw cauldron
+            drawCauldron();
+            
+            // Update and draw bubbles
+            updateBubbles();
+            
+            // Draw mix button
+            drawButton(mixButton);
+            
+            // Draw ingredients
+            for (const ingredient of ingredients) {
+                if (!ingredient.inCauldron) {
+                    drawPixelIngredient(ingredient);
+                }
+            }
+            
+            // Update and draw particles
+            updateParticles();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw result if game is over
+            if (gameOver) {
+                drawResult();
+                drawButton(restartButton);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function drawLabBackground() {
+            // Draw shelves
+            ctx.fillStyle = "#553333";
+            ctx.fillRect(50, 50, 700, 20);
+            
+            // Draw bottles on shelves
+            const bottleColors = ["#FF5555", "#55FF55", "#5555FF", "#FFFF55", "#FF55FF"];
+            for (let i = 0; i < 8; i++) {
+                const x = 100 + i * 80;
+                const color = bottleColors[i % bottleColors.length];
+                
+                // Bottle
+                ctx.fillStyle = color;
+                ctx.fillRect(x, 20, 20, 30);
+                
+                // Neck
+                ctx.fillRect(x + 5, 10, 10, 10);
+            }
+            
+            // Draw table
+            ctx.fillStyle = "#664433";
+            ctx.fillRect(50, 450, 700, 30);
+            
+            // Draw lab equipment
+            ctx.fillStyle = "#999999";
+            ctx.fillRect(600, 200, 30, 100);
+            ctx.fillStyle = "#CCCCCC";
+            ctx.fillRect(590, 300, 50, 20);
+            
+            // Grid pattern on floor
+            ctx.fillStyle = "#332233";
+            for (let i = 0; i < 20; i++) {
+                for (let j = 0; j < 5; j++) {
+                    if ((i + j) % 2 === 0) {
+                        ctx.fillRect(i * 40, 480 + j * 30, 40, 30);
+                    }
+                }
+            }
+        }
+        
+        function drawCauldron() {
+            // Draw cauldron shadow
+            ctx.fillStyle = "#221111";
+            ctx.beginPath();
+            ctx.ellipse(cauldron.x, cauldron.y + cauldron.radius + 10, cauldron.radius * 0.9, cauldron.radius * 0.4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw cauldron base
+            ctx.fillStyle = cauldron.color;
+            ctx.beginPath();
+            ctx.arc(cauldron.x, cauldron.y, cauldron.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw liquid in cauldron
+            ctx.fillStyle = "#668844";
+            
+            // Add ingredient colors to liquid
+            let hasIngredients = false;
+            for (const ingredient of ingredients) {
+                if (ingredient.inCauldron) {
+                    hasIngredients = true;
+                    ctx.fillStyle = ingredient.color;
+                    break;
+                }
+            }
+            
+            ctx.beginPath();
+            ctx.ellipse(cauldron.x, cauldron.y - cauldron.radius * 0.2, cauldron.radius * 0.8, cauldron.radius * 0.4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Cauldron rim
+            ctx.strokeStyle = "#332211";
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.arc(cauldron.x, cauldron.y, cauldron.radius, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Add handles
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.arc(cauldron.x - cauldron.radius - 5, cauldron.y, cauldron.radius * 0.3, Math.PI * 0.7, Math.PI * 1.3);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.arc(cauldron.x + cauldron.radius + 5, cauldron.y, cauldron.radius * 0.3, Math.PI * 1.7, Math.PI * 2.3);
+            ctx.stroke();
+        }
+        
+        function updateBubbles() {
+            // Create bubbles randomly
+            bubbleTimer++;
+            if (bubbleTimer > 30 && Math.random() < 0.3) {
+                createBubbleEffect();
+                bubbleTimer = 0;
+            }
+            
+            // Update and draw existing bubbles
+            for (let i = cauldron.bubbles.length - 1; i >= 0; i--) {
+                const bubble = cauldron.bubbles[i];
+                
+                // Move bubble
+                bubble.y -= bubble.speed;
+                
+                // Reduce life
+                bubble.life--;
+                
+                // Remove dead bubbles
+                if (bubble.life <= 0) {
+                    cauldron.bubbles.splice(i, 1);
+                    continue;
+                }
+                
+                // Draw bubble
+                ctx.fillStyle = "#99DDCC";
+                if (bubble.life < 10) {
+                    ctx.globalAlpha = bubble.life / 10;
+                }
+                
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Add shine to bubble
+                ctx.fillStyle = "#FFFFFF";
+                ctx.beginPath();
+                ctx.arc(bubble.x - bubble.size * 0.3, bubble.y - bubble.size * 0.3, bubble.size * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                
+                // Update position
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Apply gravity/drag
+                p.vy += 0.1;
+                p.vx *= 0.98;
+                
+                // Reduce life
+                p.life--;
+                
+                // Remove dead particles
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+                
+                // Draw particle
+                ctx.fillStyle = p.color;
+                if (p.life < 10) {
+                    ctx.globalAlpha = p.life / 10;
+                }
+                
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                ctx.globalAlpha = 1;
+            }
+        }
+        
+        function drawPixelIngredient(ingredient) {
+            // Draw ingredient base
+            ctx.fillStyle = ingredient.color;
+            ctx.fillRect(ingredient.x, ingredient.y, ingredient.width, ingredient.height);
+            
+            // Add highlight
+            ctx.fillStyle = "#FFFFFF";
+            ctx.globalAlpha = 0.3;
+            ctx.fillRect(ingredient.x + 5, ingredient.y + 5, 10, 10);
+            ctx.globalAlpha = 1;
+            
+            // Add name tag
+            ctx.fillStyle = "#000000";
+            ctx.fillRect(ingredient.x, ingredient.y + ingredient.height - 20, ingredient.width, 20);
+            
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "12px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(ingredient.name, ingredient.x + ingredient.width / 2, ingredient.y + ingredient.height - 6);
+            
+            // Add pixel details based on name
+            switch(ingredient.name) {
+                case "Paris":
+                    // Draw Eiffel Tower-like shape
+                    ctx.fillStyle = "#222222";
+                    ctx.fillRect(ingredient.x + 25, ingredient.y + 10, 10, 30);
+                    ctx.fillRect(ingredient.x + 20, ingredient.y + 35, 20, 5);
+                    break;
+                case "Lyon":
+                    // Simple building
+                    ctx.fillStyle = "#222222";
+                    ctx.fillRect(ingredient.x + 15, ingredient.y + 15, 30, 20);
+                    ctx.fillRect(ingredient.x + 25, ingredient.y + 5, 10, 10);
+                    break;
+                case "Nice":
+                    // Beach umbrella
+                    ctx.fillStyle = "#222222";
+                    ctx.fillRect(ingredient.x + 30, ingredient.y + 15, 4, 25);
+                    ctx.beginPath();
+                    ctx.moveTo(ingredient.x + 15, ingredient.y + 15);
+                    ctx.lineTo(ingredient.x + 45, ingredient.y + 15);
+                    ctx.lineTo(ingredient.x + 32, ingredient.y + 5);
+                    ctx.fill();
+                    break;
+                case "Marseille":
+                    // Boat
+                    ctx.fillStyle = "#222222";
+                    ctx.fillRect(ingredient.x + 15, ingredient.y + 30, 30, 10);
+                    ctx.beginPath();
+                    ctx.moveTo(ingredient.x + 30, ingredient.y + 10);
+                    ctx.lineTo(ingredient.x + 30, ingredient.y + 30);
+                    ctx.lineTo(ingredient.x + 45, ingredient.y + 30);
+                    ctx.fill();
+                    break;
+            }
+            
+            // Add dragging indicator
+            if (ingredient.dragging) {
+                ctx.strokeStyle = "#FFFF00";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(ingredient.x, ingredient.y, ingredient.width, ingredient.height);
+            }
+        }
+        
+        function drawButton(button) {
+            // Base
+            ctx.fillStyle = button.color;
+            if (button === mixButton && !button.active) {
+                ctx.fillStyle = "#555555";
+            }
+            ctx.fillRect(button.x, button.y, button.width, button.height);
+            
+            // Highlight
+            ctx.fillStyle = "#FFFFFF";
+            ctx.globalAlpha = 0.3;
+            ctx.fillRect(button.x, button.y, button.width, 5);
+            ctx.fillRect(button.x, button.y, 5, button.height);
+            ctx.globalAlpha = 1;
+            
+            // Shadow
+            ctx.fillStyle = "#000000";
+            ctx.globalAlpha = 0.3;
+            ctx.fillRect(button.x + 5, button.y + button.height - 5, button.width - 5, 5);
+            ctx.fillRect(button.x + button.width - 5, button.y + 5, 5, button.height - 5);
+            ctx.globalAlpha = 1;
+            
+            // Text
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(button.text, button.x + button.width / 2, button.y + button.height / 2);
+        }
+        
+        function drawQuestion() {
+            // Question background
+            ctx.fillStyle = "#332244";
+            ctx.fillRect(100, 80, 600, 40);
+            
+            // Question text
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("What is the capital of France?", 400, 100);
+            
+            // Instructions
+            ctx.fillStyle = "#CCCCCC";
+            ctx.font = "16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("Drag the correct ingredient to the cauldron and click MIX!", 400, 130);
+        }
+        
+        function drawResult() {
+            // Result background
+            ctx.fillStyle = gameResult === "CORRECT!" ? "rgba(0, 128, 0, 0.7)" : "rgba(128, 0, 0, 0.7)";
+            ctx.fillRect(200, 150, 400, 100);
+            
+            // Border
+            ctx.strokeStyle = "#FFFFFF";
+            ctx.lineWidth = 5;
+            ctx.strokeRect(205, 155, 390, 90);
+            
+            // Result text
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "30px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(gameResult, 400, 180);
+            
+            // Message
+            ctx.font = "20px Arial";
+            ctx.fillText(message, 400, 220);
+        }
+        
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Platform Builder Quiz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .options {
+            margin-top: 10px;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .option-btn {
+            background-color: #4d4d4d;
+            border: 3px solid #8d8d8d;
+            color: white;
+            padding: 10px 15px;
+            margin: 0 5px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 16px;
+        }
+        .option-btn:hover {
+            background-color: #666;
+        }
+        #restartBtn {
+            display: none;
+            background-color: #4d4d4d;
+            border: 3px solid #8d8d8d;
+            color: white;
+            padding: 10px 15px;
+            margin-top: 10px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div class="options">
+            <button class="option-btn" onclick="checkAnswer('London')">London</button>
+            <button class="option-btn" onclick="checkAnswer('Paris')">Paris</button>
+            <button class="option-btn" onclick="checkAnswer('Berlin')">Berlin</button>
+            <button class="option-btn" onclick="checkAnswer('Rome')">Rome</button>
+        </div>
+        <button id="restartBtn" onclick="restartGame()">Play Again</button>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if mobile
+        const isMobile = window.innerWidth <= 768;
+        
+        // Set canvas size
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const colors = {
+            sky: '#5ca0d3',
+            ground: '#8b5a2b',
+            platform: '#66a182',
+            character: '#ff6347',
+            flag: '#ffd700',
+            text: '#ffffff'
+        };
+        
+        const platformHeight = 30;
+        const platformWidth = isMobile ? 90 : 150;
+        const characterSize = isMobile ? 20 : 30;
+        let characterX = 40;
+        let characterY = canvas.height - 100 - characterSize;
+        let characterFrame = 0;
+        let frameCount = 0;
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Platform positions
+        const platforms = [
+            { x: 0, y: canvas.height - 100, width: 100, solid: true },
+            { x: 150, y: canvas.height - 100, width: platformWidth, solid: false, answer: 'Paris' }, // Gap 1
+            { x: 350, y: canvas.height - 100, width: 100, solid: true },
+            { x: 500, y: canvas.height - 100, width: platformWidth, solid: false, answer: null }, // End platform
+        ];
+        
+        if (isMobile) {
+            platforms[1].x = 120;
+            platforms[2].x = 230;
+            platforms[3].x = 340;
+        }
+        
+        // Goal position
+        const goal = {
+            x: platforms[platforms.length-1].x + platforms[platforms.length-1].width/2 - 15,
+            y: canvas.height - 140,
+            width: 30,
+            height: 40
+        };
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(100, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.4);
+            } else if (type === 'win') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.4);
+            }
+        }
+        
+        // Check if character is on a solid platform
+        function isOnPlatform() {
+            for (let platform of platforms) {
+                if (platform.solid && 
+                    characterX + characterSize > platform.x && 
+                    characterX < platform.x + platform.width) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Draw background
+        function drawBackground() {
+            // Sky
+            ctx.fillStyle = colors.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Ground
+            ctx.fillStyle = colors.ground;
+            ctx.fillRect(0, canvas.height - 70, canvas.width, 70);
+            
+            // Draw ground texture (pixelated)
+            ctx.fillStyle = '#7a4a1d';
+            for (let i = 0; i < canvas.width; i += 10) {
+                for (let j = 0; j < 70; j += 10) {
+                    if (Math.random() > 0.7) {
+                        ctx.fillRect(i, canvas.height - 70 + j, 10, 10);
+                    }
+                }
+            }
+            
+            // Draw some clouds
+            ctx.fillStyle = '#fff';
+            drawPixelatedCloud(50, 50, 60, 30);
+            drawPixelatedCloud(250, 80, 80, 40);
+            drawPixelatedCloud(450, 60, 70, 35);
+            
+            // Draw mountains in the background
+            ctx.fillStyle = '#6a6a6a';
+            drawPixelatedMountain(100, canvas.height - 70, 150, 120);
+            drawPixelatedMountain(350, canvas.height - 70, 200, 150);
+            drawPixelatedMountain(600, canvas.height - 70, 120, 100);
+        }
+        
+        function drawPixelatedCloud(x, y, width, height) {
+            const pixelSize = 5;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    if (j > height * 0.3 && j < height * 0.7 && i > width * 0.1 && i < width * 0.9) {
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    } else if (Math.random() > 0.5 && j > height * 0.2 && j < height * 0.8 && i > width * 0.05 && i < width * 0.95) {
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        function drawPixelatedMountain(x, y, width, height) {
+            const pixelSize = 5;
+            for (let i = 0; i < width; i += pixelSize) {
+                const h = height * (1 - Math.abs(i - width/2) / (width/2));
+                for (let j = 0; j < h; j += pixelSize) {
+                    ctx.fillRect(x + i, y - j, pixelSize, pixelSize);
+                }
+            }
+            
+            // Snow cap
+            ctx.fillStyle = '#fff';
+            for (let i = 0; i < width; i += pixelSize) {
+                const h = height * (1 - Math.abs(i - width/2) / (width/2));
+                for (let j = 0; j < h/3; j += pixelSize) {
+                    ctx.fillRect(x + i, y - h + j, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        // Draw platforms
+        function drawPlatforms() {
+            for (let platform of platforms) {
+                if (platform.solid) {
+                    ctx.fillStyle = colors.platform;
+                    ctx.fillRect(platform.x, platform.y, platform.width, platformHeight);
+                    
+                    // Draw platform texture (pixelated)
+                    ctx.fillStyle = '#558b6e';
+                    for (let i = 0; i < platform.width; i += 10) {
+                        if (Math.random() > 0.7) {
+                            ctx.fillRect(platform.x + i, platform.y, 10, 5);
+                        }
+                    }
+                    
+                    // Draw platform outline
+                    ctx.strokeStyle = '#3a614b';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(platform.x, platform.y, platform.width, platformHeight);
+                } else if (platform.answer) {
+                    // Draw platform placeholder
+                    ctx.setLineDash([5, 5]);
+                    ctx.strokeStyle = '#ffffff77';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(platform.x, platform.y, platform.width, platformHeight);
+                    ctx.setLineDash([]);
+                    
+                    // Draw question mark
+                    ctx.fillStyle = '#ffffff77';
+                    ctx.font = '20px sans-serif';
+                    ctx.fillText('?', platform.x + platform.width/2 - 6, platform.y + platformHeight/2 + 6);
+                }
+            }
+        }
+        
+        // Draw character
+        function drawCharacter() {
+            if (frameCount % 10 === 0) {
+                characterFrame = (characterFrame + 1) % 2;
+            }
+            
+            // Basic character shape
+            ctx.fillStyle = colors.character;
+            ctx.fillRect(characterX, characterY, characterSize, characterSize);
+            
+            // Character details
+            ctx.fillStyle = 'black';
+            
+            // Eyes
+            ctx.fillRect(characterX + characterSize * 0.7, characterY + characterSize * 0.3, characterSize * 0.15, characterSize * 0.15);
+            
+            // Mouth
+            ctx.fillRect(characterX + characterSize * 0.6, characterY + characterSize * 0.6, characterSize * 0.3, characterSize * 0.1);
+            
+            // Legs animation
+            if (characterFrame === 0) {
+                ctx.fillRect(characterX + characterSize * 0.2, characterY + characterSize, characterSize * 0.2, characterSize * 0.3);
+                ctx.fillRect(characterX + characterSize * 0.6, characterY + characterSize, characterSize * 0.2, characterSize * 0.3);
+            } else {
+                ctx.fillRect(characterX + characterSize * 0.1, characterY + characterSize, characterSize * 0.2, characterSize * 0.3);
+                ctx.fillRect(characterX + characterSize * 0.7, characterY + characterSize, characterSize * 0.2, characterSize * 0.3);
+            }
+        }
+        
+        // Draw goal flag
+        function drawGoal() {
+            // Flag pole
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(goal.x + 5, goal.y, 5, goal.height);
+            
+            // Flag
+            ctx.fillStyle = colors.flag;
+            ctx.beginPath();
+            ctx.moveTo(goal.x + 10, goal.y);
+            ctx.lineTo(goal.x + 30, goal.y + 10);
+            ctx.lineTo(goal.x + 10, goal.y + 20);
+            ctx.fill();
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 40);
+        }
+        
+        // Update game state
+        function update() {
+            frameCount++;
+            
+            if (!gameOver) {
+                // Move character forward
+                if (isOnPlatform()) {
+                    characterX += 1;
+                    
+                    // Check if reached goal
+                    if (characterX + characterSize > goal.x && characterY <= goal.y + goal.height) {
+                        gameWon = true;
+                        gameOver = true;
+                        playSound('win');
+                        document.getElementById('restartBtn').style.display = 'block';
+                    }
+                } else {
+                    // Falling
+                    characterY += 5;
+                    if (characterY > canvas.height) {
+                        gameOver = true;
+                        document.getElementById('restartBtn').style.display = 'block';
+                    }
+                }
+            }
+        }
+        
+        // Draw everything
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawBackground();
+            drawPlatforms();
+            drawGoal();
+            drawCharacter();
+            drawQuestion();
+            
+            if (gameOver && gameWon) {
+                ctx.fillStyle = colors.text;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText("Correct!", canvas.width / 2, canvas.height / 2);
+            } else if (gameOver && !gameWon) {
+                ctx.fillStyle = colors.text;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText("Incorrect...", canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Check answer
+        function checkAnswer(answer) {
+            if (gameOver) return;
+            
+            for (let platform of platforms) {
+                if (platform.answer === answer) {
+                    platform.solid = true;
+                    playSound('correct');
+                    return;
+                }
+            }
+            
+            // Wrong answer
+            gameOver = true;
+            playSound('wrong');
+            document.getElementById('restartBtn').style.display = 'block';
+        }
+        
+        // Restart game
+        function restartGame() {
+            characterX = 40;
+            characterY = canvas.height - 100 - characterSize;
+            gameOver = false;
+            gameWon = false;
+            
+            // Reset platforms
+            for (let platform of platforms) {
+                if (platform.answer) {
+                    platform.solid = false;
+                }
+            }
+            
+            document.getElementById('restartBtn').style.display = 'none';
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

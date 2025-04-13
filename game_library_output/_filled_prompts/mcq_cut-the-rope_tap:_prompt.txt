@@ -1,0 +1,99 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ Which planet is known as the Red Planet?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Cut-The-Rope Tap:**  
+ Description of mechanic: 
+
+* Objects (representing different answers) are suspended by ropes/strings in the game area
+* Player must tap/cut the rope holding the correct answer
+* When cut, the objects should fall realistically (with gravity)
+* Incorrect objects may have special behaviors when cut (e.g., explode, disappear, etc.)
+* Success is achieved by cutting only the rope connected to the correct answer
+* The rope-cutting mechanic should have satisfying visual feedback
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The ropes should have a chunky, pixelated appearance.
+The hanging objects should be distinct planet shapes with 8-bit style details.
+When a rope is cut, add a small pixelated "snip" animation effect.
+The falling motion should have exaggerated, chunky physics (not smooth).
+Include a small pixel-art scissors cursor when hovering over ropes.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The rope-cutting mechanic should provide immediate feedback when clicked/tapped.
+All ropes should be clearly visible and clickable.
+Add a slight swinging motion to the hanging planets to make them feel more dynamic.
+The correct answer (Mars) should be visually identical to other planets until the rope is cut.
+If the wrong planet is cut, it should fall off-screen but also indicate it was incorrect.
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

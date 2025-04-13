@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Pattern Trace Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            border: 4px solid #333;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        // Initialize canvas and context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game settings
+        const colors = {
+            background: '#0a0a20',
+            text: '#ffffff',
+            mars: '#ff4500',
+            venus: '#ffcc33',
+            earth: '#3399ff',
+            jupiter: '#dd9944',
+            pathColor: '#ff7700',
+            pathGlow: '#ffaa22',
+            correct: '#00ff00',
+            incorrect: '#ff0000',
+            gridLines: '#223355'
+        };
+        
+        // Planet positions and data
+        const planets = [
+            { name: "Mars", color: colors.mars, x: 200, y: 300, radius: 50, correct: true },
+            { name: "Venus", color: colors.venus, x: 400, y: 150, radius: 45, correct: false },
+            { name: "Earth", color: colors.earth, x: 600, y: 300, radius: 55, correct: false },
+            { name: "Jupiter", color: colors.jupiter, x: 400, y: 450, radius: 60, correct: false }
+        ];
+        
+        // Path points around Mars (the correct answer)
+        const pathPoints = [];
+        const marsIndex = planets.findIndex(p => p.name === "Mars");
+        const mars = planets[marsIndex];
+        const pathRadius = mars.radius + 30;
+        for (let i = 0; i < 20; i++) {
+            const angle = (i / 20) * Math.PI * 2;
+            pathPoints.push({
+                x: mars.x + Math.cos(angle) * pathRadius,
+                y: mars.y + Math.sin(angle) * pathRadius
+            });
+        }
+        // Close the path
+        pathPoints.push(pathPoints[0]);
+        
+        // Game state
+        let gameState = {
+            isTracing: false,
+            currentPoint: 0,
+            mouseX: 0,
+            mouseY: 0,
+            lastMouseX: 0,
+            lastMouseY: 0,
+            onPath: false,
+            pathProgress: 0,
+            gameOver: false,
+            success: false,
+            restartVisible: false,
+            particles: [],
+            timeLeft: 800, // 8 seconds at 100 ticks per second
+            pathTolerance: 30, // Distance tolerance for path tracing
+        };
+        
+        // Audio context and sounds
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playSound(freq, duration, type = 'square') {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        function playSuccessSound() {
+            playSound(523.25, 100); // C5
+            setTimeout(() => playSound(659.25, 100), 100); // E5
+            setTimeout(() => playSound(783.99, 200), 200); // G5
+        }
+        
+        function playErrorSound() {
+            playSound(196.00, 200, 'sawtooth'); // G3
+            setTimeout(() => playSound(146.83, 300, 'sawtooth'), 200); // D3
+        }
+        
+        function playClickSound() {
+            playSound(440, 50); // A4
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            // Grid background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = colors.gridLines;
+            ctx.lineWidth = 1;
+            
+            // Horizontal lines
+            for (let y = 0; y < canvas.height; y += 20) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Vertical lines
+            for (let x = 0; x < canvas.width; x += 20) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+        }
+        
+        function drawPlanets() {
+            planets.forEach(planet => {
+                // Draw planet
+                ctx.fillStyle = planet.color;
+                ctx.beginPath();
+                ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw planet name
+                ctx.fillStyle = colors.text;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(planet.name, planet.x, planet.y + planet.radius + 30);
+                
+                // Pixelate effect (simulate 8-bit look)
+                const pixelSize = 4;
+                ctx.fillStyle = planet.color;
+                for (let px = -planet.radius; px < planet.radius; px += pixelSize) {
+                    for (let py = -planet.radius; py < planet.radius; py += pixelSize) {
+                        if (px*px + py*py < planet.radius*planet.radius) {
+                            ctx.fillRect(
+                                Math.floor((planet.x + px) / pixelSize) * pixelSize, 
+                                Math.floor((planet.y + py) / pixelSize) * pixelSize, 
+                                pixelSize, pixelSize
+                            );
+                        }
+                    }
+                }
+            });
+        }
+        
+        function drawPath() {
+            // Draw path with glow effect
+            const time = Date.now() * 0.003;
+            const pulseIntensity = (Math.sin(time) + 1) / 2; // 0 to 1
+            
+            // Draw path segments
+            for (let i = 0; i < pathPoints.length - 1; i++) {
+                const progress = i / (pathPoints.length - 2);
+                const glowIntensity = pulseIntensity * 0.7 + 0.3;
+                
+                // Draw glow
+                ctx.strokeStyle = colors.pathGlow;
+                ctx.lineWidth = 12 * glowIntensity;
+                ctx.globalAlpha = 0.5 * glowIntensity;
+                ctx.beginPath();
+                ctx.moveTo(pathPoints[i].x, pathPoints[i].y);
+                ctx.lineTo(pathPoints[i+1].x, pathPoints[i+1].y);
+                ctx.stroke();
+                
+                // Draw main path
+                ctx.strokeStyle = colors.pathColor;
+                ctx.lineWidth = 6;
+                ctx.globalAlpha = 1;
+                ctx.beginPath();
+                ctx.moveTo(pathPoints[i].x, pathPoints[i].y);
+                ctx.lineTo(pathPoints[i+1].x, pathPoints[i+1].y);
+                ctx.stroke();
+                
+                // Pixelate path
+                const dist = Math.sqrt(
+                    Math.pow(pathPoints[i+1].x - pathPoints[i].x, 2) + 
+                    Math.pow(pathPoints[i+1].y - pathPoints[i].y, 2)
+                );
+                const pixelSize = 4;
+                const step = pixelSize / dist;
+                
+                for (let t = 0; t < 1; t += step) {
+                    const x = pathPoints[i].x + (pathPoints[i+1].x - pathPoints[i].x) * t;
+                    const y = pathPoints[i].y + (pathPoints[i+1].y - pathPoints[i].y) * t;
+                    
+                    ctx.fillStyle = colors.pathColor;
+                    ctx.fillRect(
+                        Math.floor(x / pixelSize) * pixelSize,
+                        Math.floor(y / pixelSize) * pixelSize,
+                        pixelSize, pixelSize
+                    );
+                }
+            }
+            
+            // Draw starting point
+            ctx.fillStyle = colors.pathGlow;
+            ctx.beginPath();
+            ctx.arc(pathPoints[0].x, pathPoints[0].y, 15 * (pulseIntensity * 0.5 + 0.5), 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = colors.pathColor;
+            ctx.beginPath();
+            ctx.arc(pathPoints[0].x, pathPoints[0].y, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawUserTrace() {
+            if (gameState.isTracing) {
+                // Draw line from last point to current mouse position
+                ctx.strokeStyle = gameState.onPath ? colors.correct : colors.incorrect;
+                ctx.lineWidth = 8;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(gameState.lastMouseX, gameState.lastMouseY);
+                ctx.lineTo(gameState.mouseX, gameState.mouseY);
+                ctx.stroke();
+                
+                // Draw current position dot
+                ctx.fillStyle = gameState.onPath ? colors.correct : colors.incorrect;
+                ctx.beginPath();
+                ctx.arc(gameState.mouseX, gameState.mouseY, 8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Create particles if on path
+                if (gameState.onPath && Math.random() > 0.7) {
+                    gameState.particles.push({
+                        x: gameState.mouseX,
+                        y: gameState.mouseY,
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: (Math.random() - 0.5) * 4,
+                        size: Math.random() * 6 + 2,
+                        life: 20,
+                        color: colors.pathGlow
+                    });
+                }
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            for (let p of gameState.particles) {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 20;
+                ctx.fillRect(
+                    Math.floor(p.x / 4) * 4, 
+                    Math.floor(p.y / 4) * 4, 
+                    Math.ceil(p.size / 4) * 4, 
+                    Math.ceil(p.size / 4) * 4
+                );
+            }
+            ctx.globalAlpha = 1;
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 60);
+            
+            ctx.font = '22px sans-serif';
+            ctx.fillText("Trace the path around the correct answer!", canvas.width / 2, 100);
+        }
+        
+        function drawTimer() {
+            const barWidth = 600;
+            const barHeight = 20;
+            const barX = (canvas.width - barWidth) / 2;
+            const barY = 130;
+            
+            // Background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            // Progress
+            const timeRatio = gameState.timeLeft / 800;
+            ctx.fillStyle = timeRatio > 0.3 ? '#44ff44' : '#ff4444';
+            ctx.fillRect(barX, barY, barWidth * timeRatio, barHeight);
+            
+            // Pixelate the timer bar
+            const pixelSize = 4;
+            for (let x = 0; x < barWidth * timeRatio; x += pixelSize) {
+                for (let y = 0; y < barHeight; y += pixelSize) {
+                    ctx.fillStyle = timeRatio > 0.3 ? '#44ff44' : '#ff4444';
+                    ctx.fillRect(
+                        Math.floor((barX + x) / pixelSize) * pixelSize,
+                        Math.floor((barY + y) / pixelSize) * pixelSize,
+                        pixelSize, pixelSize
+                    );
+                }
+            }
+        }
+        
+        function drawGameOver() {
+            if (gameState.gameOver) {
+                // Draw semi-transparent overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw result message
+                ctx.fillStyle = gameState.success ? colors.correct : colors.incorrect;
+                ctx.font = '40px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameState.success ? "Correct!" : "Incorrect!",
+                    canvas.width / 2,
+                    canvas.height / 2 - 40
+                );
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = '30px sans-serif';
+                ctx.fillText(
+                    "Mars is the Red Planet!",
+                    canvas.width / 2,
+                    canvas.height / 2 + 20
+                );
+                
+                // Draw restart button
+                if (gameState.restartVisible) {
+                    const btnX = canvas.width / 2 - 80;
+                    const btnY = canvas.height / 2 + 60;
+                    const btnWidth = 160;
+                    const btnHeight = 50;
+                    
+                    // Button background
+                    ctx.fillStyle = '#444';
+                    ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                    
+                    // Pixelate button
+                    const pixelSize = 4;
+                    for (let x = 0; x < btnWidth; x += pixelSize) {
+                        for (let y = 0; y < btnHeight; y += pixelSize) {
+                            ctx.fillStyle = '#444';
+                            ctx.fillRect(
+                                Math.floor((btnX + x) / pixelSize) * pixelSize,
+                                Math.floor((btnY + y) / pixelSize) * pixelSize,
+                                pixelSize, pixelSize
+                            );
+                        }
+                    }
+                    
+                    // Button text
+                    ctx.fillStyle = colors.text;
+                    ctx.font = '24px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText("Restart", canvas.width / 2, btnY + 32);
+                }
+            }
+        }
+        
+        function checkPathProgress() {
+            if (!gameState.isTracing) return;
+            
+            // Find the closest point on the path
+            let minDist = Infinity;
+            let closestPointIndex = -1;
+            
+            // Look at several points ahead of the current point to allow progress
+            const lookAheadCount = 3;
+            for (let i = gameState.currentPoint; i < gameState.currentPoint + lookAheadCount && i < pathPoints.length; i++) {
+                const dist = Math.sqrt(
+                    Math.pow(gameState.mouseX - pathPoints[i].x, 2) + 
+                    Math.pow(gameState.mouseY - pathPoints[i].y, 2)
+                );
+                
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestPointIndex = i;
+                }
+            }
+            
+            // Check if the player is on the path
+            gameState.onPath = minDist < gameState.pathTolerance;
+            
+            // Update progress if the player is on the correct path
+            if (gameState.onPath && closestPointIndex > gameState.currentPoint) {
+                gameState.currentPoint = closestPointIndex;
+                gameState.pathProgress = closestPointIndex / (pathPoints.length - 1);
+                
+                // Play a soft click when advancing on the path
+                if (closestPointIndex % 3 === 0) {
+                    playClickSound();
+                }
+                
+                // Check for completion
+                if (gameState.pathProgress >= 0.95) {
+                    endGame(true);
+                }
+            }
+            
+            // Save the current mouse position
+            gameState.lastMouseX = gameState.mouseX;
+            gameState.lastMouseY = gameState.mouseY;
+        }
+        
+        function endGame(success) {
+            gameState.gameOver = true;
+            gameState.success = success;
+            
+            if (success) {
+                playSuccessSound();
+            } else {
+                playErrorSound();
+            }
+            
+            // Show restart button after a short delay
+            setTimeout(() => {
+                gameState.restartVisible = true;
+            }, 1000);
+        }
+        
+        function restartGame() {
+            gameState = {
+                isTracing: false,
+                currentPoint: 0,
+                mouseX: 0,
+                mouseY: 0,
+                lastMouseX: 0,
+                lastMouseY: 0,
+                onPath: false,
+                pathProgress: 0,
+                gameOver: false,
+                success: false,
+                restartVisible: false,
+                particles: [],
+                timeLeft: 800,
+                pathTolerance: 30
+            };
+            playClickSound();
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Update game state
+            if (!gameState.gameOver) {
+                updateParticles();
+                checkPathProgress();
+                
+                // Update timer
+                if (gameState.isTracing) {
+                    gameState.timeLeft--;
+                    if (gameState.timeLeft <= 0) {
+                        endGame(false);
+                    }
+                }
+            }
+            
+            // Draw everything
+            drawBackground();
+            drawPlanets();
+            drawPath();
+            drawUserTrace();
+            drawParticles();
+            drawQuestion();
+            drawTimer();
+            drawGameOver();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', (event) => {
+            if (gameState.gameOver) {
+                // Check if restart button is clicked
+                if (gameState.restartVisible) {
+                    const btnX = canvas.width / 2 - 80;
+                    const btnY = canvas.height / 2 + 60;
+                    const btnWidth = 160;
+                    const btnHeight = 50;
+                    
+                    const rect = canvas.getBoundingClientRect();
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    
+                    if (x >= btnX && x <= btnX + btnWidth && y >= btnY && y <= btnY + btnHeight) {
+                        restartGame();
+                    }
+                }
+                return;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // Check if mouse is near the starting point
+            const startPoint = pathPoints[0];
+            const dist = Math.sqrt(Math.pow(x - startPoint.x, 2) + Math.pow(y - startPoint.y, 2));
+            
+            if (dist < 30) {
+                gameState.isTracing = true;
+                gameState.mouseX = x;
+                gameState.mouseY = y;
+                gameState.lastMouseX = x;
+                gameState.lastMouseY = y;
+                gameState.onPath = true;
+                
+                playClickSound();
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (event) => {
+            if (gameState.gameOver || !gameState.isTracing) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            gameState.mouseX = event.clientX - rect.left;
+            gameState.mouseY = event.clientY - rect.top;
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            if (gameState.isTracing && !gameState.gameOver) {
+                if (gameState.pathProgress < 0.95) {
+                    endGame(false);
+                }
+                gameState.isTracing = false;
+            }
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            if (gameState.isTracing && !gameState.gameOver) {
+                endGame(false);
+                gameState.isTracing = false;
+            }
+        });
+        
+        // Mobile support
+        canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            if (gameState.gameOver) {
+                // Check if restart button is clicked
+                if (gameState.restartVisible) {
+                    const btnX = canvas.width / 2 - 80;
+                    const btnY = canvas.height / 2 + 60;
+                    const btnWidth = 160;
+                    const btnHeight = 50;
+                    
+                    const rect = canvas.getBoundingClientRect();
+                    const x = event.touches[0].clientX - rect.left;
+                    const y = event.touches[0].clientY - rect.top;
+                    
+                    if (x >= btnX && x <= btnX + btnWidth && y >= btnY && y <= btnY + btnHeight) {
+                        restartGame();
+                    }
+                }
+                return;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = event.touches[0].clientX - rect.left;
+            const y = event.touches[0].clientY - rect.top;
+            
+            // Check if touch is near the starting point
+            const startPoint = pathPoints[0];
+            const dist = Math.sqrt(Math.pow(x - startPoint.x, 2) + Math.pow(y - startPoint.y, 2));
+            
+            if (dist < 30) {
+                gameState.isTracing = true;
+                gameState.mouseX = x;
+                gameState.mouseY = y;
+                gameState.lastMouseX = x;
+                gameState.lastMouseY = y;
+                gameState.onPath = true;
+                
+                playClickSound();
+            }
+        });
+        
+        canvas.addEventListener('touchmove', (event) => {
+            event.preventDefault();
+            if (gameState.gameOver || !gameState.isTracing) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            gameState.mouseX = event.touches[0].clientX - rect.left;
+            gameState.mouseY = event.touches[0].clientY - rect.top;
+        });
+        
+        canvas.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            if (gameState.isTracing && !gameState.gameOver) {
+                if (gameState.pathProgress < 0.95) {
+                    endGame(false);
+                }
+                gameState.isTracing = false;
+            }
+        });
+        
+        // Handle window resize to maintain aspect ratio
+        function resizeCanvas() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const isLandscape = width > height;
+            
+            // Set appropriate dimensions based on device
+            if (width <= 500) { // Mobile
+                canvas.width = 360;
+                canvas.height = 640;
+            } else { // Web
+                canvas.width = 800;
+                canvas.height = 600;
+            }
+            
+            // Scale to fit window while maintaining aspect ratio
+            const scale = Math.min(
+                width / canvas.width,
+                height / canvas.height
+            ) * 0.95; // 5% margin
+            
+            canvas.style.width = (canvas.width * scale) + 'px';
+            canvas.style.height = (canvas.height * scale) + 'px';
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>

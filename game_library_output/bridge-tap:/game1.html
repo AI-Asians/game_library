@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bridge-Tap Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      border: 2px solid #444;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #gameContainer {
+      position: relative;
+    }
+    #restartButton {
+      position: absolute;
+      bottom: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 15px;
+      background-color: #555;
+      color: white;
+      border: 3px solid #777;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restartButton">Restart</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartButton = document.getElementById('restartButton');
+    
+    // Check if mobile and resize canvas if needed
+    if (window.innerWidth <= 500) {
+      canvas.width = 360;
+      canvas.height = 640;
+    }
+    
+    // Colors - 8-bit palette
+    const colors = {
+      sky: '#5fcde4',
+      ground: '#8f563b',
+      platformTrue: '#3ca370', 
+      platformFalse: '#d14334',
+      bridge: '#8e552e',
+      character: '#2e5897',
+      text: '#ffffff'
+    };
+    
+    // Game objects
+    const game = {
+      state: 'playing', // playing, success, failure
+      question: 'The Great Wall of China is visible from space.',
+      correctAnswer: 'FALSE',
+      gravity: 0.5,
+      restartDelay: 1500
+    };
+    
+    const player = {
+      x: 50,
+      y: canvas.height - 180,
+      width: 20,
+      height: 24,
+      speed: 3,
+      isMoving: false,
+      velocity: { x: 0, y: 0 },
+      frameCount: 0,
+      animationFrame: 0
+    };
+    
+    const bridge = {
+      x: 90,
+      y: canvas.height - 170,
+      segments: [],
+      width: 20,
+      isBuilding: false,
+      buildSpeed: 5,
+      maxLength: canvas.width - 220
+    };
+    
+    const platforms = [
+      {
+        x: 10,
+        y: canvas.height - 180,
+        width: 80,
+        height: 100,
+        color: colors.ground,
+        label: 'START'
+      },
+      {
+        x: canvas.width - 200,
+        y: canvas.height - 180,
+        width: 100,
+        height: 100,
+        color: colors.platformTrue,
+        label: 'TRUE'
+      },
+      {
+        x: canvas.width / 2 - 50,
+        y: canvas.height - 180,
+        width: 100,
+        height: 100,
+        color: colors.platformFalse,
+        label: 'FALSE'
+      }
+    ];
+    
+    const particles = [];
+    
+    // Sound effects
+    function createBeepSound(freq, duration, type = 'square') {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator.type = type;
+        oscillator.frequency.value = freq;
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        oscillator.start();
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        setTimeout(() => {
+          oscillator.stop();
+        }, duration * 1000);
+      } catch (e) {
+        console.log('Audio context not supported');
+      }
+    }
+    
+    function playBuildSound() {
+      createBeepSound(440, 0.1);
+    }
+    
+    function playSuccessSound() {
+      createBeepSound(660, 0.1);
+      setTimeout(() => createBeepSound(880, 0.2), 100);
+    }
+    
+    function playFailSound() {
+      createBeepSound(200, 0.2);
+      setTimeout(() => createBeepSound(150, 0.3), 200);
+    }
+    
+    // Game functions
+    function drawPixelatedRect(x, y, width, height, color) {
+      ctx.fillStyle = color;
+      // Draw with 1-pixel grid to create pixelated effect
+      const pixelSize = 4;
+      for (let i = 0; i < Math.ceil(width / pixelSize); i++) {
+        for (let j = 0; j < Math.ceil(height / pixelSize); j++) {
+          const px = x + i * pixelSize;
+          const py = y + j * pixelSize;
+          const w = Math.min(pixelSize, x + width - px);
+          const h = Math.min(pixelSize, y + height - py);
+          ctx.fillRect(px, py, w, h);
+        }
+      }
+    }
+    
+    function createParticles(x, y, color, count) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x: x,
+          y: y,
+          size: 3 + Math.random() * 5,
+          color: color,
+          velocity: {
+            x: (Math.random() - 0.5) * 6,
+            y: -Math.random() * 9
+          },
+          gravity: 0.4,
+          life: 30 + Math.random() * 20
+        });
+      }
+    }
+    
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.velocity.x;
+        p.y += p.velocity.y;
+        p.velocity.y += p.gravity;
+        p.life--;
+        
+        if (p.life <= 0) {
+          particles.splice(i, 1);
+        }
+      }
+    }
+    
+    function drawParticles() {
+      particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(
+          Math.floor(p.x), 
+          Math.floor(p.y), 
+          Math.floor(p.size), 
+          Math.floor(p.size)
+        );
+      });
+    }
+    
+    function drawPlayer() {
+      // Basic pixelated character
+      if (game.state === 'playing' || game.state === 'success') {
+        // Draw legs
+        drawPixelatedRect(player.x + 3, player.y + 16, 5, 8, '#333');
+        drawPixelatedRect(player.x + 12, player.y + 16, 5, 8, '#333');
+        
+        // Draw body
+        drawPixelatedRect(player.x, player.y + 5, 20, 12, colors.character);
+        
+        // Draw head
+        drawPixelatedRect(player.x + 4, player.y, 12, 10, '#ffccaa');
+        
+        // Simple animation when moving
+        if (player.isMoving) {
+          player.frameCount++;
+          if (player.frameCount > 10) {
+            player.animationFrame = (player.animationFrame + 1) % 2;
+            player.frameCount = 0;
+          }
+          
+          if (player.animationFrame === 0) {
+            drawPixelatedRect(player.x + 3, player.y + 16, 5, 8, '#333');
+            drawPixelatedRect(player.x + 12, player.y + 16, 5, 8, '#333');
+          } else {
+            drawPixelatedRect(player.x + 3, player.y + 16, 5, 8, '#333');
+            drawPixelatedRect(player.x + 12, player.y + 16, 5, 8, '#333');
+          }
+        }
+      } else if (game.state === 'failure') {
+        // Falling animation
+        drawPixelatedRect(player.x, player.y, 20, 24, colors.character);
+        drawPixelatedRect(player.x + 4, player.y, 12, 10, '#ffccaa');
+      }
+    }
+    
+    function drawBridge() {
+      bridge.segments.forEach((segment, index) => {
+        drawPixelatedRect(
+          bridge.x + index * (bridge.width - 2), 
+          bridge.y, 
+          bridge.width, 
+          10, 
+          colors.bridge
+        );
+        
+        // Add some pixel details to the bridge
+        if (index % 2 === 0) {
+          ctx.fillStyle = '#6d4021';
+          ctx.fillRect(
+            bridge.x + index * (bridge.width - 2) + 5, 
+            bridge.y + 3, 
+            10, 
+            4
+          );
+        }
+      });
+      
+      // Show building progress indicator
+      if (bridge.isBuilding) {
+        // Position indicator at the end of the current bridge
+        const lastSegmentX = bridge.x + (bridge.segments.length) * (bridge.width - 2);
+        
+        ctx.fillStyle = '#ffcc00';
+        const indicatorHeight = Math.abs(Math.sin(Date.now() / 100) * 10) + 5;
+        ctx.fillRect(lastSegmentX, bridge.y - indicatorHeight - 5, 4, indicatorHeight);
+      }
+    }
+    
+    function drawPlatforms() {
+      platforms.forEach(platform => {
+        // Main platform
+        drawPixelatedRect(
+          platform.x, 
+          platform.y, 
+          platform.width, 
+          platform.height, 
+          platform.color
+        );
+        
+        // Platform edge
+        ctx.fillStyle = platform.color === colors.ground ? '#7d472a' : 
+                        (platform.color === colors.platformTrue ? '#2e8259' : '#b13428');
+        ctx.fillRect(platform.x, platform.y, platform.width, 8);
+        
+        // Platform label
+        ctx.fillStyle = colors.text;
+        ctx.font = '16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(platform.label, platform.x + platform.width / 2, platform.y + 40);
+      });
+    }
+    
+    function drawBackground() {
+      // Sky
+      ctx.fillStyle = colors.sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Ground
+      ctx.fillStyle = colors.ground;
+      ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+      
+      // Clouds (pixelated)
+      ctx.fillStyle = '#ffffff';
+      [
+        {x: 50, y: 50, w: 60, h: 30},
+        {x: 200, y: 80, w: 70, h: 25},
+        {x: 400, y: 40, w: 80, h: 35},
+        {x: 600, y: 60, w: 65, h: 30}
+      ].forEach(cloud => {
+        for (let x = 0; x < cloud.w; x += 8) {
+          for (let y = 0; y < cloud.h; y += 8) {
+            if (Math.random() > 0.3) {
+              ctx.fillRect(cloud.x + x, cloud.y + y, 8, 8);
+            }
+          }
+        }
+      });
+    }
+    
+    function drawQuestion() {
+      ctx.fillStyle = colors.text;
+      ctx.font = '18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(game.question, canvas.width / 2, 50);
+    }
+    
+    function extendBridge() {
+      if (game.state !== 'playing') return;
+      
+      if (!bridge.isBuilding) {
+        bridge.isBuilding = true;
+      } else {
+        // Add a new bridge segment
+        bridge.segments.push(1);
+        playBuildSound();
+        createParticles(
+          bridge.x + bridge.segments.length * (bridge.width - 2), 
+          bridge.y, 
+          '#ad7d4c', 
+          5
+        );
+      }
+    }
+    
+    function finishBridge() {
+      if (game.state !== 'playing' || !bridge.isBuilding) return;
+      
+      bridge.isBuilding = false;
+      player.isMoving = true;
+      
+      // Calculate total bridge length
+      const bridgeLength = bridge.segments.length * (bridge.width - 2);
+      
+      // Find which platform the bridge reaches
+      let targetPlatform = null;
+      let bridgeEnd = bridge.x + bridgeLength;
+      
+      platforms.forEach(platform => {
+        if (bridgeEnd >= platform.x && bridgeEnd <= platform.x + platform.width) {
+          targetPlatform = platform;
+        }
+      });
+      
+      // Determine if reached correct answer
+      if (targetPlatform) {
+        if ((game.correctAnswer === 'TRUE' && targetPlatform.label === 'TRUE') ||
+            (game.correctAnswer === 'FALSE' && targetPlatform.label === 'FALSE')) {
+          setTimeout(() => {
+            game.state = 'success';
+            playSuccessSound();
+            showRestartButton();
+          }, 1000);
+        } else if (targetPlatform.label !== 'START') {
+          setTimeout(() => {
+            game.state = 'failure';
+            player.velocity.y = -5; // Jump a little before falling
+            playFailSound();
+            showRestartButton();
+          }, 1000);
+        }
+      } else {
+        // Bridge didn't reach any platform
+        setTimeout(() => {
+          game.state = 'failure';
+          player.velocity.y = -5;
+          playFailSound();
+          showRestartButton();
+        }, 800);
+      }
+    }
+    
+    function updateGame() {
+      if (game.state === 'playing') {
+        if (player.isMoving) {
+          player.x += player.speed;
+          
+          // Check if player has gone past the bridge
+          const bridgeLength = bridge.segments.length * (bridge.width - 2);
+          if (player.x > bridge.x + bridgeLength) {
+            player.isMoving = false;
+            game.state = 'failure';
+            player.velocity.y = -5;
+            playFailSound();
+            showRestartButton();
+          }
+        }
+      } else if (game.state === 'failure') {
+        // Apply gravity to falling player
+        player.velocity.y += game.gravity;
+        player.y += player.velocity.y;
+      }
+      
+      updateParticles();
+    }
+    
+    function render() {
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      drawBackground();
+      drawQuestion();
+      drawPlatforms();
+      drawBridge();
+      drawPlayer();
+      drawParticles();
+      
+      // Instructions
+      if (game.state === 'playing' && !player.isMoving) {
+        ctx.fillStyle = colors.text;
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        
+        if (!bridge.isBuilding && bridge.segments.length === 0) {
+          ctx.fillText('Tap/click to start building the bridge', canvas.width / 2, canvas.height - 100);
+        } else if (bridge.isBuilding) {
+          ctx.fillText('Tap/click to add bridge segments', canvas.width / 2, canvas.height - 100);
+          ctx.fillText('Tap/click and hold to finish and cross', canvas.width / 2, canvas.height - 80);
+        }
+      }
+      
+      // Game result message
+      if (game.state === 'success') {
+        ctx.fillStyle = '#3ca370';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Correct!', canvas.width / 2, 100);
+      } else if (game.state === 'failure') {
+        ctx.fillStyle = '#d14334';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Incorrect!', canvas.width / 2, 100);
+      }
+    }
+    
+    function gameLoop() {
+      updateGame();
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    function showRestartButton() {
+      setTimeout(() => {
+        restartButton.style.display = 'block';
+      }, game.restartDelay);
+    }
+    
+    function restartGame() {
+      // Reset game state
+      game.state = 'playing';
+      player.x = 50;
+      player.y = canvas.height - 180;
+      player.isMoving = false;
+      player.velocity = { x: 0, y: 0 };
+      bridge.segments = [];
+      bridge.isBuilding = false;
+      particles.length = 0;
+      
+      // Hide restart button
+      restartButton.style.display = 'none';
+    }
+    
+    // Event listeners
+    let pressTimer;
+    
+    canvas.addEventListener('mousedown', (e) => {
+      if (bridge.isBuilding) {
+        pressTimer = setTimeout(() => {
+          finishBridge();
+          pressTimer = null;
+        }, 500);
+      } else {
+        extendBridge();
+      }
+    });
+    
+    canvas.addEventListener('mouseup', () => {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        extendBridge();
+      }
+    });
+    
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (bridge.isBuilding) {
+        pressTimer = setTimeout(() => {
+          finishBridge();
+          pressTimer = null;
+        }, 500);
+      } else {
+        extendBridge();
+      }
+    });
+    
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        extendBridge();
+      }
+    });
+    
+    restartButton.addEventListener('click', restartGame);
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

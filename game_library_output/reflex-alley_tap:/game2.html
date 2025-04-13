@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Planet Reflex Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Detect device type and set canvas dimensions
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const colors = {
+            background: '#0f0f23',
+            hitZone: '#ff4444',
+            hitZoneBorder: '#ffff00',
+            text: '#ffffff',
+            correctText: '#44ff44',
+            wrongText: '#ff4444',
+            stars: '#ffffff',
+            platforms: '#444488'
+        };
+        
+        const planets = [
+            { text: 'Mars', correct: true },
+            { text: 'Venus', correct: false },
+            { text: 'Jupiter', correct: false },
+            { text: 'Saturn', correct: false },
+            { text: 'Mercury', correct: false }
+        ];
+        
+        let activeAnswers = [];
+        let gameOver = false;
+        let gameWon = false;
+        let tutorial = true;
+        let tutorialTimer = 120;
+        let hitZoneFlash = 0;
+        let stars = [];
+        let spawnTimer = 0;
+        let gameTime = 0;
+        let particles = [];
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(196.00, audioContext.currentTime); // G3
+                oscillator.frequency.setValueAtTime(146.83, audioContext.currentTime + 0.2); // D3
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.4);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.4);
+            } else if (type === 'spawn') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+        }
+        
+        // Create stars for background
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                speed: Math.random() * 1 + 0.5
+            });
+        }
+        
+        // Game functions
+        function spawnAnswer() {
+            const shuffled = [...planets].sort(() => 0.5 - Math.random());
+            const selected = shuffled[0];
+            
+            const answer = {
+                text: selected.text,
+                correct: selected.correct,
+                x: canvas.width + 100,
+                y: Math.random() * (canvas.height - 180) + 140,
+                width: 100,
+                height: 40,
+                speed: Math.random() * 2 + 2 + (gameTime / 1000)
+            };
+            
+            activeAnswers.push(answer);
+            playSound('spawn');
+        }
+        
+        function createParticles(x, y, correct) {
+            const particleCount = 20;
+            const color = correct ? colors.correctText : colors.wrongText;
+            
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    size: Math.random() * 4 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            // Draw with slight pixelation effect
+            for (let i = 0; i < width; i += 4) {
+                for (let j = 0; j < height; j += 4) {
+                    ctx.fillRect(
+                        Math.floor(x + i),
+                        Math.floor(y + j),
+                        4,
+                        4
+                    );
+                }
+            }
+        }
+        
+        function drawHitZone() {
+            const zoneWidth = 80;
+            const zoneX = canvas.width / 2 - zoneWidth / 2;
+            
+            // Draw hit zone with flashing effect
+            const borderColor = (hitZoneFlash > 0 || Math.floor(gameTime / 10) % 2 === 0) 
+                ? colors.hitZoneBorder 
+                : '#886600';
+            
+            // Hit zone
+            ctx.globalAlpha = 0.3;
+            drawPixelRect(zoneX, 100, zoneWidth, canvas.height - 200, colors.hitZone);
+            ctx.globalAlpha = 1;
+            
+            // Hit zone border - left
+            drawPixelRect(zoneX, 100, 4, canvas.height - 200, borderColor);
+            // Hit zone border - right
+            drawPixelRect(zoneX + zoneWidth - 4, 100, 4, canvas.height - 200, borderColor);
+            
+            // Arrow indicators
+            const arrowSize = 20;
+            const arrowY = canvas.height / 2;
+            
+            // Left arrow
+            ctx.fillStyle = borderColor;
+            ctx.beginPath();
+            ctx.moveTo(zoneX - 10, arrowY);
+            ctx.lineTo(zoneX - 10 - arrowSize, arrowY - arrowSize / 2);
+            ctx.lineTo(zoneX - 10 - arrowSize, arrowY + arrowSize / 2);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Right arrow
+            ctx.beginPath();
+            ctx.moveTo(zoneX + zoneWidth + 10, arrowY);
+            ctx.lineTo(zoneX + zoneWidth + 10 + arrowSize, arrowY - arrowSize / 2);
+            ctx.lineTo(zoneX + zoneWidth + 10 + arrowSize, arrowY + arrowSize / 2);
+            ctx.closePath();
+            ctx.fill();
+            
+            if (hitZoneFlash > 0) {
+                hitZoneFlash--;
+            }
+            
+            return { x: zoneX, width: zoneWidth };
+        }
+        
+        function isInHitZone(answer, hitZone) {
+            return (
+                answer.x + answer.width >= hitZone.x &&
+                answer.x <= hitZone.x + hitZone.width
+            );
+        }
+        
+        function drawAnswer(answer, hitZone) {
+            const inHitZone = isInHitZone(answer, hitZone);
+            
+            // Platform-like appearance
+            ctx.fillStyle = colors.platforms;
+            drawPixelRect(answer.x, answer.y, answer.width, answer.height, colors.platforms);
+            
+            // Text
+            ctx.fillStyle = inHitZone ? '#ffffff' : '#cccccc';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(answer.text, answer.x + answer.width / 2, answer.y + answer.height / 2);
+        }
+        
+        function drawParticles() {
+            particles.forEach((p, index) => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(index, 1);
+                    return;
+                }
+                
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 30;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                ctx.globalAlpha = 1;
+            });
+        }
+        
+        function handleAnswerClick(answer) {
+            gameOver = true;
+            
+            if (answer.correct) {
+                gameWon = true;
+                playSound('correct');
+            } else {
+                gameWon = false;
+                playSound('wrong');
+            }
+            
+            createParticles(answer.x + answer.width / 2, answer.y + answer.height / 2, answer.correct);
+            
+            // Create restart button after a short delay
+            setTimeout(() => {
+                drawRestartButton();
+            }, 1500);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 40);
+        }
+        
+        function drawGameResult() {
+            ctx.fillStyle = gameWon ? colors.correctText : colors.wrongText;
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(
+                gameWon ? 'Correct!' : 'Wrong!',
+                canvas.width / 2,
+                canvas.height / 2 - 60
+            );
+        }
+        
+        function drawRestartButton() {
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 20;
+            
+            // Draw button
+            drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, '#555555');
+            
+            // Button text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', canvas.width / 2, buttonY + buttonHeight / 2);
+            
+            // Add click event for restart button
+            canvas.addEventListener('click', function restartHandler(e) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                if (
+                    mouseX >= buttonX &&
+                    mouseX <= buttonX + buttonWidth &&
+                    mouseY >= buttonY &&
+                    mouseY <= buttonY + buttonHeight
+                ) {
+                    // Restart game
+                    gameOver = false;
+                    gameWon = false;
+                    tutorial = true;
+                    tutorialTimer = 120;
+                    activeAnswers = [];
+                    particles = [];
+                    gameTime = 0;
+                    canvas.removeEventListener('click', restartHandler);
+                }
+            });
+        }
+        
+        function drawTutorial() {
+            if (tutorialTimer <= 0) {
+                tutorial = false;
+                return;
+            }
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Tap the correct answer as it passes', canvas.width / 2, canvas.height / 2 - 40);
+            ctx.fillText('through the highlighted zone!', canvas.width / 2, canvas.height / 2);
+            
+            tutorialTimer--;
+        }
+        
+        function drawBackground() {
+            // Background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Stars
+            stars.forEach(star => {
+                ctx.fillStyle = colors.stars;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+                star.x -= star.speed;
+                
+                if (star.x < 0) {
+                    star.x = canvas.width;
+                    star.y = Math.random() * canvas.height;
+                }
+            });
+            
+            // Platform base
+            const platformHeight = 40;
+            drawPixelRect(0, canvas.height - platformHeight, canvas.width, platformHeight, '#335577');
+        }
+        
+        // Game loop
+        function update() {
+            gameTime++;
+            
+            // Clear the canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            drawBackground();
+            
+            // Draw hit zone and get its bounds
+            const hitZone = drawHitZone();
+            
+            // Draw question
+            drawQuestion();
+            
+            if (!gameOver) {
+                // Spawn new answers
+                spawnTimer++;
+                if (spawnTimer >= (120 - Math.min(50, gameTime / 100)) && activeAnswers.length < 3) {
+                    spawnAnswer();
+                    spawnTimer = 0;
+                }
+                
+                // Update and draw answers
+                for (let i = activeAnswers.length - 1; i >= 0; i--) {
+                    const answer = activeAnswers[i];
+                    answer.x -= answer.speed;
+                    
+                    // Check if answer has gone off screen
+                    if (answer.x + answer.width < 0) {
+                        activeAnswers.splice(i, 1);
+                        // If it was the correct answer, spawn it again after a delay
+                        if (answer.correct) {
+                            setTimeout(spawnAnswer, 1000);
+                        }
+                        continue;
+                    }
+                    
+                    drawAnswer(answer, hitZone);
+                }
+            } else {
+                drawGameResult();
+            }
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw tutorial if active
+            if (tutorial) {
+                drawTutorial();
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Handle clicks/taps
+        canvas.addEventListener('click', function(e) {
+            if (gameOver || tutorial) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if any answer was clicked
+            for (let i = 0; i < activeAnswers.length; i++) {
+                const answer = activeAnswers[i];
+                const hitZoneObj = {
+                    x: canvas.width / 2 - 40,
+                    width: 80
+                };
+                
+                if (
+                    mouseX >= answer.x &&
+                    mouseX <= answer.x + answer.width &&
+                    mouseY >= answer.y &&
+                    mouseY <= answer.y + answer.height &&
+                    isInHitZone(answer, hitZoneObj)
+                ) {
+                    hitZoneFlash = 15;
+                    handleAnswerClick(answer);
+                    break;
+                }
+            }
+        });
+        
+        // Start the game
+        update();
+    </script>
+</body>
+</html>

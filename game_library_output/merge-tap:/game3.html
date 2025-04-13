@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz Merge Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            background-color: #000;
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+        }
+        #game-container {
+            position: relative;
+        }
+        #restart-btn {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 10px 20px;
+            background-color: #444;
+            color: #fff;
+            border: 4px solid #888;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restart-btn">RESTART</button>
+    </div>
+
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart-btn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let tutorialTimer = 3; // 3 seconds for tutorial hint
+        let success = false;
+        
+        // Palette - 16 colors
+        const COLORS = [
+            '#000000', '#1D2B53', '#7E2553', '#008751', 
+            '#AB5236', '#5F574F', '#C2C3C7', '#FFF1E8', 
+            '#FF004D', '#FFA300', '#FFEC27', '#00E436', 
+            '#29ADFF', '#83769C', '#FF77A8', '#FFCCAA'
+        ];
+        
+        // Answer options
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Bubble class
+        class Bubble {
+            constructor(text, correct, x, y) {
+                this.text = text;
+                this.correct = correct;
+                this.x = x;
+                this.y = y;
+                this.radius = correct ? 25 : 30; // Correct bubble slightly smaller
+                this.speedX = (Math.random() - 0.5) * 2;
+                this.speedY = (Math.random() - 0.5) * 2;
+                this.color = COLORS[Math.floor(Math.random() * 6) + 9]; // Bright colors
+                this.active = true;
+                this.pulseDir = 1;
+                this.pulseAmount = 0;
+                this.merged = false;
+                this.mergeProgress = 0;
+            }
+            
+            update(deltaTime) {
+                if (!this.active) return;
+                
+                // Add slight acceleration
+                this.speedX *= 1.0005;
+                this.speedY *= 1.0005;
+                
+                this.x += this.speedX;
+                this.y += this.speedY;
+                
+                // Bounce off the walls with chunky movement
+                if (this.x - this.radius < 0 || this.x + this.radius > canvas.width) {
+                    this.speedX = -this.speedX;
+                    this.x = Math.max(this.radius, Math.min(canvas.width - this.radius, this.x));
+                    playSound(200, 0.05);
+                }
+                
+                if (this.y - this.radius < 0 || this.y + this.radius > canvas.height) {
+                    this.speedY = -this.speedY;
+                    this.y = Math.max(this.radius, Math.min(canvas.height - this.radius, this.y));
+                    playSound(200, 0.05);
+                }
+                
+                // Pulsing effect
+                this.pulseAmount += 0.05 * this.pulseDir;
+                if (this.pulseAmount > 2 || this.pulseAmount < 0) {
+                    this.pulseDir *= -1;
+                }
+            }
+            
+            draw() {
+                if (!this.active) return;
+                
+                const drawRadius = this.radius + Math.floor(this.pulseAmount);
+                
+                // Draw pixelated bubble (square with rounded corners)
+                ctx.fillStyle = this.color;
+                drawPixelCircle(this.x, this.y, drawRadius);
+                
+                // Draw text
+                ctx.fillStyle = '#FFF1E8';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x, this.y);
+            }
+            
+            contains(x, y) {
+                const dx = this.x - x;
+                const dy = this.y - y;
+                return dx * dx + dy * dy < this.radius * this.radius;
+            }
+        }
+        
+        // Create bubbles
+        let bubbles = [];
+        
+        function initGame() {
+            bubbles = [];
+            gameOver = false;
+            success = false;
+            tutorialTimer = 3;
+            
+            // Position bubbles evenly around the screen
+            const positions = [
+                { x: canvas.width * 0.25, y: canvas.height * 0.3 },
+                { x: canvas.width * 0.75, y: canvas.height * 0.3 },
+                { x: canvas.width * 0.35, y: canvas.height * 0.7 },
+                { x: canvas.width * 0.65, y: canvas.height * 0.7 }
+            ];
+            
+            // Shuffle positions
+            positions.sort(() => Math.random() - 0.5);
+            
+            // Create bubbles
+            for (let i = 0; i < answers.length; i++) {
+                bubbles.push(new Bubble(
+                    answers[i].text,
+                    answers[i].correct,
+                    positions[i].x,
+                    positions[i].y
+                ));
+            }
+            
+            restartBtn.style.display = 'none';
+        }
+        
+        // Draw pixelated circle
+        function drawPixelCircle(x, y, radius) {
+            // Draw a pixelated circle by drawing a grid of squares
+            const pixelSize = 2; // Size of each "pixel"
+            for (let px = -radius; px < radius; px += pixelSize) {
+                for (let py = -radius; py < radius; py += pixelSize) {
+                    const dist = Math.sqrt(px * px + py * py);
+                    if (dist <= radius) {
+                        // Draw a square "pixel"
+                        ctx.fillRect(
+                            Math.floor(x + px), 
+                            Math.floor(y + py), 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw pixel explosion effect
+        function drawMergeEffect(x, y, progress, color) {
+            const maxRadius = 60;
+            const currentRadius = maxRadius * progress;
+            
+            ctx.fillStyle = color;
+            for (let i = 0; i < 12; i++) {
+                const angle = (i / 12) * Math.PI * 2;
+                const distance = currentRadius * (0.5 + Math.random() * 0.5);
+                const px = x + Math.cos(angle) * distance;
+                const py = y + Math.sin(angle) * distance;
+                const size = Math.floor(6 * (1 - progress));
+                
+                ctx.fillRect(
+                    Math.floor(px - size/2),
+                    Math.floor(py - size/2),
+                    size,
+                    size
+                );
+            }
+        }
+        
+        // Simple sound synthesis
+        function playSound(freq, duration) {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = freq;
+                gainNode.gain.value = 0.1;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration * 1000);
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+        
+        // Play success/failure sounds
+        function playSuccessSound() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2), 200); // G5
+        }
+        
+        function playFailSound() {
+            playSound(392.00, 0.1); // G4
+            setTimeout(() => playSound(349.23, 0.2), 100); // F4
+        }
+        
+        // Handle clicks/taps
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
+            
+            // Check if clicked on a bubble
+            for (let bubble of bubbles) {
+                if (bubble.active && bubble.contains(clickX, clickY)) {
+                    if (bubble.correct) {
+                        // Start merging process
+                        success = true;
+                        bubble.merged = true;
+                        playSuccessSound();
+                        
+                        // Deactivate all other bubbles
+                        for (let otherBubble of bubbles) {
+                            if (otherBubble !== bubble) {
+                                otherBubble.active = false;
+                            }
+                        }
+                    } else {
+                        // Game over - incorrect answer
+                        gameOver = true;
+                        playFailSound();
+                        setTimeout(() => {
+                            restartBtn.style.display = 'block';
+                        }, 1000);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Animation loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Clear the canvas
+            ctx.fillStyle = '#1D2B53'; // Dark blue background
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = '#FFEC27';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width/2, 50);
+            
+            // Update and draw bubbles
+            let allMerged = true;
+            for (let bubble of bubbles) {
+                if (bubble.active) {
+                    bubble.update(deltaTime);
+                    bubble.draw();
+                    if (!bubble.merged) {
+                        allMerged = false;
+                    }
+                }
+            }
+            
+            // Draw tutorial hint
+            if (tutorialTimer > 0 && !gameOver) {
+                tutorialTimer -= deltaTime / 1000;
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Tap the correct answer to merge all bubbles!', canvas.width/2, canvas.height - 30);
+            }
+            
+            // Handle merging animation
+            if (success) {
+                const correctBubble = bubbles.find(b => b.correct);
+                if (correctBubble) {
+                    correctBubble.mergeProgress += deltaTime / 1000;
+                    
+                    if (correctBubble.mergeProgress >= 1) {
+                        gameOver = true;
+                        setTimeout(() => {
+                            restartBtn.style.display = 'block';
+                        }, 1000);
+                    } else {
+                        // Draw merging effects
+                        for (let i = 0; i < bubbles.length; i++) {
+                            if (!bubbles[i].correct) {
+                                const progress = correctBubble.mergeProgress;
+                                const startX = bubbles[i].x;
+                                const startY = bubbles[i].y;
+                                const endX = correctBubble.x;
+                                const endY = correctBubble.y;
+                                
+                                // Move particles toward the correct bubble
+                                const currentX = startX + (endX - startX) * progress;
+                                const currentY = startY + (endY - startY) * progress;
+                                
+                                drawMergeEffect(currentX, currentY, progress, bubbles[i].color);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize and start game
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', initGame);
+        
+        initGame();
+        gameLoop(0);
+    </script>
+</body>
+</html>

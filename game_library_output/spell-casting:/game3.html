@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spell Casting Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive sizing
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - 8-bit palette
+        const COLORS = {
+            bg: '#0a0e1a',
+            text: '#e0e0e0',
+            highlight: '#ffd700',
+            correct: '#4ade80',
+            wrong: '#f87171',
+            spellTrail: '#9333ea',
+            border: '#4b5563',
+            options: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b']
+        };
+        
+        // Game state
+        const state = {
+            question: "What is the capital of France?",
+            options: ["Paris", "London", "Berlin", "Madrid"],
+            correctAnswer: 0,
+            playerDrawing: false,
+            drawPoints: [],
+            currentPattern: -1,
+            gameOver: false,
+            result: null,
+            stars: [],
+            pixelParticles: [],
+            spellPatterns: [
+                { name: "Circle", points: [] },
+                { name: "Zigzag", points: [] },
+                { name: "Square", points: [] },
+                { name: "Triangle", points: [] }
+            ],
+            patternTargets: [],
+            patternCompletionPercent: [0, 0, 0, 0],
+            showRestartButton: false
+        };
+        
+        // Generate pattern targets
+        function generatePatternTargets() {
+            // Circle pattern
+            const centerX = canvas.width / 2;
+            const patternY = isMobile ? canvas.height * 0.7 : canvas.height * 0.65;
+            const spacing = isMobile ? 70 : 150;
+            
+            for (let i = 0; i < 4; i++) {
+                const x = isMobile ? 
+                          (canvas.width / 2) : 
+                          (canvas.width * 0.2 + i * spacing);
+                const y = isMobile ? 
+                          (patternY + i * spacing) : 
+                          patternY;
+                const radius = isMobile ? 30 : 40;
+                
+                let pattern = [];
+                
+                // Generate different patterns
+                switch(i) {
+                    case 0: // Circle
+                        for (let a = 0; a < 360; a += 20) {
+                            const rad = a * Math.PI / 180;
+                            pattern.push({
+                                x: x + Math.cos(rad) * radius,
+                                y: y + Math.sin(rad) * radius
+                            });
+                        }
+                        break;
+                    case 1: // Zigzag
+                        for (let j = 0; j < 6; j++) {
+                            pattern.push({
+                                x: x - radius + (j * radius / 1.5),
+                                y: y + (j % 2 === 0 ? -radius/2 : radius/2)
+                            });
+                        }
+                        break;
+                    case 2: // Square
+                        pattern.push({x: x - radius/1.5, y: y - radius/1.5});
+                        pattern.push({x: x + radius/1.5, y: y - radius/1.5});
+                        pattern.push({x: x + radius/1.5, y: y + radius/1.5});
+                        pattern.push({x: x - radius/1.5, y: y + radius/1.5});
+                        pattern.push({x: x - radius/1.5, y: y - radius/1.5});
+                        break;
+                    case 3: // Triangle
+                        pattern.push({x: x, y: y - radius});
+                        pattern.push({x: x + radius, y: y + radius/1.5});
+                        pattern.push({x: x - radius, y: y + radius/1.5});
+                        pattern.push({x: x, y: y - radius});
+                        break;
+                }
+                
+                state.patternTargets[i] = {
+                    centerX: x,
+                    centerY: y,
+                    radius: radius,
+                    pattern: pattern
+                };
+            }
+        }
+        
+        // Sound effects using AudioContext
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'sine') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1, 'square'); // C5
+            setTimeout(() => playSound(659.25, 0.1, 'square'), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2, 'square'), 200); // G5
+        }
+        
+        function playWrongSound() {
+            playSound(311.13, 0.2, 'sawtooth'); // Eb4
+            setTimeout(() => playSound(233.08, 0.3, 'sawtooth'), 200); // Bb3
+        }
+        
+        function playSpellSound(progress) {
+            playSound(300 + progress * 500, 0.05, 'triangle');
+        }
+        
+        // Create stars effect
+        function createStars(x, y, color, count = 15) {
+            for (let i = 0; i < count; i++) {
+                state.stars.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 0.5) * 5,
+                    size: Math.random() * 4 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Create pixel particles
+        function createPixelParticles(x, y, color, count = 10) {
+            for (let i = 0; i < count; i++) {
+                state.pixelParticles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 3,
+                    vy: (Math.random() - 0.5) * 3 - 2,
+                    size: Math.floor(Math.random() * 4) + 2,
+                    color: color,
+                    life: Math.floor(Math.random() * 20) + 10
+                });
+            }
+        }
+        
+        // Update game state
+        function update() {
+            // Update stars
+            for (let i = state.stars.length - 1; i >= 0; i--) {
+                const star = state.stars[i];
+                star.x += star.vx;
+                star.y += star.vy;
+                star.life--;
+                if (star.life <= 0) {
+                    state.stars.splice(i, 1);
+                }
+            }
+            
+            // Update pixel particles
+            for (let i = state.pixelParticles.length - 1; i >= 0; i--) {
+                const particle = state.pixelParticles[i];
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.vy += 0.1; // Gravity
+                particle.life--;
+                if (particle.life <= 0) {
+                    state.pixelParticles.splice(i, 1);
+                }
+            }
+            
+            // Check pattern completion
+            if (state.playerDrawing && state.drawPoints.length > 1) {
+                for (let i = 0; i < state.patternTargets.length; i++) {
+                    const target = state.patternTargets[i];
+                    const pattern = target.pattern;
+                    
+                    let patternIndex = 0;
+                    let matchedPoints = 0;
+                    
+                    for (const point of state.drawPoints) {
+                        const patternPoint = pattern[patternIndex];
+                        const distance = Math.sqrt(
+                            Math.pow(point.x - patternPoint.x, 2) + 
+                            Math.pow(point.y - patternPoint.y, 2)
+                        );
+                        
+                        if (distance < 25) {
+                            matchedPoints++;
+                            patternIndex = (patternIndex + 1) % pattern.length;
+                            createPixelParticles(point.x, point.y, COLORS.options[i], 1);
+                            
+                            if (matchedPoints % 3 === 0) {
+                                playSpellSound(matchedPoints / pattern.length);
+                            }
+                        }
+                    }
+                    
+                    // Calculate completion percentage
+                    state.patternCompletionPercent[i] = Math.min(1, matchedPoints / pattern.length);
+                    
+                    // Check if pattern is completed
+                    if (state.patternCompletionPercent[i] >= 0.8 && !state.gameOver) {
+                        state.gameOver = true;
+                        state.currentPattern = i;
+                        state.result = i === state.correctAnswer;
+                        
+                        if (state.result) {
+                            playCorrectSound();
+                            createStars(target.centerX, target.centerY, COLORS.correct, 30);
+                        } else {
+                            playWrongSound();
+                            createStars(target.centerX, target.centerY, COLORS.wrong, 20);
+                        }
+                        
+                        setTimeout(() => {
+                            state.showRestartButton = true;
+                        }, 1500);
+                    }
+                }
+            }
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas with background
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border
+            const borderSize = 8;
+            ctx.fillStyle = COLORS.border;
+            for (let x = 0; x < canvas.width; x += borderSize) {
+                ctx.fillRect(x, 0, borderSize, borderSize);
+                ctx.fillRect(x, canvas.height - borderSize, borderSize, borderSize);
+            }
+            for (let y = 0; y < canvas.height; y += borderSize) {
+                ctx.fillRect(0, y, borderSize, borderSize);
+                ctx.fillRect(canvas.width - borderSize, y, borderSize, borderSize);
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? "18px sans-serif" : "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(state.question, canvas.width / 2, isMobile ? 60 : 80);
+            
+            // Draw pattern areas
+            for (let i = 0; i < state.patternTargets.length; i++) {
+                const target = state.patternTargets[i];
+                
+                // Draw option text
+                ctx.fillStyle = COLORS.options[i];
+                ctx.font = isMobile ? "16px sans-serif" : "20px sans-serif";
+                ctx.textAlign = "center";
+                
+                if (isMobile) {
+                    ctx.fillText(state.options[i], target.centerX, target.centerY - target.radius - 15);
+                } else {
+                    ctx.fillText(state.options[i], target.centerX, target.centerY - target.radius - 15);
+                }
+                
+                // Draw pattern outline
+                ctx.strokeStyle = COLORS.options[i];
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                
+                for (let j = 0; j < target.pattern.length; j++) {
+                    const point = target.pattern[j];
+                    if (j === 0) {
+                        ctx.moveTo(point.x, point.y);
+                    } else {
+                        ctx.lineTo(point.x, point.y);
+                    }
+                }
+                
+                ctx.stroke();
+                
+                // Draw pattern points
+                for (let j = 0; j < target.pattern.length; j++) {
+                    const point = target.pattern[j];
+                    ctx.fillStyle = COLORS.options[i];
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Draw pattern progress
+                if (state.patternCompletionPercent[i] > 0) {
+                    ctx.strokeStyle = COLORS.highlight;
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    
+                    const progressPoints = Math.floor(target.pattern.length * state.patternCompletionPercent[i]);
+                    
+                    for (let j = 0; j <= progressPoints; j++) {
+                        const point = target.pattern[j % target.pattern.length];
+                        if (j === 0) {
+                            ctx.moveTo(point.x, point.y);
+                        } else {
+                            ctx.lineTo(point.x, point.y);
+                        }
+                    }
+                    
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw player's drawing line
+            if (state.drawPoints.length > 1) {
+                ctx.strokeStyle = COLORS.spellTrail;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(state.drawPoints[0].x, state.drawPoints[0].y);
+                
+                for (let i = 1; i < state.drawPoints.length; i++) {
+                    ctx.lineTo(state.drawPoints[i].x, state.drawPoints[i].y);
+                }
+                
+                ctx.stroke();
+                
+                // Draw glow effect on the line
+                ctx.strokeStyle = 'rgba(147, 51, 234, 0.3)';
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.moveTo(state.drawPoints[0].x, state.drawPoints[0].y);
+                
+                for (let i = 1; i < state.drawPoints.length; i++) {
+                    ctx.lineTo(state.drawPoints[i].x, state.drawPoints[i].y);
+                }
+                
+                ctx.stroke();
+            }
+            
+            // Draw stars
+            for (const star of state.stars) {
+                ctx.fillStyle = star.color;
+                // Draw pixel art star
+                const size = Math.floor(star.size);
+                ctx.fillRect(Math.floor(star.x), Math.floor(star.y), size, size);
+            }
+            
+            // Draw pixel particles
+            for (const particle of state.pixelParticles) {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    Math.floor(particle.x), 
+                    Math.floor(particle.y), 
+                    particle.size, 
+                    particle.size
+                );
+            }
+            
+            // Draw result message
+            if (state.gameOver) {
+                ctx.fillStyle = state.result ? COLORS.correct : COLORS.wrong;
+                ctx.font = isMobile ? "24px sans-serif" : "32px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    state.result ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    isMobile ? 120 : 150
+                );
+                
+                if (state.showRestartButton) {
+                    // Draw restart button
+                    const buttonWidth = isMobile ? 100 : 120;
+                    const buttonHeight = isMobile ? 40 : 50;
+                    const buttonX = (canvas.width - buttonWidth) / 2;
+                    const buttonY = isMobile ? 160 : 190;
+                    
+                    // Button background
+                    ctx.fillStyle = COLORS.border;
+                    ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                    
+                    // Button border
+                    ctx.strokeStyle = COLORS.text;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                    
+                    // Button text
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = isMobile ? "18px sans-serif" : "20px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("Restart", canvas.width / 2, buttonY + buttonHeight / 2 + 6);
+                }
+            }
+            
+            // Draw instructions
+            if (!state.gameOver) {
+                ctx.fillStyle = 'rgba(224, 224, 224, 0.7)';
+                ctx.font = isMobile ? "14px sans-serif" : "16px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    "Trace a spell pattern to answer", 
+                    canvas.width / 2, 
+                    isMobile ? 90 : 120
+                );
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize the game
+        function init() {
+            generatePatternTargets();
+            gameLoop();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.gameOver && state.showRestartButton) {
+                // Check if click is on restart button
+                const buttonWidth = isMobile ? 100 : 120;
+                const buttonHeight = isMobile ? 40 : 50;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = isMobile ? 160 : 190;
+                
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth &&
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    // Reset game
+                    state.gameOver = false;
+                    state.result = null;
+                    state.currentPattern = -1;
+                    state.drawPoints = [];
+                    state.patternCompletionPercent = [0, 0, 0, 0];
+                    state.showRestartButton = false;
+                    state.stars = [];
+                    state.pixelParticles = [];
+                }
+                return;
+            }
+            
+            if (!state.gameOver) {
+                state.playerDrawing = true;
+                state.drawPoints = [];
+                
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                state.drawPoints.push({x, y});
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (state.playerDrawing && !state.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                state.drawPoints.push({x, y});
+                
+                // Limit number of points to prevent performance issues
+                if (state.drawPoints.length > 100) {
+                    state.drawPoints.shift();
+                }
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            state.playerDrawing = false;
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            state.playerDrawing = false;
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            
+            if (state.gameOver && state.showRestartButton) {
+                // Check if touch is on restart button
+                const buttonWidth = isMobile ? 100 : 120;
+                const buttonHeight = isMobile ? 40 : 50;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = isMobile ? 160 : 190;
+                
+                const rect = canvas.getBoundingClientRect();
+                const x = e.touches[0].clientX - rect.left;
+                const y = e.touches[0].clientY - rect.top;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth &&
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    // Reset game
+                    state.gameOver = false;
+                    state.result = null;
+                    state.currentPattern = -1;
+                    state.drawPoints = [];
+                    state.patternCompletionPercent = [0, 0, 0, 0];
+                    state.showRestartButton = false;
+                    state.stars = [];
+                    state.pixelParticles = [];
+                }
+                return;
+            }
+            
+            if (!state.gameOver) {
+                state.playerDrawing = true;
+                state.drawPoints = [];
+                
+                const rect = canvas.getBoundingClientRect();
+                const x = e.touches[0].clientX - rect.left;
+                const y = e.touches[0].clientY - rect.top;
+                
+                state.drawPoints.push({x, y});
+            }
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            
+            if (state.playerDrawing && !state.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.touches[0].clientX - rect.left;
+                const y = e.touches[0].clientY - rect.top;
+                
+                state.drawPoints.push({x, y});
+                
+                // Limit number of points to prevent performance issues
+                if (state.drawPoints.length > 100) {
+                    state.drawPoints.shift();
+                }
+            }
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            state.playerDrawing = false;
+        });
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

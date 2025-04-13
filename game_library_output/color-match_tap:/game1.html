@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Match Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if mobile device based on screen width
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas dimensions based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors - 8-bit palette
+        const COLORS = {
+            background: '#0f380f',
+            text: '#9bbc0f',
+            highlight: '#8bac0f',
+            option1: '#d3502c',
+            option2: '#5a6988',
+            option3: '#306230',
+            option4: '#8d45a8',
+            correct: '#9bbc0f',
+            incorrect: '#d3502c',
+            border: '#306230'
+        };
+        
+        // Game state
+        const state = {
+            question: "What is the capital of France?",
+            options: ["Paris", "London", "Berlin", "Rome"],
+            correctIndex: 0,
+            targetColor: null,
+            gameOver: false,
+            result: null,
+            flashTimer: 0,
+            animationFrame: 0
+        };
+        
+        // Options setup
+        const optionColors = [COLORS.option1, COLORS.option2, COLORS.option3, COLORS.option4];
+        state.targetColor = optionColors[Math.floor(Math.random() * optionColors.length)];
+        
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2), 200); // G5
+        }
+        
+        function playIncorrectSound() {
+            playSound(196.00, 0.2, 'sawtooth'); // G3
+            setTimeout(() => playSound(185.00, 0.3, 'sawtooth'), 200); // F#3
+        }
+        
+        // Draw pixel art rectangle
+        function drawPixelRect(x, y, width, height, fillColor, borderColor) {
+            // Draw border with pixel appearance
+            ctx.fillStyle = borderColor;
+            ctx.fillRect(x, y, width, height);
+            
+            // Draw inner rectangle
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x + 4, y + 4, width - 8, height - 8);
+            
+            // Add pixel corner details
+            ctx.fillStyle = borderColor;
+            ctx.fillRect(x + 2, y + 2, 2, 2);
+            ctx.fillRect(x + width - 4, y + 2, 2, 2);
+            ctx.fillRect(x + 2, y + height - 4, 2, 2);
+            ctx.fillRect(x + width - 4, y + height - 4, 2, 2);
+        }
+        
+        // Calculate positions for options based on device
+        function getOptionPositions() {
+            const positions = [];
+            const optionWidth = isMobile ? 320 : 360;
+            const optionHeight = 80;
+            const startY = isMobile ? 280 : 300;
+            const spacing = optionHeight + 20;
+            
+            for (let i = 0; i < 4; i++) {
+                positions.push({
+                    x: canvas.width / 2 - optionWidth / 2,
+                    y: startY + i * spacing,
+                    width: optionWidth,
+                    height: optionHeight
+                });
+            }
+            
+            return positions;
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border around canvas edge
+            ctx.strokeStyle = COLORS.border;
+            ctx.lineWidth = 8;
+            for (let i = 0; i < 8; i += 2) {
+                ctx.strokeRect(i, i, canvas.width - i * 2, canvas.height - i * 2);
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '22px Arial' : '28px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(state.question, canvas.width / 2, isMobile ? 150 : 180);
+            
+            // Draw instructions
+            ctx.font = isMobile ? '18px Arial' : '24px Arial';
+            
+            // Target color indicator - flash the text
+            state.flashTimer = (state.flashTimer + 1) % 40;
+            if (state.flashTimer < 20) {
+                ctx.fillStyle = state.targetColor;
+            } else {
+                ctx.fillStyle = COLORS.text;
+            }
+            
+            const targetBoxSize = isMobile ? 30 : 40;
+            ctx.fillText("Click the answer with this color:", canvas.width / 2, isMobile ? 200 : 230);
+            
+            // Draw target color box
+            drawPixelRect(
+                canvas.width / 2 - targetBoxSize / 2,
+                isMobile ? 220 : 250, 
+                targetBoxSize, 
+                targetBoxSize, 
+                state.targetColor, 
+                COLORS.border
+            );
+            
+            // Draw options
+            const positions = getOptionPositions();
+            for (let i = 0; i < state.options.length; i++) {
+                const pos = positions[i];
+                
+                // Choose color for this option
+                let optionColor = optionColors[i];
+                
+                // Set option colors, handling game over state
+                if (state.gameOver) {
+                    if (i === state.correctIndex) {
+                        optionColor = COLORS.correct;
+                    } else if (i === state.result && i !== state.correctIndex) {
+                        optionColor = COLORS.incorrect;
+                    }
+                }
+                
+                // Draw option background
+                drawPixelRect(pos.x, pos.y, pos.width, pos.height, optionColor, COLORS.border);
+                
+                // Draw option text
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = isMobile ? '20px Arial' : '24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(state.options[i], pos.x + pos.width / 2, pos.y + pos.height / 2 + 8);
+            }
+            
+            // If game over, show restart button
+            if (state.gameOver) {
+                const buttonWidth = isMobile ? 160 : 200;
+                const buttonHeight = 60;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height - 120;
+                
+                // Draw restart button
+                drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, COLORS.highlight, COLORS.border);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = isMobile ? '20px Arial' : '24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', canvas.width / 2, buttonY + buttonHeight / 2 + 8);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            state.animationFrame++;
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (state.gameOver) {
+                // Check if restart button was clicked
+                const buttonWidth = isMobile ? 160 : 200;
+                const buttonHeight = 60;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height - 120;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth && 
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    // Reset game
+                    state.gameOver = false;
+                    state.result = null;
+                    state.targetColor = optionColors[Math.floor(Math.random() * optionColors.length)];
+                    playSound(440, 0.1);
+                }
+            } else {
+                // Check if an option was clicked
+                const positions = getOptionPositions();
+                for (let i = 0; i < positions.length; i++) {
+                    const pos = positions[i];
+                    if (x >= pos.x && x <= pos.x + pos.width &&
+                        y >= pos.y && y <= pos.y + pos.height) {
+                        state.result = i;
+                        state.gameOver = true;
+                        
+                        // Check if the selected option has the target color
+                        const isColorMatch = optionColors[i] === state.targetColor;
+                        const isCorrectAnswer = i === state.correctIndex;
+                        
+                        // Game considers it correct only if both the color and answer are correct
+                        if (isColorMatch && isCorrectAnswer) {
+                            playCorrectSound();
+                        } else {
+                            playIncorrectSound();
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

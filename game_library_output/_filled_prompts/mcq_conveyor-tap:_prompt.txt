@@ -1,0 +1,102 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ What is the capital of France?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Conveyor-Tap**  
+ Description of mechanic: 
+
+* Items/answers move across the screen on a conveyor belt
+* Player must tap/click the correct answer as it passes by
+* Items should continuously move from one side of the screen to the other
+* The conveyor belt should be visually represented, with items appearing to be carried on it
+* Multiple answer options should be present on the belt at the same time
+* Success requires identifying and selecting the correct answer before it moves off-screen
+* If the correct answer passes without being selected, it should reappear after a cycle
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The conveyor belt should have visible mechanical elements like gears or rollers at the ends.
+
+Answer boxes should look like physical packages or crates on the belt.
+
+Use chunky, blocky designs for all visual elements.
+
+Add subtle pixel-art "dust" or movement effects to enhance the conveyor motion.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The conveyor belt should move at a moderate pace - not too fast to be frustrating, but quick enough to create urgency.
+
+Different answer options should be spaced appropriately on the belt to give players time to read and react.
+
+Provide visual feedback when hovering over answers to indicate they are clickable.
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

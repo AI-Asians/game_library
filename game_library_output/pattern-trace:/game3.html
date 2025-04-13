@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital of France Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Game variables
+        const colors = {
+            background: '#0f380f', // Dark green (Game Boy style)
+            text: '#8bac0f',       // Light green
+            node: '#306230',       // Medium green
+            nodeActive: '#9bbc0f', // Lighter green
+            nodePath: '#8bac0f',   // Light green for paths
+            correct: '#9bbc0f',    // Light green
+            incorrect: '#e40058'   // Red for errors
+        };
+        
+        let gameState = 'showing'; // showing, playing, success, failure
+        let startTime;
+        let nodes = [];
+        let currentNodeIndex = 0;
+        let lastNodeConnected = null;
+        let isDragging = false;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Simple beep sound function
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.setValueAtTime(gainNode.gain.value, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        // Create nodes in the shape of 'PARIS' (the answer)
+        function createNodes() {
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // Clear existing nodes
+            nodes = [];
+            
+            // Pattern representing 'PARIS' (simplified)
+            if (isMobile) {
+                // Mobile layout (more vertical)
+                nodes = [
+                    { x: width * 0.3, y: height * 0.25 },   // P top
+                    { x: width * 0.3, y: height * 0.35 },   // P middle
+                    { x: width * 0.5, y: height * 0.35 },   // A top
+                    { x: width * 0.6, y: height * 0.45 },   // R
+                    { x: width * 0.5, y: height * 0.55 },   // I
+                    { x: width * 0.3, y: height * 0.65 }    // S
+                ];
+            } else {
+                // Desktop layout (more horizontal)
+                nodes = [
+                    { x: width * 0.2, y: height * 0.3 },    // P top
+                    { x: width * 0.3, y: height * 0.4 },    // P middle
+                    { x: width * 0.4, y: height * 0.3 },    // A top
+                    { x: width * 0.5, y: height * 0.4 },    // R
+                    { x: width * 0.6, y: height * 0.3 },    // I
+                    { x: width * 0.7, y: height * 0.4 }     // S
+                ];
+            }
+            
+            // Initialize node state
+            nodes.forEach(node => {
+                node.active = false;
+                node.radius = isMobile ? 20 : 30;
+            });
+        }
+        
+        // Initialize the game
+        function init() {
+            gameState = 'showing';
+            startTime = Date.now();
+            currentNodeIndex = 0;
+            lastNodeConnected = null;
+            isDragging = false;
+            restartBtn.style.display = 'none';
+            
+            createNodes();
+            
+            // Reset node states
+            nodes.forEach(node => {
+                node.active = false;
+            });
+            
+            // Start the game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Draw the pattern with pixelated style
+        function drawPattern(alpha = 1) {
+            // Draw connections between nodes
+            ctx.beginPath();
+            ctx.strokeStyle = colors.nodePath;
+            ctx.globalAlpha = alpha * 0.7;
+            ctx.lineWidth = 4;
+            ctx.setLineDash([8, 4]); // Pixelated dashed line
+            
+            for (let i = 0; i < nodes.length - 1; i++) {
+                ctx.moveTo(nodes[i].x, nodes[i].y);
+                ctx.lineTo(nodes[i + 1].x, nodes[i + 1].y);
+            }
+            
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+            
+            // Draw nodes
+            nodes.forEach((node, index) => {
+                // Outer pixelated glow
+                const glowSize = node.active ? 10 : 5;
+                ctx.fillStyle = node.active ? colors.nodeActive : colors.node;
+                ctx.globalAlpha = alpha;
+                
+                // Pixelated outer glow (using small squares)
+                for (let y = -glowSize; y <= glowSize; y += 4) {
+                    for (let x = -glowSize; x <= glowSize; x += 4) {
+                        if (x*x + y*y <= glowSize*glowSize) {
+                            ctx.fillRect(
+                                Math.floor(node.x + x), 
+                                Math.floor(node.y + y), 
+                                4, 4
+                            );
+                        }
+                    }
+                }
+                
+                // Node center
+                ctx.fillStyle = node.active ? colors.nodeActive : colors.node;
+                ctx.globalAlpha = alpha;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, node.radius / 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw index number
+                ctx.fillStyle = colors.background;
+                ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(index + 1, node.x, node.y);
+                
+                ctx.globalAlpha = 1;
+            });
+        }
+        
+        // Draw active player connections
+        function drawPlayerConnections() {
+            if (currentNodeIndex > 0) {
+                ctx.beginPath();
+                ctx.strokeStyle = colors.nodeActive;
+                ctx.lineWidth = 6;
+                
+                for (let i = 0; i < currentNodeIndex; i++) {
+                    if (i === 0) {
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                    } else {
+                        ctx.lineTo(nodes[i].x, nodes[i].y);
+                    }
+                }
+                
+                // Draw line to current mouse/touch position if dragging
+                if (isDragging && lastNodeConnected !== null) {
+                    ctx.lineTo(lastMouseX, lastMouseY);
+                }
+                
+                ctx.stroke();
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, isMobile ? 60 : 80);
+            
+            // Draw instructions
+            ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+            ctx.fillText('Trace the pattern in order', canvas.width / 2, isMobile ? 90 : 120);
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            drawQuestion();
+            
+            const currentTime = Date.now();
+            const elapsed = currentTime - startTime;
+            
+            if (gameState === 'showing') {
+                // Show the pattern for 3 seconds
+                drawPattern(1);
+                
+                if (elapsed > 3000) {
+                    gameState = 'playing';
+                }
+            } else if (gameState === 'playing') {
+                // Draw faded pattern as guide
+                drawPattern(0.4);
+                
+                // Draw player's current progress
+                drawPlayerConnections();
+                
+                // Draw active nodes
+                nodes.forEach((node, index) => {
+                    if (index < currentNodeIndex) {
+                        node.active = true;
+                    }
+                });
+                
+            } else if (gameState === 'success') {
+                // Success state
+                drawPattern(0.4);
+                drawPlayerConnections();
+                
+                ctx.fillStyle = colors.correct;
+                ctx.font = `${isMobile ? 24 : 36}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('Correct! Paris is the capital.', canvas.width / 2, canvas.height / 2);
+                
+                restartBtn.style.display = 'block';
+            } else if (gameState === 'failure') {
+                // Failure state
+                drawPattern(0.4);
+                drawPlayerConnections();
+                
+                ctx.fillStyle = colors.incorrect;
+                ctx.font = `${isMobile ? 24 : 36}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('Incorrect pattern.', canvas.width / 2, canvas.height / 2);
+                ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+                ctx.fillText('The capital of France is Paris.', canvas.width / 2, canvas.height / 2 + 40);
+                
+                restartBtn.style.display = 'block';
+            }
+            
+            if (gameState !== 'success' && gameState !== 'failure') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Handle mouse/touch input
+        let lastMouseX, lastMouseY;
+        
+        function handleStart(x, y) {
+            if (gameState !== 'playing') return;
+            
+            // Check if clicked on the first node
+            const clickedNode = nodes.findIndex(node => {
+                const dx = node.x - x;
+                const dy = node.y - y;
+                return dx * dx + dy * dy < node.radius * node.radius;
+            });
+            
+            if (clickedNode === 0) {
+                isDragging = true;
+                currentNodeIndex = 1;
+                nodes[0].active = true;
+                lastNodeConnected = nodes[0];
+                lastMouseX = x;
+                lastMouseY = y;
+                playSound(440, 100); // Success sound
+            }
+        }
+        
+        function handleMove(x, y) {
+            if (!isDragging || gameState !== 'playing') return;
+            
+            lastMouseX = x;
+            lastMouseY = y;
+            
+            // Check if we're hovering over the next node
+            if (currentNodeIndex < nodes.length) {
+                const nextNode = nodes[currentNodeIndex];
+                const dx = nextNode.x - x;
+                const dy = nextNode.y - y;
+                
+                if (dx * dx + dy * dy < nextNode.radius * nextNode.radius) {
+                    nextNode.active = true;
+                    lastNodeConnected = nextNode;
+                    currentNodeIndex++;
+                    playSound(440 + currentNodeIndex * 50, 100); // Success sound with increasing pitch
+                    
+                    // Check if we've completed the pattern
+                    if (currentNodeIndex >= nodes.length) {
+                        gameState = 'success';
+                        playSound(660, 300, 'sine');
+                        playSound(880, 300, 'sine');
+                    }
+                }
+            }
+            
+            // Check if we're hovering over a node out of sequence
+            const hoveredNode = nodes.findIndex((node, index) => {
+                if (index === currentNodeIndex) return false;
+                const dx = node.x - x;
+                const dy = node.y - y;
+                return dx * dx + dy * dy < node.radius * node.radius;
+            });
+            
+            if (hoveredNode !== -1 && hoveredNode !== currentNodeIndex - 1) {
+                gameState = 'failure';
+                playSound(220, 300, 'sawtooth');
+                isDragging = false;
+            }
+        }
+        
+        function handleEnd() {
+            if (!isDragging || gameState !== 'playing') return;
+            
+            // If player releases before completing the pattern
+            if (currentNodeIndex < nodes.length) {
+                gameState = 'failure';
+                playSound(220, 300, 'sawtooth');
+            }
+            
+            isDragging = false;
+        }
+        
+        // Event listeners for mouse
+        canvas.addEventListener('mousedown', e => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            handleStart(x, y);
+        });
+        
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            handleMove(x, y);
+        });
+        
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('mouseleave', handleEnd);
+        
+        // Event listeners for touch
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            handleStart(x, y);
+        });
+        
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            handleMove(x, y);
+        });
+        
+        canvas.addEventListener('touchend', e => {
+            e.preventDefault();
+            handleEnd();
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', init);
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

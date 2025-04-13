@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Puzzle Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // 8-bit color palette
+        const colors = {
+            bg: '#0f0f1b',
+            frame: '#3f3f74',
+            highlight: '#7f7fff',
+            text: '#ffffff',
+            correct: '#5ab552',
+            incorrect: '#d32f2f',
+            pieces: ['#ff5555', '#55ff55', '#5555ff', '#ffff55']
+        };
+        
+        // Audio context for retro sounds
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Game state
+        let gameOver = false;
+        let puzzlePieces = [];
+        const correctAnswer = "Mars";
+        const answers = ["Mars", "Venus", "Jupiter", "Saturn"];
+        let hover = null;
+        let animationTime = 0;
+        let restartButton = null;
+        
+        // Create puzzle frame position
+        const frameX = canvas.width / 2 - 100;
+        const frameY = canvas.height / 2 + 30;
+        const frameWidth = 200;
+        const frameHeight = 80;
+        
+        // Generate puzzle pieces
+        function createPuzzlePieces() {
+            puzzlePieces = [];
+            
+            // Shuffle answers
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            // Create pieces
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                const margin = isMobile ? 30 : 80;
+                let x, y;
+                
+                // Position pieces randomly but ensure they're not too close to each other
+                do {
+                    x = margin + Math.random() * (canvas.width - 2 * margin);
+                    y = margin + Math.random() * (canvas.height - 2 * margin);
+                } while (
+                    // Avoid frame area
+                    (x > frameX - 100 && x < frameX + frameWidth + 20 && 
+                    y > frameY - 50 && y < frameY + frameHeight + 20) ||
+                    // Avoid top text area
+                    y < 100
+                );
+                
+                puzzlePieces.push({
+                    x: x,
+                    y: y,
+                    width: 120,
+                    height: 60,
+                    text: shuffledAnswers[i],
+                    color: colors.pieces[i],
+                    correct: shuffledAnswers[i] === correctAnswer,
+                    originalX: x,
+                    originalY: y,
+                    offsetX: 0,
+                    offsetY: 0,
+                    rotation: 0,
+                    clicked: false,
+                    animating: false
+                });
+            }
+        }
+        
+        // Create restart button
+        function createRestartButton() {
+            restartButton = {
+                x: canvas.width / 2 - 60,
+                y: canvas.height - 100,
+                width: 120,
+                height: 40
+            };
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'hover':
+                    oscillator.type = 'square';
+                    oscillator.frequency.value = 300;
+                    gainNode.gain.value = 0.1;
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.05);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(392, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(523, audioCtx.currentTime + 0.2);
+                    gainNode.gain.value = 0.2;
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(277, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(233, audioCtx.currentTime + 0.1);
+                    gainNode.gain.value = 0.2;
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+            }
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color, lineWidth = 4) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Draw pixel-style border
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            // Top edge
+            for (let i = 0; i < width; i += lineWidth) {
+                ctx.fillRect(x + i, y, lineWidth, lineWidth);
+            }
+            // Left edge
+            for (let i = 0; i < height; i += lineWidth) {
+                ctx.fillRect(x, y + i, lineWidth, lineWidth);
+            }
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            // Bottom edge
+            for (let i = 0; i < width; i += lineWidth) {
+                ctx.fillRect(x + i, y + height - lineWidth, lineWidth, lineWidth);
+            }
+            // Right edge
+            for (let i = 0; i < height; i += lineWidth) {
+                ctx.fillRect(x + width - lineWidth, y + i, lineWidth, lineWidth);
+            }
+        }
+        
+        // Draw jagged puzzle piece
+        function drawPuzzlePiece(piece) {
+            ctx.save();
+            ctx.translate(piece.x + piece.width / 2, piece.y + piece.height / 2);
+            ctx.rotate(piece.rotation * Math.PI / 180);
+            
+            const x = -piece.width / 2;
+            const y = -piece.height / 2;
+            
+            // Draw main piece
+            drawPixelRect(x, y, piece.width, piece.height, piece.color);
+            
+            // Add jagged puzzle connector
+            ctx.fillStyle = piece.color;
+            const knobSize = 16;
+            ctx.fillRect(x + piece.width / 2 - knobSize / 2, y - knobSize, knobSize, knobSize);
+            
+            // Draw piece text
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(piece.text, x + piece.width / 2, y + piece.height / 2);
+            
+            ctx.restore();
+        }
+        
+        // Draw puzzle frame
+        function drawPuzzleFrame() {
+            // Draw frame background
+            ctx.fillStyle = colors.frame;
+            ctx.fillRect(frameX - 10, frameY - 10, frameWidth + 20, frameHeight + 20);
+            
+            // Draw frame border with pixel grid
+            const gridSize = 4;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            
+            // Draw grid
+            for (let x = frameX - 10; x < frameX + frameWidth + 10; x += gridSize) {
+                for (let y = frameY - 10; y < frameY + frameHeight + 10; y += gridSize) {
+                    if (
+                        x === frameX - 10 || x >= frameX + frameWidth + 6 ||
+                        y === frameY - 10 || y >= frameY + frameHeight + 6
+                    ) {
+                        ctx.fillRect(x, y, gridSize - 1, gridSize - 1);
+                    }
+                }
+            }
+            
+            // Draw connector slot
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            const knobSize = 16;
+            ctx.fillRect(frameX + frameWidth / 2 - knobSize / 2, frameY - knobSize, knobSize, knobSize);
+        }
+        
+        // Check if point is inside rectangle
+        function isInside(pos, rect) {
+            return pos.x > rect.x && pos.x < rect.x + rect.width &&
+                   pos.y > rect.y && pos.y < rect.y + rect.height;
+        }
+        
+        // Handle mouse/touch events
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const pos = {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+            
+            if (gameOver) {
+                if (isInside(pos, restartButton)) {
+                    restartGame();
+                }
+                return;
+            }
+            
+            for (let i = 0; i < puzzlePieces.length; i++) {
+                const piece = puzzlePieces[i];
+                if (!piece.animating && !piece.clicked && isInside(pos, piece)) {
+                    piece.clicked = true;
+                    piece.animating = true;
+                    
+                    if (piece.correct) {
+                        playSound('correct');
+                        // Animate correct piece to frame
+                        piece.targetX = frameX + frameWidth / 2 - piece.width / 2;
+                        piece.targetY = frameY + frameHeight / 2 - piece.height / 2;
+                        setTimeout(() => {
+                            gameOver = true;
+                            createRestartButton();
+                        }, 1000);
+                    } else {
+                        playSound('incorrect');
+                        // Animate incorrect piece bounce away
+                        const angle = Math.random() * Math.PI * 2;
+                        piece.velocityX = Math.cos(angle) * 10;
+                        piece.velocityY = Math.sin(angle) * 10;
+                        piece.rotationSpeed = (Math.random() - 0.5) * 20;
+                        
+                        setTimeout(() => {
+                            piece.animating = false;
+                            piece.clicked = false;
+                            piece.rotation = 0;
+                            piece.x = piece.originalX;
+                            piece.y = piece.originalY;
+                        }, 500);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const pos = {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+            
+            let foundHover = false;
+            
+            if (!gameOver) {
+                for (let i = 0; i < puzzlePieces.length; i++) {
+                    const piece = puzzlePieces[i];
+                    if (!piece.animating && !piece.clicked && isInside(pos, piece)) {
+                        if (hover !== i) {
+                            hover = i;
+                            playSound('hover');
+                        }
+                        foundHover = true;
+                        break;
+                    }
+                }
+            } else if (isInside(pos, restartButton)) {
+                if (hover !== 'restart') {
+                    hover = 'restart';
+                    playSound('hover');
+                }
+                foundHover = true;
+            }
+            
+            if (!foundHover) {
+                hover = null;
+            }
+        }
+        
+        // Update game state
+        function update(timestamp) {
+            if (!animationTime) {
+                animationTime = timestamp;
+            }
+            const deltaTime = timestamp - animationTime;
+            animationTime = timestamp;
+            
+            // Update floating pieces
+            puzzlePieces.forEach(piece => {
+                if (!piece.animating && !piece.clicked) {
+                    // Gentle floating motion
+                    piece.offsetX = Math.sin(timestamp * 0.002 + piece.originalX) * 3;
+                    piece.offsetY = Math.cos(timestamp * 0.0015 + piece.originalY) * 3;
+                    piece.x = piece.originalX + piece.offsetX;
+                    piece.y = piece.originalY + piece.offsetY;
+                } else if (piece.animating) {
+                    if (piece.correct) {
+                        // Move towards target
+                        const dx = piece.targetX - piece.x;
+                        const dy = piece.targetY - piece.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance > 1) {
+                            piece.x += dx * 0.1;
+                            piece.y += dy * 0.1;
+                        } else {
+                            piece.x = piece.targetX;
+                            piece.y = piece.targetY;
+                        }
+                    } else {
+                        // Bounce away
+                        piece.x += piece.velocityX;
+                        piece.y += piece.velocityY;
+                        piece.rotation += piece.rotationSpeed;
+                        
+                        // Slow down
+                        piece.velocityX *= 0.95;
+                        piece.velocityY *= 0.95;
+                        piece.rotationSpeed *= 0.95;
+                    }
+                }
+            });
+            
+            draw();
+            requestAnimationFrame(update);
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("Which planet is known as", canvas.width / 2, 50);
+            ctx.fillText("the Red Planet?", canvas.width / 2, 80);
+            
+            // Draw puzzle frame
+            drawPuzzleFrame();
+            
+            // Draw puzzle pieces
+            puzzlePieces.forEach((piece, index) => {
+                drawPuzzlePiece(piece);
+                
+                // Draw highlight on hover
+                if (hover === index) {
+                    ctx.strokeStyle = colors.highlight;
+                    ctx.lineWidth = 4;
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeRect(piece.x, piece.y, piece.width, piece.height);
+                    ctx.setLineDash([]);
+                    
+                    // Draw sparkle
+                    ctx.fillStyle = '#ffffff';
+                    const sparkleSize = 4;
+                    const t = performance.now() * 0.01;
+                    const sparkleX = piece.x + 20 + Math.sin(t) * 5;
+                    const sparkleY = piece.y + 15 + Math.cos(t) * 5;
+                    ctx.fillRect(sparkleX, sparkleY, sparkleSize, sparkleSize);
+                }
+            });
+            
+            // Draw restart button if game is over
+            if (gameOver) {
+                const btnColor = hover === 'restart' ? colors.highlight : colors.frame;
+                drawPixelRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height, btnColor);
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Play Again', restartButton.x + restartButton.width / 2, restartButton.y + restartButton.height / 2);
+            }
+        }
+        
+        // Restart game
+        function restartGame() {
+            gameOver = false;
+            hover = null;
+            createPuzzlePieces();
+        }
+        
+        // Initialize game
+        function init() {
+            createPuzzlePieces();
+            
+            // Add event listeners
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                handleClick({
+                    clientX: touch.clientX,
+                    clientY: touch.clientY
+                });
+            });
+            
+            // Start game loop
+            requestAnimationFrame(update);
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

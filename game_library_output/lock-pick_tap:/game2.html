@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lock-Pick Challenge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+        }
+        canvas {
+            display: block;
+            border: 4px solid #444;
+            background-color: #111;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#0f0f2d',
+            text: '#ffffff',
+            lockBody: '#444444',
+            lockShackle: '#666666',
+            lockPickTrue: '#22dd22',
+            lockPickFalse: '#dd2222',
+            lockPickNeutral: '#aaaaaa',
+            button: '#555555',
+            buttonText: '#ffffff',
+            buttonHover: '#777777'
+        };
+        
+        let gameState = {
+            pickAngle: 0,
+            pickDirection: 1,
+            pickSpeed: 0.05,
+            locked: true,
+            gameOver: false,
+            correctAnswer: true, // True for "Water boils at 100 degrees Celsius at sea level."
+            feedback: "",
+            restartButtonVisible: false,
+            sparkles: []
+        };
+        
+        // Sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playSound(freq, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playTickSound() {
+            playSound(440, 'square', 0.05);
+        }
+        
+        function playSuccessSound() {
+            playSound(660, 'square', 0.1);
+            setTimeout(() => playSound(880, 'square', 0.2), 100);
+        }
+        
+        function playFailSound() {
+            playSound(220, 'sawtooth', 0.1);
+            setTimeout(() => playSound(110, 'sawtooth', 0.2), 100);
+        }
+        
+        // Draw functions
+        function drawLock(x, y, size) {
+            // Lock body
+            ctx.fillStyle = colors.lockBody;
+            ctx.fillRect(x - size/2, y, size, size);
+            
+            // Draw shackle
+            ctx.fillStyle = colors.lockShackle;
+            ctx.beginPath();
+            if (gameState.locked) {
+                ctx.arc(x, y, size/2, Math.PI, 0, false);
+                ctx.fillRect(x - size/2, y - size/4, size/6, size/2);
+                ctx.fillRect(x + size/2 - size/6, y - size/4, size/6, size/2);
+            } else {
+                ctx.arc(x, y, size/2, Math.PI, -0.5, false);
+                ctx.fillRect(x - size/2, y - size/4, size/6, size/4);
+                ctx.fillRect(x + size/2 - size/6, y - size/4, size/6, size/2);
+            }
+            ctx.fill();
+            
+            // Lock keyhole
+            ctx.fillStyle = '#111';
+            ctx.beginPath();
+            ctx.arc(x, y + size/2, size/6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawLockPick(x, y, size) {
+            // Pick position
+            const angle = gameState.pickAngle;
+            
+            // Draw the pick base
+            ctx.fillStyle = colors.lockPickNeutral;
+            ctx.fillRect(x - size/3, y + size/2, 2*size/3, size/4);
+            
+            // Draw the pick tip
+            let pickTipColor;
+            if (angle < 0.33) {
+                pickTipColor = colors.lockPickFalse;
+            } else if (angle > 0.67) {
+                pickTipColor = colors.lockPickTrue;
+            } else {
+                pickTipColor = colors.lockPickNeutral;
+            }
+            
+            ctx.fillStyle = pickTipColor;
+            ctx.save();
+            ctx.translate(x, y + size/2);
+            ctx.rotate(Math.PI * angle);
+            ctx.fillRect(-size/15, -size/2, size/7.5, size/2);
+            ctx.restore();
+            
+            // Draw position indicators
+            drawPositionMarker(x - size/2, y + size, "FALSE", angle < 0.33);
+            drawPositionMarker(x + size/2, y + size, "TRUE", angle > 0.67);
+        }
+        
+        function drawPositionMarker(x, y, text, isActive) {
+            const markerSize = isMobile ? 12 : 20;
+            ctx.fillStyle = isActive ? (text === "TRUE" ? colors.lockPickTrue : colors.lockPickFalse) : '#666';
+            ctx.fillRect(x - markerSize, y - markerSize/2, markerSize * 2, markerSize);
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = `${isMobile ? 10 : 14}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+        
+        function drawSparkles() {
+            gameState.sparkles.forEach(sparkle => {
+                ctx.fillStyle = sparkle.color;
+                ctx.fillRect(sparkle.x, sparkle.y, sparkle.size, sparkle.size);
+                
+                // Update sparkle
+                sparkle.x += sparkle.vx;
+                sparkle.y += sparkle.vy;
+                sparkle.life -= 1;
+            });
+            
+            // Remove dead sparkles
+            gameState.sparkles = gameState.sparkles.filter(sparkle => sparkle.life > 0);
+        }
+        
+        function createSparkles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                gameState.sparkles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    size: Math.random() * 3 + 2,
+                    color: color,
+                    life: Math.random() * 20 + 10
+                });
+            }
+        }
+        
+        function drawRestartButton() {
+            const buttonWidth = isMobile ? 100 : 150;
+            const buttonHeight = isMobile ? 40 : 50;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 100;
+            
+            // Check if mouse is over button
+            const isHovering = 
+                mouseX >= buttonX && 
+                mouseX <= buttonX + buttonWidth && 
+                mouseY >= buttonY && 
+                mouseY <= buttonY + buttonHeight;
+            
+            // Draw button
+            ctx.fillStyle = isHovering ? colors.buttonHover : colors.button;
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Draw button text
+            ctx.fillStyle = colors.buttonText;
+            ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('TRY AGAIN', canvas.width / 2, buttonY + buttonHeight / 2);
+            
+            return {
+                x: buttonX,
+                y: buttonY,
+                width: buttonWidth,
+                height: buttonHeight
+            };
+        }
+        
+        // Main game logic
+        let lastTick = 0;
+        let tickCounter = 0;
+        let restartButton = null;
+        let mouseX = 0, mouseY = 0;
+        
+        function update(timestamp) {
+            // Delta time for smooth animation
+            const delta = timestamp - lastTick;
+            lastTick = timestamp;
+            
+            // Move the pick if game is not over
+            if (!gameState.gameOver) {
+                tickCounter += delta;
+                
+                // Apply some randomization to movement
+                if (Math.random() < 0.02) {
+                    gameState.pickSpeed = 0.04 + Math.random() * 0.03;
+                }
+                
+                // Move the pick
+                gameState.pickAngle += gameState.pickDirection * gameState.pickSpeed * (delta / 16);
+                
+                // Reverse direction at the ends
+                if (gameState.pickAngle >= 1) {
+                    gameState.pickAngle = 1;
+                    gameState.pickDirection = -1;
+                } else if (gameState.pickAngle <= 0) {
+                    gameState.pickAngle = 0;
+                    gameState.pickDirection = 1;
+                }
+                
+                // Play tick sound every 200ms
+                if (tickCounter > 200) {
+                    playTickSound();
+                    tickCounter = 0;
+                }
+            }
+            
+            // Clear screen
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            const centerX = canvas.width / 2;
+            const lockSize = isMobile ? 120 : 180;
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const question = "Water boils at 100 degrees Celsius at sea level.";
+            
+            // For mobile, split into two lines if needed
+            if (isMobile) {
+                const words = question.split(' ');
+                const halfLength = Math.ceil(words.length / 2);
+                const firstLine = words.slice(0, halfLength).join(' ');
+                const secondLine = words.slice(halfLength).join(' ');
+                
+                ctx.fillText(firstLine, centerX, 80);
+                ctx.fillText(secondLine, centerX, 110);
+            } else {
+                ctx.fillText(question, centerX, 100);
+            }
+            
+            // Draw lock and pick
+            drawLock(centerX, canvas.height / 2 - lockSize / 2, lockSize);
+            drawLockPick(centerX, canvas.height / 2 - lockSize / 2, lockSize);
+            
+            // Draw feedback if game is over
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.locked ? colors.lockPickFalse : colors.lockPickTrue;
+                ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState.feedback, centerX, canvas.height / 2 + 40);
+                
+                // Draw restart button
+                if (gameState.restartButtonVisible) {
+                    restartButton = drawRestartButton();
+                }
+            }
+            
+            // Draw sparkles
+            drawSparkles();
+            
+            requestAnimationFrame(update);
+        }
+        
+        function checkAnswer() {
+            const pickPosition = gameState.pickAngle;
+            let playerAnswer;
+            
+            if (pickPosition < 0.33) {
+                playerAnswer = false; // FALSE position
+            } else if (pickPosition > 0.67) {
+                playerAnswer = true; // TRUE position
+            } else {
+                // In neutral position, slightly favor correct answer
+                return; // Don't do anything if in neutral position
+            }
+            
+            const isCorrect = playerAnswer === gameState.correctAnswer;
+            
+            gameState.gameOver = true;
+            gameState.locked = !isCorrect;
+            
+            if (isCorrect) {
+                gameState.feedback = "CORRECT!";
+                playSuccessSound();
+                createSparkles(canvas.width/2, canvas.height/2 - 60, 20, '#ffcc00');
+            } else {
+                gameState.feedback = "WRONG!";
+                playFailSound();
+                createSparkles(canvas.width/2, canvas.height/2 - 60, 10, '#ff0000');
+            }
+            
+            // Show restart button after a short delay
+            setTimeout(() => {
+                gameState.restartButtonVisible = true;
+            }, 1000);
+        }
+        
+        function resetGame() {
+            gameState = {
+                pickAngle: 0,
+                pickDirection: 1,
+                pickSpeed: 0.05,
+                locked: true,
+                gameOver: false,
+                correctAnswer: true,
+                feedback: "",
+                restartButtonVisible: false,
+                sparkles: []
+            };
+            playTickSound();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            if (gameState.gameOver && gameState.restartButtonVisible && restartButton) {
+                // Check if click is on restart button
+                if (
+                    clickX >= restartButton.x &&
+                    clickX <= restartButton.x + restartButton.width &&
+                    clickY >= restartButton.y &&
+                    clickY <= restartButton.y + restartButton.height
+                ) {
+                    resetGame();
+                }
+            } else if (!gameState.gameOver) {
+                checkAnswer();
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            mouseX = touchX;
+            mouseY = touchY;
+            
+            if (gameState.gameOver && gameState.restartButtonVisible && restartButton) {
+                // Check if touch is on restart button
+                if (
+                    touchX >= restartButton.x &&
+                    touchX <= restartButton.x + restartButton.width &&
+                    touchY >= restartButton.y &&
+                    touchY <= restartButton.y + restartButton.height
+                ) {
+                    resetGame();
+                }
+            } else if (!gameState.gameOver) {
+                checkAnswer();
+            }
+        }, { passive: false });
+        
+        // Start the game
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>

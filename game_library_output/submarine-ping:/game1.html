@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Submarine Ping</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #333;
+            height: 100vh;
+            touch-action: manipulation;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #111;
+        }
+        .ping-btn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: #ff6a6a;
+            color: white;
+            font-size: 16px;
+            border: 4px solid #444;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="pingButton" class="ping-btn">PING</button>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // Set canvas dimensions
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Show ping button on mobile
+        const pingButton = document.getElementById('pingButton');
+        if (isMobile) {
+            pingButton.style.display = 'block';
+        }
+        
+        // Game variables
+        let gameOver = false;
+        let correct = false;
+        let pinging = false;
+        let pingRadius = 0;
+        let pingCooldown = 0;
+        let bobTimer = 0;
+        
+        // Color palette (16 colors)
+        const colors = {
+            darkBlue: '#0a2463',
+            mediumBlue: '#1e50a2',
+            lightBlue: '#3a86ff',
+            yellow: '#ffd60a',
+            red: '#ef476f',
+            green: '#06d6a0',
+            orange: '#f77f00',
+            purple: '#7209b7',
+            white: '#ffffff',
+            black: '#000000',
+            darkGray: '#333333',
+            lightGray: '#cccccc',
+            brown: '#bc6c25',
+            darkGreen: '#2b9348',
+            pink: '#ffafcc',
+            cyan: '#90e0ef'
+        };
+        
+        // Submarine
+        const submarine = {
+            x: canvas.width / 2 - 40,
+            y: canvas.height / 2,
+            width: 80,
+            height: 40,
+            speed: 4,
+            bobOffset: 0,
+            bobDirection: 1,
+            moving: false,
+            draw() {
+                // Body
+                ctx.fillStyle = colors.yellow;
+                ctx.fillRect(this.x, this.y + this.bobOffset, this.width, this.height);
+                
+                // Window
+                ctx.fillStyle = colors.lightBlue;
+                ctx.fillRect(this.x + 10, this.y + this.bobOffset + 8, 15, 15);
+                ctx.fillRect(this.x + 35, this.y + this.bobOffset + 8, 15, 15);
+                
+                // Periscope
+                ctx.fillStyle = colors.yellow;
+                ctx.fillRect(this.x + 55, this.y + this.bobOffset - 15, 5, 15);
+                
+                // Propeller
+                ctx.fillStyle = colors.darkGray;
+                ctx.fillRect(this.x - 10, this.y + this.bobOffset + 15, 10, 10);
+            },
+            update() {
+                // Bobbing motion when stationary
+                if (!this.moving) {
+                    bobTimer += 0.05;
+                    this.bobOffset = Math.sin(bobTimer) * 2;
+                } else {
+                    this.bobOffset = 0;
+                }
+            }
+        };
+        
+        // Question
+        const question = {
+            text: "What is the capital of France?",
+            options: [
+                { text: "London", x: canvas.width * 0.2, y: canvas.height * 0.25, correct: false, type: "mine" },
+                { text: "Paris", x: canvas.width * 0.5, y: canvas.height * 0.7, correct: true, type: "chest" },
+                { text: "Rome", x: canvas.width * 0.8, y: canvas.height * 0.4, correct: false, type: "barrel" },
+                { text: "Berlin", x: canvas.width * 0.3, y: canvas.height * 0.85, correct: false, type: "crate" }
+            ]
+        };
+        
+        // Seaweed
+        const seaweeds = [];
+        for (let i = 0; i < 15; i++) {
+            seaweeds.push({
+                x: Math.random() * canvas.width,
+                y: canvas.height,
+                height: 50 + Math.random() * 100,
+                segments: 3 + Math.floor(Math.random() * 3),
+                waveOffset: Math.random() * Math.PI * 2
+            });
+        }
+        
+        // Bubbles
+        const bubbles = [];
+        function createBubble(x, y, size = 10) {
+            bubbles.push({
+                x,
+                y,
+                size: size || 3 + Math.random() * 7,
+                speed: 1 + Math.random() * 2,
+                opacity: 0.7 + Math.random() * 0.3
+            });
+        }
+        
+        // Create initial bubbles
+        for (let i = 0; i < 20; i++) {
+            createBubble(
+                Math.random() * canvas.width,
+                Math.random() * canvas.height
+            );
+        }
+        
+        // Game particles
+        const particles = [];
+        function createParticles(x, y, count, color, isCorrect) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = isCorrect ? 1 + Math.random() * 3 : 0.5 + Math.random() * 2;
+                particles.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 2 + Math.random() * 6,
+                    color,
+                    life: 60 + Math.random() * 60
+                });
+            }
+        }
+        
+        // Audio context for sound effects
+        let audioCtx;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log('Web Audio API not supported');
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'ping':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(392, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(523, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+            }
+        }
+        
+        // Drawing functions
+        function drawBackground() {
+            // Create gradient
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, colors.mediumBlue);
+            gradient.addColorStop(1, colors.darkBlue);
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Light rays
+            ctx.globalAlpha = 0.05;
+            for (let i = 0; i < 10; i++) {
+                const x = Math.sin(Date.now() / 2000 + i) * canvas.width / 2 + canvas.width / 2;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x - 300, canvas.height);
+                ctx.lineTo(x + 300, canvas.height);
+                ctx.fillStyle = colors.white;
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+        
+        function drawSeaweed() {
+            for (const seaweed of seaweeds) {
+                ctx.fillStyle = colors.darkGreen;
+                
+                const segmentHeight = seaweed.height / seaweed.segments;
+                for (let i = 0; i < seaweed.segments; i++) {
+                    const waveX = Math.sin((Date.now() / 1000) + seaweed.waveOffset + (i * 0.3)) * 5;
+                    const x = seaweed.x + waveX * (i + 1) / 2;
+                    const y = seaweed.y - (i * segmentHeight);
+                    const width = 10 - i;
+                    
+                    ctx.fillRect(x - width / 2, y - segmentHeight, width, segmentHeight);
+                }
+            }
+        }
+        
+        function drawBubbles() {
+            for (const bubble of bubbles) {
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.size, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${bubble.opacity})`;
+                ctx.fill();
+                ctx.strokeStyle = colors.lightBlue;
+                ctx.stroke();
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.white;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question.text, canvas.width / 2, 40);
+        }
+        
+        function drawOptions() {
+            for (const option of question.options) {
+                ctx.save();
+                ctx.translate(option.x, option.y);
+                
+                // Draw different shapes based on option type
+                switch(option.type) {
+                    case 'mine':
+                        // Mine
+                        ctx.fillStyle = colors.darkGray;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, 20, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Spikes
+                        ctx.fillStyle = colors.black;
+                        for (let i = 0; i < 8; i++) {
+                            ctx.save();
+                            ctx.rotate(i * Math.PI / 4);
+                            ctx.fillRect(-3, -28, 6, 10);
+                            ctx.restore();
+                        }
+                        break;
+                    
+                    case 'chest':
+                        // Treasure chest
+                        ctx.fillStyle = colors.brown;
+                        ctx.fillRect(-25, -15, 50, 30);
+                        
+                        // Chest lid
+                        ctx.fillStyle = colors.darkGray;
+                        ctx.fillRect(-25, -20, 50, 10);
+                        
+                        // Gold shine
+                        ctx.fillStyle = colors.yellow;
+                        ctx.fillRect(-15, -5, 10, 10);
+                        ctx.fillRect(5, -5, 10, 10);
+                        break;
+                    
+                    case 'barrel':
+                        // Barrel
+                        ctx.fillStyle = colors.brown;
+                        ctx.fillRect(-15, -25, 30, 50);
+                        
+                        // Barrel straps
+                        ctx.fillStyle = colors.darkGray;
+                        ctx.fillRect(-15, -20, 30, 5);
+                        ctx.fillRect(-15, -5, 30, 5);
+                        ctx.fillRect(-15, 10, 30, 5);
+                        break;
+                    
+                    case 'crate':
+                        // Crate
+                        ctx.fillStyle = colors.brown;
+                        ctx.fillRect(-20, -20, 40, 40);
+                        
+                        // Crate lines
+                        ctx.fillStyle = colors.darkGray;
+                        ctx.fillRect(-20, -5, 40, 3);
+                        ctx.fillRect(-5, -20, 3, 40);
+                        break;
+                }
+                
+                // Option text
+                ctx.fillStyle = colors.white;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, 0, 40);
+                
+                ctx.restore();
+            }
+        }
+        
+        function drawPing() {
+            if (pinging) {
+                ctx.strokeStyle = `rgba(51, 255, 255, ${1 - pingRadius / 150})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(submarine.x + submarine.width / 2, submarine.y + submarine.height / 2 + submarine.bobOffset, pingRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Inner ring
+                ctx.strokeStyle = `rgba(51, 255, 255, ${1 - pingRadius / 180})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(submarine.x + submarine.width / 2, submarine.y + submarine.height / 2 + submarine.bobOffset, pingRadius * 0.7, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+        
+        function drawParticles() {
+            for (const p of particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            }
+        }
+        
+        function drawRestartButton() {
+            if (gameOver) {
+                ctx.fillStyle = colors.darkGray;
+                ctx.fillRect(canvas.width / 2 - 60, canvas.height / 2 + 40, 120, 40);
+                ctx.fillStyle = colors.white;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', canvas.width / 2, canvas.height / 2 + 65);
+            }
+        }
+        
+        function draw() {
+            drawBackground();
+            drawSeaweed();
+            drawBubbles();
+            drawOptions();
+            drawParticles();
+            submarine.draw();
+            drawPing();
+            drawQuestion();
+            drawRestartButton();
+        }
+        
+        function update() {
+            if (gameOver) return;
+            
+            // Update submarine
+            submarine.update();
+            
+            // Update ping
+            if (pinging) {
+                pingRadius += 6;
+                if (pingRadius > 150) {
+                    pinging = false;
+                    pingRadius = 0;
+                }
+                
+                // Check if ping hits any option
+                if (pingRadius > 20 && pingRadius < 30) { // Only check once per ping
+                    for (const option of question.options) {
+                        const dx = (submarine.x + submarine.width / 2) - option.x;
+                        const dy = (submarine.y + submarine.height / 2 + submarine.bobOffset) - option.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < pingRadius) {
+                            gameOver = true;
+                            correct = option.correct;
+                            
+                            if (option.correct) {
+                                playSound('correct');
+                                createParticles(option.x, option.y, 50, colors.yellow, true);
+                                // Create celebratory bubbles
+                                for (let i = 0; i < 30; i++) {
+                                    createBubble(option.x + (Math.random() * 40 - 20), option.y + (Math.random() * 40 - 20), 3 + Math.random() * 8);
+                                }
+                            } else {
+                                playSound('wrong');
+                                createParticles(option.x, option.y, 20, colors.red, false);
+                                // Create some bubbles
+                                for (let i = 0; i < 10; i++) {
+                                    createBubble(option.x + (Math.random() * 20 - 10), option.y + (Math.random() * 20 - 10));
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Update ping cooldown
+            if (pingCooldown > 0) {
+                pingCooldown--;
+            }
+            
+            // Update bubbles
+            for (let i = bubbles.length - 1; i >= 0; i--) {
+                const bubble = bubbles[i];
+                bubble.y -= bubble.speed;
+                bubble.x += Math.sin(Date.now() / 1000 + i) * 0.5;
+                
+                if (bubble.y < -bubble.size) {
+                    bubbles.splice(i, 1);
+                    
+                    // Replace bubble at bottom
+                    if (Math.random() < 0.8 && bubbles.length < 50) {
+                        createBubble(
+                            Math.random() * canvas.width,
+                            canvas.height + 10
+                        );
+                    }
+                }
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handling
+        const keys = {};
+        
+        function handleInput() {
+            submarine.moving = false;
+            
+            if (keys['ArrowUp'] || keys['w']) {
+                submarine.y -= submarine.speed;
+                submarine.moving = true;
+            }
+            if (keys['ArrowDown'] || keys['s']) {
+                submarine.y += submarine.speed;
+                submarine.moving = true;
+            }
+            if (keys['ArrowLeft'] || keys['a']) {
+                submarine.x -= submarine.speed;
+                submarine.moving = true;
+            }
+            if (keys['ArrowRight'] || keys['d']) {
+                submarine.x += submarine.speed;
+                submarine.moving = true;
+            }
+            
+            // Keep submarine within canvas
+            submarine.x = Math.max(0, Math.min(canvas.width - submarine.width, submarine.x));
+            submarine.y = Math.max(0, Math.min(canvas.height - submarine.height, submarine.y));
+            
+            // Spacebar for ping
+            if ((keys[' '] || keys['Spacebar']) && !pinging && pingCooldown === 0) {
+                pinging = true;
+                pingCooldown = 30;
+                playSound('ping');
+            }
+            
+            requestAnimationFrame(handleInput);
+        }
+        
+        document.addEventListener('keydown', function(e) {
+            keys[e.key] = true;
+        });
+        
+        document.addEventListener('keyup', function(e) {
+            keys[e.key] = false;
+        });
+        
+        // Mobile controls
+        let touchStartY = 0;
+        
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            touchStartY = e.touches[0].clientY;
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touchY = e.touches[0].clientY;
+            const diffY = touchY - touchStartY;
+            
+            submarine.moving = true;
+            submarine.y += diffY / 5;
+            submarine.y = Math.max(0, Math.min(canvas.height - submarine.height, submarine.y));
+            
+            touchStartY = touchY;
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            submarine.moving = false;
+        });
+        
+        pingButton.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if (!pinging && pingCooldown === 0) {
+                pinging = true;
+                pingCooldown = 30;
+                playSound('ping');
+            }
+        });
+        
+        // Click handling
+        canvas.addEventListener('click', function(e) {
+            if (gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                // Check if restart button was clicked
+                if (x > canvas.width / 2 - 60 && x < canvas.width / 2 + 60 &&
+                    y > canvas.height / 2 + 40 && y < canvas.height / 2 + 80) {
+                    location.reload();
+                }
+            } else if (!pinging && pingCooldown === 0) {
+                pinging = true;
+                pingCooldown = 30;
+                playSound('ping');
+            }
+        });
+        
+        // Initialize and start the game
+        function init() {
+            // Start input handling and game loop
+            handleInput();
+            gameLoop();
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

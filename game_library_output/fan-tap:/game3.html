@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fan-Tap True or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222034;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize game
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited palette for 8-bit feel
+        const colors = {
+            background: '#45283c',
+            true: '#5fcde4',
+            trueDark: '#38b2c8',
+            false: '#e43b44',
+            falseDark: '#c42430',
+            pointer: '#fee761',
+            pointerShadow: '#d1b53f',
+            text: '#ffffff',
+            textShadow: '#3a4466',
+            correct: '#76c14a',
+            incorrect: '#ff5555'
+        };
+
+        // Game state
+        let fanAngle = 0;
+        let fanSpeed = 0.1;
+        let isSpinning = true;
+        let gameOver = false;
+        let fanSlowing = false;
+        let particles = [];
+        let pulseEffect = 0;
+        let pulseDirection = 0.02;
+        
+        // Fan properties
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const fanRadius = Math.min(canvas.width, canvas.height) * 0.35;
+        
+        // Correct answer (the statement is false)
+        const correctAnswer = "False";
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Functions to generate sound effects
+        function playTone(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.3;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        }
+        
+        function playClickSound() {
+            playTone(220, 0.1);
+        }
+        
+        function playCorrectSound() {
+            playTone(659.25, 0.1, 'square');
+            setTimeout(() => playTone(783.99, 0.2, 'square'), 100);
+        }
+        
+        function playIncorrectSound() {
+            playTone(196.00, 0.2, 'sawtooth');
+            setTimeout(() => playTone(185.00, 0.3, 'sawtooth'), 200);
+        }
+        
+        // Function to create particles
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    size: Math.random() * 6 + 2,
+                    color: color,
+                    life: 1
+                });
+            }
+        }
+        
+        // Function to update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Function to draw particles
+        function drawParticles() {
+            for (const p of particles) {
+                ctx.fillStyle = p.color;
+                // Draw pixelated particles
+                const size = Math.floor(p.size * p.life);
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), size, size);
+            }
+        }
+        
+        // Function to draw fan/wheel
+        function drawFan() {
+            // Draw the fan with segments
+            for (let i = 0; i < 360; i += 2) {
+                const angle = (i + fanAngle) * Math.PI / 180;
+                const isTrue = (i % 180) < 90;
+                
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, fanRadius * (1 + pulseEffect * 0.05), angle, angle + Math.PI / 90);
+                ctx.lineTo(centerX, centerY);
+                ctx.fillStyle = isTrue ? colors.true : colors.false;
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, fanRadius * 0.8 * (1 + pulseEffect * 0.05), angle, angle + Math.PI / 90);
+                ctx.lineTo(centerX, centerY);
+                ctx.fillStyle = isTrue ? colors.trueDark : colors.falseDark;
+                ctx.fill();
+            }
+            
+            // Draw the center of the fan
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, fanRadius * 0.2, 0, Math.PI * 2);
+            ctx.fillStyle = colors.background;
+            ctx.fill();
+            
+            // Draw the text labels on fan (TRUE/FALSE)
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(fanAngle * Math.PI / 180);
+            
+            // True text
+            ctx.fillStyle = colors.text;
+            ctx.font = "bold " + Math.floor(fanRadius * 0.2) + "px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("TRUE", 0, -fanRadius * 0.5);
+            
+            // Rotate to draw FALSE
+            ctx.rotate(Math.PI);
+            ctx.fillText("FALSE", 0, -fanRadius * 0.5);
+            ctx.restore();
+        }
+        
+        // Function to draw pointer
+        function drawPointer() {
+            const pointerSize = fanRadius * 0.15;
+            
+            // Draw pointer shadow
+            ctx.fillStyle = colors.pointerShadow;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - fanRadius - 5);
+            ctx.lineTo(centerX - pointerSize, centerY - fanRadius - pointerSize - 5);
+            ctx.lineTo(centerX + pointerSize, centerY - fanRadius - pointerSize - 5);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Draw pointer
+            ctx.fillStyle = colors.pointer;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - fanRadius);
+            ctx.lineTo(centerX - pointerSize, centerY - fanRadius - pointerSize);
+            ctx.lineTo(centerX + pointerSize, centerY - fanRadius - pointerSize);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        // Function to draw question
+        function drawQuestion() {
+            const questionText = "The Great Wall of China is visible from space.";
+            const fontSize = isMobile ? 18 : 24;
+            
+            ctx.fillStyle = colors.textShadow;
+            ctx.font = `${fontSize}px Arial`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            ctx.fillText(questionText, centerX + 2, centerY - fanRadius - 80 + 2);
+            
+            ctx.fillStyle = colors.text;
+            ctx.fillText(questionText, centerX, centerY - fanRadius - 80);
+        }
+        
+        // Function to draw result
+        function drawResult(isCorrect) {
+            const resultText = isCorrect ? "CORRECT!" : "WRONG!";
+            const fontSize = Math.floor(fanRadius * 0.25);
+            
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            // Text shadow
+            ctx.fillStyle = colors.textShadow;
+            ctx.fillText(resultText, centerX + 3, centerY + 3);
+            
+            // Main text
+            ctx.fillStyle = isCorrect ? colors.correct : colors.incorrect;
+            ctx.fillText(resultText, centerX, centerY);
+            
+            // Draw restart button
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = centerX - buttonWidth / 2;
+            const buttonY = centerY + fanRadius * 0.5;
+            
+            // Button shadow
+            ctx.fillStyle = colors.textShadow;
+            ctx.fillRect(buttonX + 3, buttonY + 3, buttonWidth, buttonHeight);
+            
+            // Button
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button border
+            ctx.strokeStyle = colors.text;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            // Button text
+            ctx.fillStyle = colors.text;
+            ctx.font = "16px Arial";
+            ctx.fillText("RESTART", centerX, buttonY + buttonHeight / 2);
+        }
+        
+        // Function to check answer
+        function checkAnswer() {
+            // Determine which segment (TRUE/FALSE) is at the top
+            const normalizedAngle = ((fanAngle % 360) + 360) % 360;
+            const selectedAnswer = (normalizedAngle % 180) < 90 ? "True" : "False";
+            
+            // Create particles at the pointer position
+            createParticles(
+                centerX, 
+                centerY - fanRadius - 10, 
+                selectedAnswer === correctAnswer ? colors.correct : colors.incorrect, 
+                30
+            );
+            
+            // Play appropriate sound
+            if (selectedAnswer === correctAnswer) {
+                playCorrectSound();
+            } else {
+                playIncorrectSound();
+            }
+            
+            return selectedAnswer === correctAnswer;
+        }
+        
+        // Function to handle player tap
+        function handleTap() {
+            if (gameOver) {
+                // Check if tap is on restart button
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                const buttonX = centerX - buttonWidth / 2;
+                const buttonY = centerY + fanRadius * 0.5;
+                
+                const mouseX = event.clientX - canvas.getBoundingClientRect().left;
+                const mouseY = event.clientY - canvas.getBoundingClientRect().top;
+                
+                if (
+                    mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
+                    mouseY >= buttonY && mouseY <= buttonY + buttonHeight
+                ) {
+                    // Restart game
+                    fanAngle = 0;
+                    fanSpeed = 0.1;
+                    isSpinning = true;
+                    gameOver = false;
+                    fanSlowing = false;
+                    particles = [];
+                    playClickSound();
+                }
+            } else if (isSpinning) {
+                // Stop spinning and check answer
+                playClickSound();
+                fanSlowing = true;
+                setTimeout(() => {
+                    isSpinning = false;
+                    gameOver = true;
+                    const isCorrect = checkAnswer();
+                }, 1500); // Wait for fan to slow down
+            }
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('click', handleTap);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            handleTap();
+        });
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Update fan angle
+            if (isSpinning) {
+                if (fanSlowing) {
+                    fanSpeed *= 0.95; // Gradually slow down
+                    if (fanSpeed < 0.005) {
+                        fanSpeed = 0;
+                    }
+                }
+                fanAngle += fanSpeed * 60;
+                
+                // Update pulse effect
+                pulseEffect += pulseDirection;
+                if (pulseEffect > 1 || pulseEffect < 0) {
+                    pulseDirection *= -1;
+                }
+            }
+            
+            // Update particles
+            updateParticles();
+            
+            // Draw game elements
+            drawFan();
+            drawPointer();
+            drawQuestion();
+            drawParticles();
+            
+            // Draw result if game is over
+            if (gameOver) {
+                drawResult(checkAnswer());
+            }
+            
+            // Continue game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

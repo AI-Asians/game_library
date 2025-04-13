@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Color-Fill Quiz Game</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      border: 4px solid #fff;
+      image-rendering: pixelated;
+    }
+    #restartBtn {
+      position: absolute;
+      bottom: 20px;
+      padding: 8px 16px;
+      background-color: #333;
+      color: #fff;
+      border: 3px solid #fff;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <button id="restartBtn">Restart</button>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restartBtn');
+    
+    // Game colors - limited retro palette
+    const COLORS = {
+      bg: '#0f380f',       // Dark green background (Game Boy style)
+      question: '#8bac0f', // Light green
+      optionBg: '#306230', // Medium green
+      fillColor: '#9bbc0f', // Light yellow-green
+      correct: '#0fbc8b',  // Teal
+      incorrect: '#bc0f0f', // Red
+      border: '#0f0f0f',   // Black
+      text: '#e0f8d0'      // Light cream
+    };
+
+    // Game state
+    let gameState = {
+      options: [
+        { text: "Paris", correct: true, x: 100, y: 220, width: 250, height: 120, fillPercent: 0 },
+        { text: "London", correct: false, x: 450, y: 220, width: 250, height: 120, fillPercent: 0 },
+        { text: "Berlin", correct: false, x: 100, y: 370, width: 250, height: 120, fillPercent: 0 },
+        { text: "Rome", correct: false, x: 450, y: 370, width: 250, height: 120, fillPercent: 0 }
+      ],
+      selectedOption: null,
+      gameOver: false,
+      won: false,
+      fillSpeed: 5,
+      fillParticles: []
+    };
+
+    // Sound effects using AudioContext
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      switch(type) {
+        case 'hover':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.05);
+          break;
+        case 'fill':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(330, audioCtx.currentTime + 0.1);
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.1);
+          break;
+        case 'correct':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+          gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+          oscillator.start();
+          
+          setTimeout(() => {
+            oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime); // E5
+          }, 100);
+          
+          setTimeout(() => {
+            oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime); // G5
+          }, 200);
+          
+          oscillator.stop(audioCtx.currentTime + 0.3);
+          break;
+        case 'incorrect':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(380, audioCtx.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(160, audioCtx.currentTime + 0.3);
+          gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.3);
+          break;
+      }
+    }
+
+    // Draw the pixelated rectangle
+    function drawPixelatedRect(x, y, width, height, color) {
+      const pixelSize = 4; // Size of each "pixel"
+      ctx.fillStyle = color;
+      
+      // Draw pixelated rectangle
+      for (let i = 0; i < width; i += pixelSize) {
+        for (let j = 0; j < height; j += pixelSize) {
+          ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+        }
+      }
+    }
+
+    // Draw pixelated text
+    function drawText(text, x, y, color, size = 24, align = 'center') {
+      ctx.fillStyle = color;
+      ctx.font = `${size}px sans-serif`;
+      ctx.textAlign = align;
+      ctx.fillText(text, x, y);
+    }
+
+    // Draw option with filling effect
+    function drawOption(option) {
+      // Draw base
+      drawPixelatedRect(option.x, option.y, option.width, option.height, COLORS.optionBg);
+      
+      // Draw fill based on percentage
+      if (option.fillPercent > 0) {
+        const fillWidth = option.width * (option.fillPercent / 100);
+        drawPixelatedRect(option.x, option.y, fillWidth, option.height, 
+          option.correct ? COLORS.correct : COLORS.incorrect);
+      }
+      
+      // Draw border
+      ctx.strokeStyle = COLORS.border;
+      ctx.lineWidth = 4;
+      ctx.strokeRect(option.x, option.y, option.width, option.height);
+      
+      // Draw text
+      drawText(option.text, option.x + option.width / 2, option.y + option.height / 2 + 10, COLORS.text);
+    }
+
+    // Draw fill particles
+    function drawFillParticles() {
+      for (let i = 0; i < gameState.fillParticles.length; i++) {
+        const p = gameState.fillParticles[i];
+        drawPixelatedRect(p.x, p.y, p.size, p.size, p.color);
+        
+        // Update particle
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 1;
+        
+        // Remove dead particles
+        if (p.life <= 0) {
+          gameState.fillParticles.splice(i, 1);
+          i--;
+        }
+      }
+    }
+
+    // Create fill particle effect
+    function createFillEffect(x, y, isCorrect) {
+      const color = isCorrect ? COLORS.correct : COLORS.incorrect;
+      
+      for (let i = 0; i < 15; i++) {
+        gameState.fillParticles.push({
+          x: x,
+          y: y,
+          size: 4 + Math.random() * 4,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6,
+          color: color,
+          life: 20 + Math.random() * 20
+        });
+      }
+    }
+
+    // Main game draw function
+    function draw() {
+      // Clear canvas with background color
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw question
+      drawPixelatedRect(100, 80, 600, 80, COLORS.optionBg);
+      ctx.strokeStyle = COLORS.border;
+      ctx.lineWidth = 4;
+      ctx.strokeRect(100, 80, 600, 80);
+      drawText("What is the capital of France?", canvas.width / 2, 130, COLORS.text, 30);
+      
+      // Draw options
+      gameState.options.forEach(drawOption);
+      
+      // Draw particles
+      drawFillParticles();
+      
+      // Handle game over text
+      if (gameState.gameOver) {
+        drawText(
+          gameState.won ? "CORRECT!" : "WRONG!",
+          canvas.width / 2,
+          50,
+          gameState.won ? COLORS.correct : COLORS.incorrect,
+          40
+        );
+        restartBtn.style.display = "block";
+      }
+    }
+
+    // Check if a point is inside an option
+    function isPointInOption(x, y, option) {
+      return x >= option.x && x <= option.x + option.width &&
+             y >= option.y && y <= option.y + option.height;
+    }
+
+    // Handle mouse move
+    function handleMouseMove(e) {
+      if (gameState.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Change cursor if hovering over an option
+      let hovering = false;
+      gameState.options.forEach(option => {
+        if (isPointInOption(x, y, option)) {
+          canvas.style.cursor = "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"><path fill=\"%23ffffff\" d=\"M16 12l-6-6v12z\"/></svg>'), auto";
+          hovering = true;
+        }
+      });
+      
+      if (!hovering) {
+        canvas.style.cursor = "default";
+      }
+    }
+
+    // Handle mouse down
+    function handleMouseDown(e) {
+      if (gameState.gameOver) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Check if clicked on an option
+      gameState.options.forEach(option => {
+        if (isPointInOption(x, y, option)) {
+          gameState.selectedOption = option;
+          playSound('fill');
+          createFillEffect(x, y, option.correct);
+        }
+      });
+    }
+
+    // Update game logic
+    function update() {
+      if (!gameState.gameOver && gameState.selectedOption) {
+        gameState.selectedOption.fillPercent += gameState.fillSpeed;
+        
+        // Check if filling is complete
+        if (gameState.selectedOption.fillPercent >= 100) {
+          gameState.selectedOption.fillPercent = 100;
+          gameState.gameOver = true;
+          gameState.won = gameState.selectedOption.correct;
+          
+          if (gameState.won) {
+            playSound('correct');
+          } else {
+            playSound('incorrect');
+          }
+          
+          // Create extra particles for completion
+          for (let i = 0; i < 3; i++) {
+            const x = gameState.selectedOption.x + Math.random() * gameState.selectedOption.width;
+            const y = gameState.selectedOption.y + Math.random() * gameState.selectedOption.height;
+            createFillEffect(x, y, gameState.selectedOption.correct);
+          }
+        }
+      }
+    }
+
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Event listeners
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mousedown', handleMouseDown);
+    
+    // Touch events for mobile
+    canvas.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      handleMouseDown({
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      });
+    });
+
+    // Restart button
+    restartBtn.addEventListener('click', function() {
+      gameState.options.forEach(option => {
+        option.fillPercent = 0;
+      });
+      gameState.selectedOption = null;
+      gameState.gameOver = false;
+      gameState.won = false;
+      gameState.fillParticles = [];
+      restartBtn.style.display = "none";
+    });
+
+    // Check if we need to resize for mobile
+    function checkMobileSize() {
+      if (window.innerWidth < 600) {
+        canvas.width = 360;
+        canvas.height = 640;
+      }
+    }
+    
+    // Initialize and start game
+    checkMobileSize();
+    window.addEventListener('resize', checkMobileSize);
+    gameLoop();
+  </script>
+</body>
+</html>

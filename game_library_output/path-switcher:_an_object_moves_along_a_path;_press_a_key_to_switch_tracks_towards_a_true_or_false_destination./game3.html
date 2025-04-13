@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Path Switcher Game</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            background-color: #111;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: none;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#0f380f',
+            track: '#8bac0f',
+            cart: '#306230',
+            textLight: '#9bbc0f',
+            textDark: '#0f380f',
+            true: '#e60012',
+            false: '#0000FF',
+            highlight: '#FFFF00'
+        };
+        
+        // Game variables
+        let cartX = 100;
+        let cartY = 300;
+        let speed = 2.8;
+        let gameOver = false;
+        let correct = null;
+        let switchPoint = 450;
+        let branchY = 200;
+        let onTopTrack = false;
+        let canSwitch = false;
+        let switchTime = false;
+        let switchTimeCounter = 0;
+        
+        // Sound generation
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'switch') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(550, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(100, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.4);
+            }
+        }
+        
+        // Draw pixel-style rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        // Draw the tracks
+        function drawTracks() {
+            // Main track
+            drawPixelRect(50, 295, switchPoint - 50, 10, COLORS.track);
+            
+            // Branch tracks
+            drawPixelRect(switchPoint, 295, 10, -95, COLORS.track); // Up branch
+            drawPixelRect(switchPoint, 295, 10, 95, COLORS.track); // Down branch
+            
+            // End tracks
+            drawPixelRect(switchPoint + 10, 200, 290, 10, COLORS.track); // Top track
+            drawPixelRect(switchPoint + 10, 390, 290, 10, COLORS.track); // Bottom track
+            
+            // Destination areas
+            drawPixelRect(700, 170, 60, 70, COLORS.true);
+            drawPixelRect(700, 360, 60, 70, COLORS.false);
+            
+            // Switch point marker
+            if (cartX < switchPoint - 70 && cartX > switchPoint - 150) {
+                drawPixelRect(switchPoint - 15, 280, 30, 40, switchTime ? COLORS.highlight : '#555555');
+                
+                // Arrow indicators
+                if (switchTime) {
+                    // Up arrow
+                    drawPixelRect(switchPoint - 5, 265, 10, 10, COLORS.highlight);
+                    drawPixelRect(switchPoint - 10, 270, 20, 5, COLORS.highlight);
+                    
+                    // Down arrow
+                    drawPixelRect(switchPoint - 5, 325, 10, 10, COLORS.highlight);
+                    drawPixelRect(switchPoint - 10, 325, 20, 5, COLORS.highlight);
+                }
+            }
+        }
+        
+        // Draw the cart
+        function drawCart() {
+            // Cart body
+            drawPixelRect(cartX - 15, cartY - 10, 30, 20, COLORS.cart);
+            
+            // Cart wheels
+            drawPixelRect(cartX - 10, cartY + 10, 8, 8, '#000');
+            drawPixelRect(cartX + 2, cartY + 10, 8, 8, '#000');
+            
+            // Cart details
+            drawPixelRect(cartX - 10, cartY - 5, 20, 10, COLORS.textLight);
+        }
+        
+        // Draw scenery
+        function drawScenery() {
+            // Draw some pixel art trees and clouds for atmosphere
+            // Trees
+            for (let i = 0; i < 5; i++) {
+                const x = 100 + i * 150;
+                const y = 100;
+                
+                // Tree trunk
+                drawPixelRect(x, y + 30, 10, 20, '#8B4513');
+                
+                // Tree top
+                drawPixelRect(x - 15, y + 10, 40, 30, '#0f6800');
+                drawPixelRect(x - 10, y, 30, 20, '#0f6800');
+            }
+            
+            // Clouds
+            for (let i = 0; i < 3; i++) {
+                const x = 200 + i * 250;
+                const y = 80;
+                
+                drawPixelRect(x, y, 60, 20, '#9bbc0f');
+                drawPixelRect(x + 10, y - 10, 40, 10, '#9bbc0f');
+            }
+            
+            // Ground details
+            for (let i = 0; i < 40; i++) {
+                const x = 20 + i * 20;
+                drawPixelRect(x, 450, 5, 5, '#306230');
+                drawPixelRect(x + 10, 470, 3, 3, '#306230');
+            }
+        }
+        
+        // Draw text with pixel-y feel
+        function drawText(text, x, y, size, color) {
+            ctx.font = `${size}px sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.fillText(text, x, y);
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) return;
+            
+            // Move cart
+            cartX += speed;
+            
+            // Update cart Y position based on track
+            if (cartX > switchPoint) {
+                if (onTopTrack) {
+                    cartY = 205;
+                } else {
+                    cartY = 395;
+                }
+            }
+            
+            // Check if player can switch tracks
+            canSwitch = (cartX >= switchPoint - 70 && cartX <= switchPoint - 20);
+            
+            // Visual cue for switching
+            switchTime = canSwitch;
+            if (switchTime) {
+                switchTimeCounter = (switchTimeCounter + 1) % 10;
+            } else {
+                switchTimeCounter = 0;
+            }
+            
+            // Check win/lose condition
+            if (cartX > 700) {
+                gameOver = true;
+                
+                // The correct answer is FALSE
+                correct = !onTopTrack;
+                
+                if (correct) {
+                    playSound('correct');
+                } else {
+                    playSound('wrong');
+                }
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Draw everything
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawScenery();
+            drawTracks();
+            drawCart();
+            
+            // Draw labels
+            drawText("TRUE", 730, 210, 24, COLORS.textLight);
+            drawText("FALSE", 730, 400, 24, COLORS.textLight);
+            
+            // Draw question
+            drawText("The Great Wall of China is visible from space.", 400, 80, 22, COLORS.textLight);
+            
+            // Draw instructions
+            if (canSwitch) {
+                drawText("Press SPACE to switch tracks!", 400, 500, 20, COLORS.highlight);
+            } else if (cartX < switchPoint - 70) {
+                drawText("Press SPACE to switch tracks at the marked area", 400, 500, 18, COLORS.textLight);
+            }
+            
+            // Game over text
+            if (gameOver) {
+                if (correct) {
+                    drawText("CORRECT!", 400, 500, 32, COLORS.textLight);
+                } else {
+                    drawText("WRONG! The Great Wall is NOT visible from space.", 400, 500, 18, COLORS.textLight);
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle keyboard input
+        document.addEventListener('keydown', function(e) {
+            if (e.code === 'Space' && canSwitch && !gameOver) {
+                onTopTrack = !onTopTrack;
+                playSound('switch');
+            }
+        });
+        
+        // Handle mouse/touch input
+        canvas.addEventListener('click', function() {
+            if (canSwitch && !gameOver) {
+                onTopTrack = !onTopTrack;
+                playSound('switch');
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            cartX = 100;
+            cartY = 300;
+            gameOver = false;
+            correct = null;
+            onTopTrack = false;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

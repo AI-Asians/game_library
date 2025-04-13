@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code-Breaker Tap: The Red Planet</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited palette
+        const COLORS = {
+            background: '#0A0C1B',
+            grid: '#1A2B3C',
+            text: '#E0F0FF',
+            vaultBase: '#445566',
+            vaultHighlight: '#66AACC',
+            vaultShadow: '#223344',
+            correct: '#88FF88',
+            incorrect: '#FF5566',
+            handle: '#DDBB66',
+            code: '#33FF99'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let selectedVault = -1;
+        let hoveringVault = -1;
+        let unlocking = false;
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 100,
+            width: 120,
+            height: 40,
+            visible: false
+        };
+        
+        // Audio context
+        let audioCtx;
+        
+        // The question and answers
+        const question = "Which planet is known as the Red Planet?";
+        const options = [
+            { text: "Venus", code: "V-12", correct: false },
+            { text: "Mars", code: "M-04", correct: true },
+            { text: "Jupiter", code: "J-11", correct: false },
+            { text: "Mercury", code: "MC-09", correct: false }
+        ];
+        
+        // Initialize vault positions
+        const vaults = [];
+        const vaultWidth = isMobile ? 140 : 160;
+        const vaultHeight = isMobile ? 120 : 140;
+        const columns = 2;
+        const rows = Math.ceil(options.length / columns);
+        
+        function initVaults() {
+            vaults.length = 0;
+            const startX = (canvas.width - (columns * vaultWidth + (columns - 1) * 20)) / 2;
+            const startY = isMobile ? 200 : 180;
+            
+            for (let i = 0; i < options.length; i++) {
+                const row = Math.floor(i / columns);
+                const col = i % columns;
+                vaults.push({
+                    x: startX + col * (vaultWidth + 20),
+                    y: startY + row * (vaultHeight + 20),
+                    width: vaultWidth,
+                    height: vaultHeight,
+                    openAmount: 0,
+                    option: options[i],
+                    blinkTime: 0,
+                    blinkState: false
+                });
+            }
+        }
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            selectedVault = -1;
+            hoveringVault = -1;
+            unlocking = false;
+            restartButton.visible = false;
+            initVaults();
+        }
+        
+        // Play a sound
+        function playSound(type) {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'hover':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(196, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(146.83, audioCtx.currentTime + 0.2);
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+            }
+        }
+        
+        // Draw the grid background
+        function drawBackground() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid lines
+            ctx.strokeStyle = COLORS.grid;
+            ctx.lineWidth = 2;
+            
+            // Horizontal lines
+            for (let y = 0; y < canvas.height; y += 20) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Vertical lines
+            for (let x = 0; x < canvas.width; x += 20) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            // Draw digital/binary elements in background
+            ctx.fillStyle = COLORS.grid;
+            ctx.font = "10px monospace";
+            for (let i = 0; i < 40; i++) {
+                const x = Math.floor(Math.random() * canvas.width);
+                const y = Math.floor(Math.random() * canvas.height);
+                if (Math.random() > 0.5) {
+                    ctx.fillText("1", x, y);
+                } else {
+                    ctx.fillText("0", x, y);
+                }
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "bold 24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, isMobile ? 120 : 100);
+            
+            // Draw subtitle
+            ctx.font = "16px sans-serif";
+            ctx.fillText("Tap the correct vault to break the code", canvas.width / 2, isMobile ? 150 : 130);
+        }
+        
+        // Draw a vault
+        function drawVault(vault, index) {
+            const isHovering = hoveringVault === index;
+            const isSelected = selectedVault === index;
+            
+            // Vault body
+            ctx.fillStyle = isSelected ? 
+                (vault.option.correct ? COLORS.correct : COLORS.incorrect) : 
+                (isHovering ? COLORS.vaultHighlight : COLORS.vaultBase);
+                
+            // Draw vault with pixelated style
+            for (let yOffset = 0; yOffset < vault.height; yOffset += 4) {
+                for (let xOffset = 0; xOffset < vault.width; xOffset += 4) {
+                    if (xOffset < 10 || xOffset > vault.width - 10 || 
+                        yOffset < 10 || yOffset > vault.height - 10) {
+                        // Border area
+                        ctx.fillRect(vault.x + xOffset, vault.y + yOffset, 4, 4);
+                    }
+                }
+            }
+            
+            // Inner part of the vault
+            ctx.fillStyle = COLORS.vaultShadow;
+            ctx.fillRect(
+                vault.x + 10, 
+                vault.y + 10, 
+                vault.width - 20, 
+                vault.height - 20
+            );
+            
+            // Vault door
+            ctx.fillStyle = isSelected ? 
+                (vault.option.correct ? COLORS.correct : COLORS.incorrect) : 
+                (isHovering ? COLORS.vaultHighlight : COLORS.vaultBase);
+            
+            // Draw door with opening animation if selected
+            const doorWidth = vault.width - 40;
+            const doorHeight = vault.height - 40;
+            ctx.save();
+            ctx.translate(vault.x + 20, vault.y + 20);
+            ctx.fillRect(
+                vault.openAmount * doorWidth, 
+                0, 
+                doorWidth * (1 - vault.openAmount), 
+                doorHeight
+            );
+            
+            // Draw handle on the door
+            ctx.fillStyle = COLORS.handle;
+            if (vault.openAmount < 0.8) {
+                ctx.fillRect(
+                    doorWidth - 15 + (vault.openAmount * doorWidth), 
+                    doorHeight / 2 - 10, 
+                    10, 
+                    20
+                );
+            }
+            
+            // Draw blinking light
+            if (isHovering || isSelected) {
+                vault.blinkTime += 1;
+                if (vault.blinkTime > 10) {
+                    vault.blinkTime = 0;
+                    vault.blinkState = !vault.blinkState;
+                }
+                
+                if (vault.blinkState || isSelected) {
+                    ctx.fillStyle = isSelected ? 
+                        (vault.option.correct ? COLORS.correct : COLORS.incorrect) : 
+                        COLORS.code;
+                    ctx.fillRect(doorWidth - 30, 10, 6, 6);
+                }
+            }
+            
+            ctx.restore();
+            
+            // Draw code number
+            ctx.fillStyle = COLORS.code;
+            ctx.font = "bold 16px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(
+                vault.option.code, 
+                vault.x + vault.width / 2, 
+                vault.y + 35
+            );
+            
+            // Draw option text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "18px sans-serif";
+            if (vault.openAmount > 0) {
+                // Text appears when vault opens
+                ctx.fillText(
+                    vault.option.text, 
+                    vault.x + vault.width / 2, 
+                    vault.y + vault.height / 2 + 8
+                );
+            }
+        }
+        
+        // Draw result message
+        function drawResult() {
+            if (selectedVault >= 0) {
+                const vault = vaults[selectedVault];
+                ctx.fillStyle = vault.option.correct ? COLORS.correct : COLORS.incorrect;
+                ctx.font = "bold 28px sans-serif";
+                ctx.textAlign = "center";
+                
+                const message = vault.option.correct ? "ACCESS GRANTED" : "ACCESS DENIED";
+                ctx.fillText(message, canvas.width / 2, canvas.height - 100);
+                
+                if (restartButton.visible) {
+                    // Draw restart button
+                    ctx.fillStyle = COLORS.vaultBase;
+                    ctx.fillRect(
+                        restartButton.x, 
+                        restartButton.y, 
+                        restartButton.width, 
+                        restartButton.height
+                    );
+                    
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = "18px sans-serif";
+                    ctx.fillText("Restart", 
+                        restartButton.x + restartButton.width / 2, 
+                        restartButton.y + restartButton.height / 2 + 6
+                    );
+                }
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            drawBackground();
+            drawQuestion();
+            
+            // Draw vaults
+            vaults.forEach((vault, index) => {
+                drawVault(vault, index);
+            });
+            
+            drawResult();
+        }
+        
+        // Update game logic
+        function update() {
+            if (!gameOver && selectedVault >= 0) {
+                const vault = vaults[selectedVault];
+                if (vault.openAmount < 1) {
+                    vault.openAmount += 0.1;
+                    if (vault.openAmount >= 1) {
+                        gameOver = true;
+                        restartButton.visible = true;
+                    }
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event handlers
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                return;
+            }
+            
+            const oldHovering = hoveringVault;
+            hoveringVault = -1;
+            
+            vaults.forEach((vault, index) => {
+                if (x >= vault.x && x <= vault.x + vault.width &&
+                    y >= vault.y && y <= vault.y + vault.height) {
+                    hoveringVault = index;
+                }
+            });
+            
+            if (oldHovering !== hoveringVault && hoveringVault !== -1) {
+                playSound('hover');
+            }
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver && restartButton.visible) {
+                if (x >= restartButton.x && x <= restartButton.x + restartButton.width &&
+                    y >= restartButton.y && y <= restartButton.y + restartButton.height) {
+                    init();
+                    return;
+                }
+            }
+            
+            if (!gameOver && selectedVault === -1) {
+                vaults.forEach((vault, index) => {
+                    if (x >= vault.x && x <= vault.x + vault.width &&
+                        y >= vault.y && y <= vault.y + vault.height) {
+                        selectedVault = index;
+                        playSound(vault.option.correct ? 'correct' : 'incorrect');
+                    }
+                });
+            }
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.touches[0].clientX - rect.left) * scaleX;
+            const y = (e.touches[0].clientY - rect.top) * scaleY;
+            
+            if (gameOver && restartButton.visible) {
+                if (x >= restartButton.x && x <= restartButton.x + restartButton.width &&
+                    y >= restartButton.y && y <= restartButton.y + restartButton.height) {
+                    init();
+                    return;
+                }
+            }
+            
+            if (!gameOver && selectedVault === -1) {
+                vaults.forEach((vault, index) => {
+                    if (x >= vault.x && x <= vault.x + vault.width &&
+                        y >= vault.y && y <= vault.y + vault.height) {
+                        selectedVault = index;
+                        playSound(vault.option.correct ? 'correct' : 'incorrect');
+                    }
+                });
+            }
+        }, { passive: false });
+        
+        // Initialize the game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

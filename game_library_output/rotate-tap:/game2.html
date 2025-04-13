@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            touch-action: manipulation;
+        }
+        canvas {
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100vh;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: 4px solid #888;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Play Again</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const planets = ["Venus", "Earth", "Mars", "Jupiter", "Saturn", "Neptune"];
+        const colors = ["#E27D60", "#85CDCA", "#E8A87C", "#C38D9E", "#41B3A3", "#553D67"];
+        let wheelRotation = 0;
+        let rotationSpeed = 0.02;
+        let gameActive = true;
+        let gameResult = null;
+        let planetSelected = null;
+        let gameOver = false;
+        let gameTime = 0;
+        let indicatorFlash = 0;
+        
+        // Position variables
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const wheelRadius = Math.min(canvas.width, canvas.height) * 0.35;
+        
+        // Sound effects
+        const createOscillator = (freq, duration, type = 'square') => {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = 0.3;
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        };
+        
+        const playCorrectSound = () => {
+            createOscillator(523.25, 100); // C5
+            setTimeout(() => createOscillator(659.25, 200), 100); // E5
+            setTimeout(() => createOscillator(783.99, 300), 300); // G5
+        };
+        
+        const playWrongSound = () => {
+            createOscillator(196.00, 300); // G3
+            setTimeout(() => createOscillator(185.00, 500), 100); // F#3
+        };
+        
+        const playClickSound = () => {
+            createOscillator(440, 50);
+        };
+        
+        // Main game logic
+        function update() {
+            if (gameActive) {
+                gameTime += 1/60;
+                
+                // Increase rotation speed slightly over time
+                if (gameTime > 2) {
+                    rotationSpeed = 0.02 + (gameTime / 150);
+                }
+                
+                // Update wheel rotation
+                wheelRotation += rotationSpeed;
+                if (wheelRotation > Math.PI * 2) {
+                    wheelRotation -= Math.PI * 2;
+                }
+                
+                // Update indicator flash effect
+                indicatorFlash += 0.1;
+            }
+        }
+        
+        function draw() {
+            // Clear canvas with dark background
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated stars
+            drawStars();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw the rotating wheel
+            drawWheel();
+            
+            // Draw the selector indicator
+            drawIndicator();
+            
+            // Draw game result if there is one
+            if (gameResult) {
+                drawResult();
+            }
+            
+            // Draw instructions
+            if (gameActive) {
+                drawInstructions();
+            }
+        }
+        
+        function drawStars() {
+            ctx.fillStyle = '#FFF';
+            for (let i = 0; i < 30; i++) {
+                const x = Math.floor(Math.random() * canvas.width);
+                const y = Math.floor(Math.random() * canvas.height);
+                const size = Math.floor(Math.random() * 3) + 1;
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = '#FFF';
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', centerX, centerY - wheelRadius - 40);
+        }
+        
+        function drawWheel() {
+            const sliceAngle = (Math.PI * 2) / planets.length;
+            
+            // Draw wheel segments
+            for (let i = 0; i < planets.length; i++) {
+                const startAngle = wheelRotation + i * sliceAngle;
+                const endAngle = startAngle + sliceAngle;
+                
+                // Draw slice with pixelated edge
+                ctx.fillStyle = colors[i];
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                
+                // Draw pixelated arc segments
+                const steps = 16;
+                const stepAngle = sliceAngle / steps;
+                for (let j = 0; j <= steps; j++) {
+                    const angle = startAngle + j * stepAngle;
+                    const x = centerX + Math.cos(angle) * wheelRadius;
+                    const y = centerY + Math.sin(angle) * wheelRadius;
+                    
+                    // Round to create pixelated effect
+                    const pixelSize = 4;
+                    const pixelX = Math.round(x / pixelSize) * pixelSize;
+                    const pixelY = Math.round(y / pixelSize) * pixelSize;
+                    
+                    if (j === 0) {
+                        ctx.lineTo(pixelX, pixelY);
+                    } else {
+                        ctx.lineTo(pixelX, pixelY);
+                    }
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Draw text
+                const textAngle = startAngle + sliceAngle / 2;
+                const textX = centerX + Math.cos(textAngle) * (wheelRadius * 0.7);
+                const textY = centerY + Math.sin(textAngle) * (wheelRadius * 0.7);
+                
+                ctx.save();
+                ctx.translate(textX, textY);
+                ctx.rotate(textAngle + Math.PI/2);
+                ctx.fillStyle = '#000';
+                ctx.font = `${isMobile ? 14 : 16}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(planets[i], 0, 0);
+                ctx.restore();
+            }
+            
+            // Draw wheel center
+            ctx.fillStyle = '#444';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, wheelRadius * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+        }
+        
+        function drawIndicator() {
+            // Draw selector triangle
+            const indicatorX = centerX;
+            const indicatorY = centerY - wheelRadius - 10;
+            
+            // Create flashing effect
+            const flashColor = Math.sin(indicatorFlash) > 0 ? '#FFF' : '#F00';
+            
+            ctx.fillStyle = flashColor;
+            ctx.beginPath();
+            ctx.moveTo(indicatorX, indicatorY);
+            ctx.lineTo(indicatorX - 15, indicatorY - 20);
+            ctx.lineTo(indicatorX + 15, indicatorY - 20);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        function drawResult() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = gameResult === 'correct' ? '#5F5' : '#F55';
+            ctx.font = `${isMobile ? 28 : 36}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            if (gameResult === 'correct') {
+                ctx.fillText('CORRECT!', centerX, centerY - 20);
+                ctx.fillStyle = '#FFF';
+                ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+                ctx.fillText('Mars is the Red Planet!', centerX, centerY + 20);
+            } else {
+                ctx.fillText('WRONG!', centerX, centerY - 20);
+                ctx.fillStyle = '#FFF';
+                ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+                ctx.fillText(`You selected ${planetSelected}`, centerX, centerY + 20);
+                ctx.fillText('Mars is the Red Planet!', centerX, centerY + 60);
+            }
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = '#FFF';
+            ctx.font = `${isMobile ? 16 : 18}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('Tap/Click to stop the wheel on the correct answer', centerX, canvas.height - 30);
+        }
+        
+        function checkAnswer() {
+            const sliceAngle = (Math.PI * 2) / planets.length;
+            const normalizedRotation = (wheelRotation % (Math.PI * 2)) + Math.PI / 2;
+            const selectedIndex = Math.floor(((Math.PI * 2) - normalizedRotation) / sliceAngle) % planets.length;
+            
+            planetSelected = planets[selectedIndex];
+            
+            if (planetSelected === "Mars") {
+                gameResult = 'correct';
+                playCorrectSound();
+            } else {
+                gameResult = 'incorrect';
+                playWrongSound();
+            }
+            
+            gameActive = false;
+            gameOver = true;
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', function() {
+            if (gameActive) {
+                playClickSound();
+                checkAnswer();
+            }
+        });
+        
+        restartBtn.addEventListener('click', function() {
+            wheelRotation = 0;
+            rotationSpeed = 0.02;
+            gameActive = true;
+            gameResult = null;
+            planetSelected = null;
+            gameOver = false;
+            gameTime = 0;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

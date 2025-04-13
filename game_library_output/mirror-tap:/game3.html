@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mirror-Tap: The Great Wall</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Game Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 8-bit color palette
+        const colors = {
+            black: '#0f0f0f',
+            darkBlue: '#264b96',
+            lightBlue: '#4b9cd6',
+            darkRed: '#962626',
+            lightRed: '#d64b4b',
+            white: '#f0f0f0',
+            yellow: '#f0d64b',
+            green: '#4bd64b',
+            gray: '#969696'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let correct = false;
+        let showRestart = false;
+        let hoverSide = null;
+        let pulseValue = 0;
+        let pulseDirection = 1;
+        let countdown = 100;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Simple sound effect function
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Draw pixelated wall chunks
+        function drawWall(x, y, width, height, color, highlight) {
+            const brickWidth = 20;
+            const brickHeight = 10;
+            
+            for (let row = 0; row < Math.floor(height / brickHeight); row++) {
+                let offset = (row % 2) * (brickWidth / 2);
+                for (let col = 0; col < Math.ceil(width / brickWidth); col++) {
+                    let brickX = x + col * brickWidth - offset;
+                    let brickY = y + row * brickHeight;
+                    
+                    if (brickX < x + width && brickX + brickWidth > x) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(
+                            brickX, brickY, 
+                            Math.min(brickWidth - 2, x + width - brickX), 
+                            brickHeight - 2
+                        );
+                        
+                        if (highlight) {
+                            ctx.fillStyle = colors.yellow;
+                            ctx.fillRect(
+                                brickX + 2, brickY + 2, 
+                                Math.min(brickWidth - 6, x + width - brickX - 4), 
+                                brickHeight - 6
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Draw pixelated earth from space
+        function drawEarth(x, y, radius, highlight) {
+            ctx.fillStyle = highlight ? colors.lightBlue : colors.darkBlue;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw land masses as pixelated chunks
+            ctx.fillStyle = highlight ? colors.green : colors.darkBlue;
+            for (let i = 0; i < 8; i++) {
+                let landX = x + Math.cos(i * 0.8) * radius * 0.6;
+                let landY = y + Math.sin(i * 0.8) * radius * 0.6;
+                let landSize = radius * 0.4;
+                
+                // Make pixelated land shapes
+                for (let px = 0; px < landSize; px += 8) {
+                    for (let py = 0; py < landSize; py += 8) {
+                        if (Math.random() > 0.4) {
+                            ctx.fillRect(
+                                landX - landSize/2 + px, 
+                                landY - landSize/2 + py, 
+                                8, 8
+                            );
+                        }
+                    }
+                }
+            }
+            
+            // Draw a small white dot representing "the wall" that isn't visible
+            if (highlight) {
+                ctx.fillStyle = colors.yellow;
+                ctx.fillRect(x - 3, y - radius * 0.3, 6, 6);
+            }
+        }
+        
+        // Draw the game scene
+        function drawGame() {
+            // Clear the canvas
+            ctx.fillStyle = colors.black;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the dividing line
+            ctx.fillStyle = colors.gray;
+            ctx.fillRect(canvas.width / 2 - 4, 0, 8, canvas.height);
+            
+            // Draw side labels
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // True side (left)
+            ctx.fillStyle = hoverSide === 'left' ? colors.yellow : colors.white;
+            ctx.fillText('TRUE', canvas.width * 0.25, 40);
+            
+            // False side (right)
+            ctx.fillStyle = hoverSide === 'right' ? colors.yellow : colors.white;
+            ctx.fillText('FALSE', canvas.width * 0.75, 40);
+            
+            // Draw the question
+            ctx.fillStyle = colors.white;
+            ctx.textAlign = 'center';
+            ctx.font = '22px sans-serif';
+            ctx.fillText('The Great Wall of China is visible from space.', canvas.width / 2, 90);
+            
+            // Draw animated pulse around appropriate side
+            pulseValue += 0.05 * pulseDirection;
+            if (pulseValue > 1) {
+                pulseDirection = -1;
+            } else if (pulseValue < 0) {
+                pulseDirection = 1;
+            }
+            
+            // Draw the mirror elements
+            // LEFT SIDE (TRUE)
+            ctx.fillStyle = colors.darkBlue;
+            ctx.fillRect(50, 150, 300, 300);
+            
+            // Draw Earth and wall on left side
+            drawEarth(200, 300, 100, hoverSide === 'left');
+            drawWall(120, 270, 160, 60, colors.darkRed, hoverSide === 'left');
+            
+            // RIGHT SIDE (FALSE)
+            ctx.fillStyle = colors.darkRed;
+            ctx.fillRect(450, 150, 300, 300);
+            
+            // Draw Earth without visible wall on right side
+            drawEarth(600, 300, 100, hoverSide === 'right');
+            // No wall visible from space
+            
+            // Draw pulse indicator on both sides
+            if (!gameOver) {
+                ctx.strokeStyle = colors.yellow;
+                ctx.lineWidth = 3 + pulseValue * 3;
+                
+                if (hoverSide === 'left') {
+                    ctx.strokeRect(50, 150, 300, 300);
+                } else if (hoverSide === 'right') {
+                    ctx.strokeRect(450, 150, 300, 300);
+                }
+            }
+            
+            // Draw countdown bar
+            ctx.fillStyle = colors.gray;
+            ctx.fillRect(250, 500, 300, 20);
+            ctx.fillStyle = countdown > 30 ? colors.green : colors.yellow;
+            ctx.fillRect(250, 500, countdown * 3, 20);
+            
+            // Draw results if game over
+            if (gameOver) {
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                
+                if (correct) {
+                    ctx.fillStyle = colors.green;
+                    ctx.fillText('CORRECT!', canvas.width / 2, 480);
+                } else {
+                    ctx.fillStyle = colors.lightRed;
+                    ctx.fillText('INCORRECT!', canvas.width / 2, 480);
+                }
+                
+                // Restart button
+                if (showRestart) {
+                    ctx.fillStyle = colors.darkBlue;
+                    ctx.fillRect(350, 500, 100, 40);
+                    ctx.fillStyle = colors.white;
+                    ctx.font = '20px sans-serif';
+                    ctx.fillText('Restart', 400, 525);
+                }
+                
+                // Show the correct answer (it's FALSE - the Great Wall is not visible from space)
+                ctx.fillStyle = colors.yellow;
+                ctx.font = '24px sans-serif';
+                ctx.fillText('The correct answer is: FALSE', canvas.width / 2, 550);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            drawGame();
+            
+            if (!gameOver) {
+                countdown -= 0.2;
+                if (countdown <= 0) {
+                    endGame(false);
+                }
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // End the game
+        function endGame(isCorrect) {
+            gameOver = true;
+            correct = isCorrect;
+            
+            if (isCorrect) {
+                playSound(440, 0.2); // Higher tone for correct
+                setTimeout(() => playSound(660, 0.2), 200);
+                setTimeout(() => playSound(880, 0.3), 400);
+            } else {
+                playSound(200, 0.3); // Lower tone for incorrect
+                setTimeout(() => playSound(150, 0.5), 300);
+            }
+            
+            setTimeout(() => {
+                showRestart = true;
+            }, 1000);
+        }
+        
+        // Restart the game
+        function restartGame() {
+            gameOver = false;
+            correct = false;
+            showRestart = false;
+            countdown = 100;
+            hoverSide = null;
+        }
+        
+        // Mouse movement handler
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            
+            if (x < canvas.width / 2) {
+                hoverSide = 'left';
+            } else {
+                hoverSide = 'right';
+            }
+            
+            // Simple hover sound
+            if (hoverSide !== lastHoverSide) {
+                playSound(330, 0.05);
+                lastHoverSide = hoverSide;
+            }
+        });
+        
+        let lastHoverSide = null;
+        
+        // Click handler
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (gameOver && showRestart) {
+                // Check if restart button is clicked
+                if (x >= 350 && x <= 450 && y >= 500 && y <= 540) {
+                    restartGame();
+                    return;
+                }
+            }
+            
+            if (!gameOver) {
+                if (x < canvas.width / 2) {
+                    // Left side (TRUE) - incorrect
+                    endGame(false);
+                } else {
+                    // Right side (FALSE) - correct
+                    endGame(true);
+                }
+            }
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

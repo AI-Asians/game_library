@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lane Runner - True or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        .instruction {
+            position: absolute;
+            top: 20px;
+            color: white;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#0f380f',
+            player: '#8bac0f',
+            lane1: '#306230',
+            lane2: '#0f380f',
+            divider: '#9bbc0f',
+            text: '#e0f8d0',
+            trueOption: '#8bac0f',
+            falseOption: '#aa0000',
+            trueText: '#ffffff',
+            falseText: '#ffffff',
+            instructionBg: '#0f380f',
+            instructionText: '#e0f8d0',
+            restartButton: '#9bbc0f'
+        };
+        
+        // Game variables
+        let gameState = {
+            playerLane: 0, // 0 = left lane, 1 = right lane
+            playerY: canvas.height - 150,
+            playerSize: isMobile ? 30 : 50,
+            laneWidth: canvas.width / 2,
+            speed: 5,
+            gameEnded: false,
+            gameStarted: false,
+            showInstruction: true,
+            instructionTimer: 100,
+            obstacleY: -200,
+            correctLane: 0 // 0 = left (true), 1 = right (false)
+        };
+
+        // Sound functions
+        function playTapSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+        }
+        
+        function playCorrectSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+            oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2);
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+        
+        function playWrongSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(196.00, audioContext.currentTime);
+            oscillator.frequency.setValueAtTime(146.83, audioContext.currentTime + 0.2);
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.4);
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            // Draw lanes
+            ctx.fillStyle = COLORS.lane1;
+            ctx.fillRect(0, 0, gameState.laneWidth, canvas.height);
+            
+            ctx.fillStyle = COLORS.lane2;
+            ctx.fillRect(gameState.laneWidth, 0, gameState.laneWidth, canvas.height);
+            
+            // Draw lane divider as a dotted line
+            ctx.strokeStyle = COLORS.divider;
+            ctx.lineWidth = 6;
+            ctx.setLineDash([20, 15]);
+            ctx.beginPath();
+            ctx.moveTo(gameState.laneWidth, 0);
+            ctx.lineTo(gameState.laneWidth, canvas.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw pixel-art clouds (simple 8-bit style)
+            ctx.fillStyle = '#9bbc0f';
+            // Cloud 1
+            drawPixelRect(100, 100, 60, 20);
+            drawPixelRect(90, 110, 80, 30);
+            
+            // Cloud 2
+            drawPixelRect(canvas.width - 160, 180, 60, 20);
+            drawPixelRect(canvas.width - 170, 190, 80, 30);
+        }
+        
+        function drawPixelRect(x, y, width, height) {
+            const pixelSize = 4;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            const questionText = "Water boils at 100 degrees Celsius at sea level.";
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText(questionText, canvas.width / 2, 50);
+        }
+        
+        function drawPlayer() {
+            const x = gameState.playerLane * gameState.laneWidth + (gameState.laneWidth / 2) - (gameState.playerSize / 2);
+            
+            // Draw player (8-bit character)
+            ctx.fillStyle = COLORS.player;
+            
+            // Body
+            drawPixelRect(x, gameState.playerY, gameState.playerSize, gameState.playerSize);
+            
+            // Eyes
+            ctx.fillStyle = '#000000';
+            const eyeSize = gameState.playerSize / 10;
+            const eyeY = gameState.playerY + gameState.playerSize / 3;
+            drawPixelRect(x + gameState.playerSize / 3, eyeY, eyeSize * 2, eyeSize * 2);
+            drawPixelRect(x + gameState.playerSize * 2/3, eyeY, eyeSize * 2, eyeSize * 2);
+            
+            // Mouth
+            const mouthY = gameState.playerY + gameState.playerSize / 2 + eyeSize * 2;
+            drawPixelRect(x + gameState.playerSize / 3, mouthY, gameState.playerSize / 3, eyeSize * 2);
+        }
+        
+        function drawObstacles() {
+            const obstacleWidth = gameState.laneWidth;
+            const obstacleHeight = 100;
+            
+            // Draw TRUE gate (left lane)
+            ctx.fillStyle = COLORS.trueOption;
+            ctx.fillRect(0, gameState.obstacleY, obstacleWidth, obstacleHeight);
+            
+            // Draw FALSE gate (right lane)
+            ctx.fillStyle = COLORS.falseOption;
+            ctx.fillRect(gameState.laneWidth, gameState.obstacleY, obstacleWidth, obstacleHeight);
+            
+            // Draw text on gates
+            ctx.font = `${isMobile ? 24 : 36}px sans-serif`;
+            ctx.fillStyle = COLORS.trueText;
+            ctx.textAlign = 'center';
+            ctx.fillText("TRUE", gameState.laneWidth / 2, gameState.obstacleY + obstacleHeight / 2 + 10);
+            
+            ctx.fillStyle = COLORS.falseText;
+            ctx.fillText("FALSE", gameState.laneWidth + gameState.laneWidth / 2, gameState.obstacleY + obstacleHeight / 2 + 10);
+        }
+        
+        function drawInstruction() {
+            if (!gameState.showInstruction) return;
+            
+            ctx.fillStyle = COLORS.instructionBg;
+            ctx.globalAlpha = 0.8;
+            ctx.fillRect(canvas.width / 2 - 150, canvas.height / 2 - 80, 300, 160);
+            ctx.globalAlpha = 1.0;
+            
+            ctx.fillStyle = COLORS.instructionText;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('TAP LEFT/RIGHT SIDE', canvas.width / 2, canvas.height / 2 - 40);
+            ctx.fillText('TO CHANGE LANES', canvas.width / 2, canvas.height / 2 - 10);
+            
+            // Draw arrow indicators
+            ctx.fillStyle = COLORS.divider;
+            // Left arrow
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 - 80, canvas.height / 2 + 30);
+            ctx.lineTo(canvas.width / 2 - 120, canvas.height / 2 + 50);
+            ctx.lineTo(canvas.width / 2 - 80, canvas.height / 2 + 70);
+            ctx.fill();
+            
+            // Right arrow
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 + 80, canvas.height / 2 + 30);
+            ctx.lineTo(canvas.width / 2 + 120, canvas.height / 2 + 50);
+            ctx.lineTo(canvas.width / 2 + 80, canvas.height / 2 + 70);
+            ctx.fill();
+        }
+        
+        function drawRestartButton() {
+            if (!gameState.gameEnded) return;
+            
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 30;
+            
+            ctx.fillStyle = COLORS.restartButton;
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            ctx.fillStyle = '#000000';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('RESTART', canvas.width / 2, buttonY + 27);
+            
+            // Store button position for click detection
+            gameState.restartButton = {
+                x: buttonX,
+                y: buttonY,
+                width: buttonWidth,
+                height: buttonHeight
+            };
+        }
+        
+        function drawResult() {
+            if (!gameState.gameEnded) return;
+            
+            ctx.font = '30px sans-serif';
+            ctx.textAlign = 'center';
+            
+            if ((gameState.playerLane === 0 && gameState.correctLane === 0) || 
+                (gameState.playerLane === 1 && gameState.correctLane === 1)) {
+                ctx.fillStyle = '#8bac0f';
+                ctx.fillText('CORRECT!', canvas.width / 2, canvas.height / 2 - 20);
+            } else {
+                ctx.fillStyle = '#aa0000';
+                ctx.fillText('WRONG!', canvas.width / 2, canvas.height / 2 - 20);
+            }
+        }
+        
+        function update() {
+            // Update instruction timer
+            if (gameState.showInstruction) {
+                gameState.instructionTimer--;
+                if (gameState.instructionTimer <= 0) {
+                    gameState.showInstruction = false;
+                    gameState.gameStarted = true;
+                }
+            }
+            
+            // Move obstacles
+            if (gameState.gameStarted && !gameState.gameEnded) {
+                gameState.obstacleY += gameState.speed;
+                
+                // Check collision
+                if (gameState.obstacleY + 100 >= gameState.playerY && 
+                    gameState.obstacleY <= gameState.playerY + gameState.playerSize) {
+                    gameState.gameEnded = true;
+                    
+                    if ((gameState.playerLane === 0 && gameState.correctLane === 0) || 
+                        (gameState.playerLane === 1 && gameState.correctLane === 1)) {
+                        playCorrectSound();
+                    } else {
+                        playWrongSound();
+                    }
+                }
+            }
+        }
+        
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawBackground();
+            drawQuestion();
+            drawPlayer();
+            drawObstacles();
+            drawInstruction();
+            drawResult();
+            drawRestartButton();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameState.playerLane = 0;
+            gameState.playerY = canvas.height - 150;
+            gameState.gameEnded = false;
+            gameState.gameStarted = false;
+            gameState.showInstruction = true;
+            gameState.instructionTimer = 100;
+            gameState.obstacleY = -200;
+            gameState.correctLane = 0; // Truth is in left lane (this matches our question)
+            
+            gameLoop();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', function(event) {
+            if (gameState.gameEnded) {
+                // Check if restart button was clicked
+                const rect = canvas.getBoundingClientRect();
+                const clickX = event.clientX - rect.left;
+                const clickY = event.clientY - rect.top;
+                
+                if (gameState.restartButton && 
+                    clickX >= gameState.restartButton.x && 
+                    clickX <= gameState.restartButton.x + gameState.restartButton.width &&
+                    clickY >= gameState.restartButton.y && 
+                    clickY <= gameState.restartButton.y + gameState.restartButton.height) {
+                    initGame();
+                }
+                return;
+            }
+            
+            // Skip instruction
+            if (gameState.showInstruction) {
+                gameState.showInstruction = false;
+                gameState.gameStarted = true;
+                return;
+            }
+            
+            // Determine which side was clicked for lane change
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            
+            if (clickX < canvas.width / 2) {
+                gameState.playerLane = 0; // Move to left lane
+            } else {
+                gameState.playerLane = 1; // Move to right lane
+            }
+            
+            playTapSound();
+        });
+        
+        // Start the game
+        initGame();
+    </script>
+</body>
+</html>

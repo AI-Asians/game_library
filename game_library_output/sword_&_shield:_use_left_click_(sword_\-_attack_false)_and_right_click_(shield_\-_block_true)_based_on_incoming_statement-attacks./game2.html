@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Sword & Shield - Educational Mini Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            background-color: #111;
+            image-rendering: pixelated;
+        }
+        #instructions {
+            position: absolute;
+            top: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            text-align: center;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="instructions">Left click = Sword (False), Right click = Shield (True)</div>
+
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if device is mobile
+        const isMobile = window.innerWidth <= 800;
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Color palette (limited to 16 colors)
+        const COLORS = {
+            background: '#3f3851',
+            ground: '#2d2b3a',
+            player: '#6ab04c',
+            playerDark: '#4a752f',
+            sword: '#d1d1d1',
+            shield: '#f9ca24',
+            shieldGlow: '#f0932b',
+            attackRed: '#eb4d4b',
+            attackRedDark: '#c23616',
+            text: '#f5f6fa',
+            textShadow: '#2f3640',
+            success: '#badc58',
+            fail: '#ff7979',
+            button: '#686de0',
+            buttonHover: '#4834d4'
+        };
+        
+        // Game variables
+        let gameOver = false;
+        let gameResult = null; // 'correct' or 'incorrect'
+        let playerState = 'idle'; // 'idle', 'sword', 'shield', 'hit'
+        let playerStateTimer = 0;
+        let attackState = 'coming'; // 'coming', 'hit', 'blocked', 'missed'
+        let attackX = canvas.width + 100;
+        let attackY = canvas.height / 2 - 30;
+        let attackSpeed = isMobile ? 3 : 5;
+        
+        // Player position
+        const playerX = canvas.width / 4;
+        const playerY = canvas.height / 2 + 50;
+        
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const answer = true; // This is TRUE
+        
+        // Sound effects (simple beep sounds)
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                switch(type) {
+                    case 'sword':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(100, audioContext.currentTime + 0.1);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.2);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                        break;
+                    case 'shield':
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(450, audioContext.currentTime + 0.1);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.2);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                        break;
+                    case 'hit':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(100, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(50, audioContext.currentTime + 0.3);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                    case 'correct':
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                    case 'incorrect':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.3);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.4);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.4);
+                        break;
+                }
+            } catch (e) {
+                console.log('Audio error:', e);
+            }
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPlayer() {
+            // Player body
+            const bodyWidth = 40;
+            const bodyHeight = 60;
+            
+            // Draw different player states
+            if (playerState === 'hit') {
+                // Hit state - player flashes red
+                drawPixelRect(playerX - bodyWidth/2, playerY - bodyHeight, bodyWidth, bodyHeight, COLORS.fail);
+            } else {
+                // Normal player body
+                drawPixelRect(playerX - bodyWidth/2, playerY - bodyHeight, bodyWidth, bodyHeight, COLORS.player);
+                drawPixelRect(playerX - bodyWidth/2 + 8, playerY - bodyHeight + 10, bodyWidth - 16, bodyHeight - 20, COLORS.playerDark);
+            }
+            
+            // Draw head
+            drawPixelRect(playerX - 15, playerY - bodyHeight - 20, 30, 20, COLORS.player);
+            
+            // Draw sword or shield based on state
+            if (playerState === 'sword') {
+                // Sword attack animation
+                drawPixelRect(playerX + 10, playerY - bodyHeight - 10, 50, 8, COLORS.sword);
+                // Sword swoosh effect
+                ctx.fillStyle = COLORS.sword + '80'; // Semi-transparent
+                ctx.beginPath();
+                ctx.arc(playerX + 50, playerY - bodyHeight - 6, 25, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (playerState === 'shield') {
+                // Shield block animation
+                drawPixelRect(playerX - 35, playerY - bodyHeight - 15, 25, 40, COLORS.shield);
+                // Shield glow effect
+                if (playerStateTimer < 5) {
+                    ctx.fillStyle = COLORS.shieldGlow + '80'; // Semi-transparent
+                    ctx.beginPath();
+                    ctx.arc(playerX - 22, playerY - bodyHeight + 5, 30, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            // Reset state after animation
+            if (playerStateTimer > 0) {
+                playerStateTimer--;
+            } else if (playerState !== 'idle') {
+                playerState = 'idle';
+            }
+        }
+        
+        function drawAttack() {
+            if (attackState === 'coming' || attackState === 'hit' || attackState === 'blocked') {
+                // Draw the attack (statement) as a fireball
+                const attackWidth = 60;
+                const attackHeight = 40;
+                
+                // Pulsing effect
+                const pulse = Math.sin(Date.now() / 100) * 5;
+                
+                // Base attack shape
+                drawPixelRect(attackX, attackY, attackWidth, attackHeight, COLORS.attackRed);
+                drawPixelRect(attackX + 10, attackY + 10, attackWidth - 20, attackHeight - 20, COLORS.attackRedDark);
+                
+                // Tail effect
+                for (let i = 0; i < 3; i++) {
+                    const opacity = (3 - i) / 3;
+                    ctx.fillStyle = COLORS.attackRed + Math.floor(opacity * 255).toString(16).padStart(2, '0');
+                    drawPixelRect(attackX + attackWidth + i * 15, attackY + 5, 15, attackHeight - 10, ctx.fillStyle);
+                }
+                
+                // Glow effect
+                ctx.fillStyle = COLORS.attackRed + '40'; // Semi-transparent
+                ctx.beginPath();
+                ctx.arc(attackX + attackWidth/2, attackY + attackHeight/2, 
+                       attackWidth/2 + pulse, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Impact effect if hit or blocked
+                if (attackState === 'hit' || attackState === 'blocked') {
+                    ctx.fillStyle = attackState === 'hit' ? COLORS.fail + '80' : COLORS.success + '80';
+                    ctx.beginPath();
+                    ctx.arc(attackX, attackY + attackHeight/2, 
+                           40 + pulse, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.font = isMobile ? '16px Arial' : '24px Arial';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            
+            // Text shadow for readability
+            ctx.shadowColor = COLORS.textShadow;
+            ctx.shadowBlur = 5;
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Reset shadow
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        function drawGameOver() {
+            // Draw semi-transparent overlay
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw result text
+            ctx.font = isMobile ? '24px Arial' : '36px Arial';
+            ctx.fillStyle = gameResult === 'correct' ? COLORS.success : COLORS.fail;
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                gameResult === 'correct' ? 'Correct!' : 'Incorrect!', 
+                canvas.width / 2, 
+                canvas.height / 2 - 50
+            );
+            
+            // Draw restart button
+            const buttonWidth = isMobile ? 150 : 200;
+            const buttonHeight = isMobile ? 40 : 60;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2;
+            
+            drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, COLORS.button);
+            
+            ctx.font = isMobile ? '16px Arial' : '24px Arial';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText('Restart', canvas.width / 2, buttonY + buttonHeight / 2 + 8);
+        }
+        
+        function drawBackground() {
+            // Sky
+            drawPixelRect(0, 0, canvas.width, canvas.height, COLORS.background);
+            
+            // Ground
+            drawPixelRect(0, playerY + 10, canvas.width, canvas.height - playerY - 10, COLORS.ground);
+            
+            // Simple pixel art decorations
+            for (let i = 0; i < 10; i++) {
+                drawPixelRect(i * 100, playerY + 5, 80, 5, COLORS.playerDark);
+            }
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Update attack position
+                if (attackState === 'coming') {
+                    attackX -= attackSpeed;
+                    
+                    // Check if attack reached player
+                    if (attackX <= playerX) {
+                        // Player didn't react in time - game over with incorrect
+                        gameOver = true;
+                        gameResult = 'incorrect';
+                        playerState = 'hit';
+                        playerStateTimer = 20;
+                        attackState = 'hit';
+                        playSound('hit');
+                        playSound('incorrect');
+                    }
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBackground();
+            drawQuestion();
+            drawPlayer();
+            drawAttack();
+            
+            // Draw game over if applicable
+            if (gameOver) {
+                drawGameOver();
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', function(e) {
+            // Prevent default behavior
+            e.preventDefault();
+            
+            // If game is over, check for restart button click
+            if (gameOver) {
+                const buttonWidth = isMobile ? 150 : 200;
+                const buttonHeight = isMobile ? 40 : 60;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height / 2;
+                
+                // Check if click is on restart button
+                if (e.offsetX >= buttonX && e.offsetX <= buttonX + buttonWidth &&
+                    e.offsetY >= buttonY && e.offsetY <= buttonY + buttonHeight) {
+                    // Reset game
+                    gameOver = false;
+                    gameResult = null;
+                    playerState = 'idle';
+                    playerStateTimer = 0;
+                    attackState = 'coming';
+                    attackX = canvas.width + 100;
+                }
+                return;
+            }
+            
+            // Only process clicks if player is idle (to prevent spamming)
+            if (playerState !== 'idle') return;
+            
+            if (e.button === 0) { // Left click - Sword (FALSE)
+                playerState = 'sword';
+                playerStateTimer = 15;
+                playSound('sword');
+                
+                // Check if player's action matches the correct answer
+                if (answer === false) {
+                    attackState = 'hit';
+                    gameOver = true;
+                    gameResult = 'correct';
+                    playSound('correct');
+                } else {
+                    attackState = 'missed';
+                    gameOver = true;
+                    gameResult = 'incorrect';
+                    playSound('incorrect');
+                }
+            } else if (e.button === 2) { // Right click - Shield (TRUE)
+                playerState = 'shield';
+                playerStateTimer = 15;
+                playSound('shield');
+                
+                // Check if player's action matches the correct answer
+                if (answer === true) {
+                    attackState = 'blocked';
+                    gameOver = true;
+                    gameResult = 'correct';
+                    playSound('correct');
+                } else {
+                    attackState = 'hit';
+                    gameOver = true;
+                    gameResult = 'incorrect';
+                    playerState = 'hit';
+                    playerStateTimer = 20;
+                    playSound('hit');
+                    playSound('incorrect');
+                }
+            }
+        });
+        
+        // Prevent context menu on right click
+        canvas.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

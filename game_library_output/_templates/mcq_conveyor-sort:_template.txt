@@ -1,0 +1,109 @@
+**TASK:**
+
+Replace the curly braces items with the values in the INFO\_DICT and replace the values enclosed within \<\<\< \>\>\> with the instructions enclosed within them (do not change anything else about the prompt). Note, your final output should be the UPDATED PROMPT, not code.
+
+---
+
+**INFO\_DICT:**
+
+1. question\_type: MCQ  
+2. example\_question:  What is the capital of France? 
+3. device\_type: web  
+4. game\_mechanic: Conveyor-Sort:  
+5. game\_mechanic\_description: 
+   ---
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type {question\_type}.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ {example\_question}
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on {device\_type}, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: {game\_mechanic}**  
+ Description of mechanic: {game\_mechanic\_description}
+
+There should be only one correct answer if the question is MCQ or T/F.
+
+\<\<\<give clear bullet points for how the game mechanic should be shown in the game. For example, for the “rapid cycle” game mechanic, the bullet points would look like this: One or more slots rapidly cycle through different options/answers (like a slot machine)
+
+Player must tap to stop the cycling at the correct moment when the right answer appears
+
+Options should visibly rotate/cycle through a fixed position
+
+There should be a clear visual indicator of what the correct answer is (a question or target)
+
+Success is based on timing the tap/click precisely when the correct option is visible
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate “8-bit” feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+\<\<\<Add more styling and aesthetic requirements as needed for the {game\_mechanic}\>\>\>
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+\<\<\<Add further gameplay requirements as needed for the {game\_mechanic}\>\>\>
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on {device\_type}.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

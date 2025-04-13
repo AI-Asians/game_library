@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Time Travel Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const question = "Which planet is known as the Red Planet?";
+        const options = ["Venus", "Mars", "Jupiter", "Saturn"];
+        const correctAnswer = "Mars";
+        
+        // Time periods
+        const eras = [
+            { name: "Ancient Era", color: "#8B4513", buildings: [] },
+            { name: "Medieval Era", color: "#556B2F", buildings: [] },
+            { name: "Industrial Era", color: "#4682B4", buildings: [] },
+            { name: "Future Era", color: "#483D8B", buildings: [] }
+        ];
+        
+        // Game state
+        let gameState = {
+            currentOption: 0,
+            timeSpeed: 1,
+            maxSpeed: 8,
+            accelerationRate: 0.05,
+            timePosition: 0,
+            isGameOver: false,
+            isCorrect: false,
+            timeStopped: false,
+            distortionEffect: 0,
+            timeMachine: {
+                x: canvas.width * 0.5,
+                y: canvas.height * 0.7,
+                width: isMobile ? 100 : 160,
+                height: isMobile ? 80 : 120,
+                lights: [
+                    { x: -50, y: -30, color: "#ff0000", blink: 0 },
+                    { x: -20, y: -40, color: "#00ff00", blink: 0 },
+                    { x: 10, y: -40, color: "#0000ff", blink: 0 },
+                    { x: 40, y: -30, color: "#ffff00", blink: 0 }
+                ]
+            },
+            restartButton: {
+                x: canvas.width * 0.5,
+                y: canvas.height * 0.85,
+                width: 120,
+                height: 40,
+                visible: false
+            }
+        };
+        
+        // Generate buildings for each era
+        eras.forEach(era => {
+            const buildingCount = Math.floor(Math.random() * 5) + 3;
+            for (let i = 0; i < buildingCount; i++) {
+                era.buildings.push({
+                    x: Math.random() * canvas.width,
+                    width: Math.random() * 60 + 20,
+                    height: Math.random() * 100 + 50
+                });
+            }
+        });
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playTravelSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = 200 + gameState.timeSpeed * 30;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+            }, 100);
+        }
+        
+        function playSelectSound(correct) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = correct ? 440 : 220;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+            setTimeout(() => {
+                oscillator.stop();
+            }, 500);
+        }
+        
+        // Game loop
+        function update() {
+            // Update time position if game is active
+            if (!gameState.timeStopped && !gameState.isGameOver) {
+                gameState.timePosition += gameState.timeSpeed;
+                
+                // Gradually increase speed
+                if (gameState.timeSpeed < gameState.maxSpeed) {
+                    gameState.timeSpeed += gameState.accelerationRate;
+                }
+                
+                // Update current option based on time position
+                gameState.currentOption = Math.floor(gameState.timePosition / 100) % options.length;
+                
+                // Update distortion effect
+                gameState.distortionEffect = Math.sin(gameState.timePosition / 20) * gameState.timeSpeed;
+                
+                // Play travel sound occasionally
+                if (Math.random() < 0.1) {
+                    playTravelSound();
+                }
+                
+                // Update blinking lights
+                gameState.timeMachine.lights.forEach(light => {
+                    light.blink = Math.random() > 0.7 ? 1 : 0;
+                });
+            }
+        }
+        
+        // Render functions
+        function drawEra() {
+            const eraIndex = gameState.currentOption;
+            const era = eras[eraIndex];
+            
+            // Draw sky
+            ctx.fillStyle = era.color;
+            ctx.fillRect(0, 0, canvas.width, canvas.height * 0.7);
+            
+            // Draw ground
+            ctx.fillStyle = "#333";
+            ctx.fillRect(0, canvas.height * 0.7, canvas.width, canvas.height * 0.3);
+            
+            // Draw era buildings
+            ctx.fillStyle = "#111";
+            era.buildings.forEach(building => {
+                ctx.fillRect(
+                    building.x + gameState.distortionEffect,
+                    canvas.height * 0.7 - building.height,
+                    building.width,
+                    building.height
+                );
+            });
+            
+            // Draw era name
+            ctx.fillStyle = "#fff";
+            ctx.font = "16px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(era.name, canvas.width * 0.5, 30);
+        }
+        
+        function drawTimeMachine() {
+            const machine = gameState.timeMachine;
+            
+            // Base of machine
+            ctx.fillStyle = "#444";
+            ctx.fillRect(
+                machine.x - machine.width / 2,
+                machine.y - machine.height / 2,
+                machine.width,
+                machine.height
+            );
+            
+            // Control panel
+            ctx.fillStyle = "#222";
+            ctx.fillRect(
+                machine.x - machine.width * 0.4,
+                machine.y - machine.height * 0.3,
+                machine.width * 0.8,
+                machine.height * 0.4
+            );
+            
+            // Lights
+            machine.lights.forEach(light => {
+                ctx.fillStyle = light.blink ? light.color : "#555";
+                ctx.beginPath();
+                ctx.arc(
+                    machine.x + light.x * (isMobile ? 0.6 : 1),
+                    machine.y + light.y * (isMobile ? 0.6 : 1),
+                    10,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+            });
+            
+            // Lever
+            ctx.fillStyle = "#ff0000";
+            ctx.fillRect(
+                machine.x,
+                machine.y - machine.height * 0.1,
+                10,
+                machine.height * 0.3
+            );
+            
+            // Window
+            ctx.fillStyle = "#aaf";
+            ctx.fillRect(
+                machine.x - machine.width * 0.3,
+                machine.y - machine.height * 0.4,
+                machine.width * 0.6,
+                machine.height * 0.3
+            );
+        }
+        
+        function drawQuestion() {
+            // Create a semi-transparent background for the question
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(canvas.width * 0.1, 50, canvas.width * 0.8, 60);
+            
+            // Draw the question
+            ctx.fillStyle = "#fff";
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width * 0.5, 85);
+        }
+        
+        function drawOption() {
+            const option = options[gameState.currentOption];
+            const correct = option === correctAnswer;
+            
+            // Draw option background
+            ctx.fillStyle = gameState.isGameOver ? (correct ? "rgba(0, 255, 0, 0.7)" : "rgba(255, 0, 0, 0.7)") : "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(canvas.width * 0.25, canvas.height * 0.4, canvas.width * 0.5, 60);
+            
+            // Draw option text
+            ctx.fillStyle = "#fff";
+            ctx.font = "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(option, canvas.width * 0.5, canvas.height * 0.4 + 40);
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = "#fff";
+            ctx.font = "16px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("Click to stop time at the correct answer!", canvas.width * 0.5, canvas.height * 0.55);
+        }
+        
+        function drawRestartButton() {
+            if (gameState.restartButton.visible) {
+                const btn = gameState.restartButton;
+                
+                // Button background
+                ctx.fillStyle = "#222";
+                ctx.fillRect(btn.x - btn.width / 2, btn.y - btn.height / 2, btn.width, btn.height);
+                
+                // Button border
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(btn.x - btn.width / 2, btn.y - btn.height / 2, btn.width, btn.height);
+                
+                // Button text
+                ctx.fillStyle = "#fff";
+                ctx.font = "16px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("Restart", btn.x, btn.y + 5);
+            }
+        }
+        
+        function drawResult() {
+            if (gameState.isGameOver) {
+                ctx.fillStyle = gameState.isCorrect ? "#0f0" : "#f00";
+                ctx.font = "30px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    gameState.isCorrect ? "Correct!" : "Wrong!",
+                    canvas.width * 0.5,
+                    canvas.height * 0.3
+                );
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawEra();
+            drawTimeMachine();
+            drawQuestion();
+            drawOption();
+            
+            if (!gameState.isGameOver) {
+                drawInstructions();
+            } else {
+                drawResult();
+            }
+            
+            drawRestartButton();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+        
+        // Handle player input
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // Check if game is over and restart button is clicked
+            if (gameState.isGameOver) {
+                const btn = gameState.restartButton;
+                if (x >= btn.x - btn.width / 2 && x <= btn.x + btn.width / 2 &&
+                    y >= btn.y - btn.height / 2 && y <= btn.y + btn.height / 2) {
+                    // Reset game state
+                    gameState.isGameOver = false;
+                    gameState.timeStopped = false;
+                    gameState.timePosition = 0;
+                    gameState.timeSpeed = 1;
+                    gameState.currentOption = 0;
+                    gameState.restartButton.visible = false;
+                }
+                return;
+            }
+            
+            // Check if clicked on time machine to stop
+            const machine = gameState.timeMachine;
+            if (x >= machine.x - machine.width / 2 && x <= machine.x + machine.width / 2 &&
+                y >= machine.y - machine.height / 2 && y <= machine.y + machine.height / 2) {
+                
+                // Stop time
+                gameState.timeStopped = true;
+                
+                // Check if answer is correct
+                const selectedOption = options[gameState.currentOption];
+                gameState.isCorrect = selectedOption === correctAnswer;
+                gameState.isGameOver = true;
+                gameState.restartButton.visible = true;
+                
+                // Play sound
+                playSelectSound(gameState.isCorrect);
+            }
+        });
+    </script>
+</body>
+</html>

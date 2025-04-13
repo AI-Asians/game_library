@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>8-Bit True or False</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Responsive canvas
+        function setupCanvas() {
+            if (window.innerWidth < 500) { // Mobile detection
+                canvas.width = 360;
+                canvas.height = 640;
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+            }
+        }
+        setupCanvas();
+        window.addEventListener('resize', setupCanvas);
+
+        // Game variables
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const answer = true; // The correct answer
+        let gameEnded = false;
+        let timer = 100; // Timer percentage
+        let hoverSide = null; // Which side player is hovering over
+        const colors = {
+            trueSide: '#004400',
+            trueHighlight: '#008800', 
+            falseSide: '#440000',
+            falseHighlight: '#880000',
+            border: '#888888',
+            timer: '#FFFF00'
+        };
+
+        // Sound effects
+        function createBeepSound(frequency, duration, type = 'square') {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+
+        // Sound effects
+        const sounds = {
+            correct: () => createBeepSound(523.25, 150),
+            wrong: () => createBeepSound(165.27, 250),
+            tick: () => createBeepSound(440, 30),
+            hover: () => createBeepSound(330, 50)
+        };
+
+        // Draw pixelated checkmark
+        function drawCheckmark(x, y, size) {
+            ctx.fillStyle = '#FFFFFF';
+            const pixelSize = size / 8;
+            
+            // Pixelated checkmark pattern (5x5 grid)
+            const checkPattern = [
+                [0,0,0,0,0],
+                [0,0,0,0,1],
+                [0,0,0,1,0],
+                [1,0,1,0,0],
+                [0,1,0,0,0]
+            ];
+            
+            checkPattern.forEach((row, i) => {
+                row.forEach((pixel, j) => {
+                    if (pixel) {
+                        ctx.fillRect(
+                            x + j * pixelSize, 
+                            y + i * pixelSize, 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                });
+            });
+        }
+
+        // Draw pixelated X
+        function drawX(x, y, size) {
+            ctx.fillStyle = '#FFFFFF';
+            const pixelSize = size / 8;
+            
+            // Pixelated X pattern (5x5 grid)
+            const xPattern = [
+                [1,0,0,0,1],
+                [0,1,0,1,0],
+                [0,0,1,0,0],
+                [0,1,0,1,0],
+                [1,0,0,0,1]
+            ];
+            
+            xPattern.forEach((row, i) => {
+                row.forEach((pixel, j) => {
+                    if (pixel) {
+                        ctx.fillRect(
+                            x + j * pixelSize, 
+                            y + i * pixelSize, 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                });
+            });
+        }
+
+        // Draw pixelated arrow
+        function drawArrow(x, y, size, bounce) {
+            ctx.fillStyle = '#FFFFFF';
+            const pixelSize = size / 10;
+            y += Math.sin(bounce * 0.2) * 10; // Bouncing effect
+            
+            // Pixelated arrow pattern (5x5 grid)
+            const arrowPattern = [
+                [0,0,1,0,0],
+                [0,1,1,1,0],
+                [1,1,1,1,1],
+                [0,0,1,0,0],
+                [0,0,1,0,0]
+            ];
+            
+            arrowPattern.forEach((row, i) => {
+                row.forEach((pixel, j) => {
+                    if (pixel) {
+                        ctx.fillRect(
+                            x + j * pixelSize, 
+                            y + i * pixelSize, 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                });
+            });
+        }
+
+        // Draw the game state
+        function drawGame(frameCount) {
+            // Clear canvas
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw divider
+            ctx.fillStyle = colors.border;
+            ctx.fillRect(canvas.width / 2 - 5, 0, 10, canvas.height);
+            
+            // Draw TRUE side
+            ctx.fillStyle = hoverSide === 'true' ? colors.trueHighlight : colors.trueSide;
+            ctx.fillRect(0, 0, canvas.width / 2 - 5, canvas.height);
+            
+            // Draw TRUE text and checkmark
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('TRUE', canvas.width / 4, canvas.height / 4);
+            
+            drawCheckmark(canvas.width / 4 - 25, canvas.height / 2, 50);
+
+            // Draw FALSE side
+            ctx.fillStyle = hoverSide === 'false' ? colors.falseHighlight : colors.falseSide;
+            ctx.fillRect(canvas.width / 2 + 5, 0, canvas.width / 2 - 5, canvas.height);
+            
+            // Draw FALSE text and X
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText('FALSE', canvas.width * 3 / 4, canvas.height / 4);
+            
+            drawX(canvas.width * 3 / 4 - 25, canvas.height / 2, 50);
+
+            // Draw question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            
+            // Handle text wrapping
+            const maxWidth = canvas.width - 60;
+            const words = question.split(' ');
+            let line = '';
+            let lines = [];
+            
+            for (let word of words) {
+                const testLine = line + word + ' ';
+                const metrics = ctx.measureText(testLine);
+                if (metrics.width > maxWidth && line !== '') {
+                    lines.push(line);
+                    line = word + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw question text
+            lines.forEach((line, i) => {
+                ctx.fillText(
+                    line, 
+                    canvas.width / 2, 
+                    canvas.height * 3 / 4 + i * 30
+                );
+            });
+
+            // Draw timer bar
+            const timerWidth = canvas.width * 0.8;
+            const timerHeight = 20;
+            const timerX = (canvas.width - timerWidth) / 2;
+            const timerY = 30;
+            
+            // Draw timer background
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Draw active timer
+            ctx.fillStyle = colors.timer;
+            ctx.fillRect(timerX, timerY, timerWidth * (timer / 100), timerHeight);
+
+            // Draw pixelated timer border
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Draw indicator arrow
+            if (!gameEnded) {
+                drawArrow(canvas.width / 2, canvas.height - 80, 40, frameCount);
+            }
+            
+            // Draw game over screen with restart button
+            if (gameEnded) {
+                // Draw restart button
+                const btnWidth = 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height - 100;
+                
+                // Button background
+                ctx.fillStyle = '#444444';
+                ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                
+                // Button border
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(btnX, btnY, btnWidth, btnHeight);
+                
+                // Button text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 24px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('RESTART', btnX + btnWidth / 2, btnY + btnHeight / 2);
+            }
+        }
+
+        // Game result handler
+        function handleResult(userAnswer) {
+            gameEnded = true;
+            if (userAnswer === answer) {
+                sounds.correct();
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                sounds.wrong();
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        // Mouse/touch event handlers
+        function getMousePosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            return { x, y };
+        }
+
+        function handleMouseMove(e) {
+            if (gameEnded) return;
+            
+            const pos = getMousePosition(e);
+            const oldHover = hoverSide;
+            
+            if (pos.x < canvas.width / 2) {
+                hoverSide = 'true';
+            } else {
+                hoverSide = 'false';
+            }
+            
+            if (oldHover !== hoverSide) {
+                sounds.hover();
+            }
+        }
+
+        function handleClick(e) {
+            const pos = getMousePosition(e);
+            
+            if (gameEnded) {
+                // Check if clicked on restart button
+                const btnWidth = 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height - 100;
+                
+                if (pos.x >= btnX && pos.x <= btnX + btnWidth &&
+                    pos.y >= btnY && pos.y <= btnY + btnHeight) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            if (pos.x < canvas.width / 2) {
+                handleResult(true);
+            } else {
+                handleResult(false);
+            }
+        }
+
+        // Reset game
+        function resetGame() {
+            gameEnded = false;
+            timer = 100;
+            sounds.tick();
+        }
+
+        // Game loop
+        let frameCount = 0;
+        function gameLoop() {
+            frameCount++;
+            
+            if (!gameEnded) {
+                timer -= 0.5;
+                if (timer <= 0) {
+                    handleResult(false);
+                } else if (timer % 20 === 0) {
+                    sounds.tick();
+                }
+            }
+            
+            drawGame(frameCount);
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('click', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            handleClick(mouseEvent);
+        });
+
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

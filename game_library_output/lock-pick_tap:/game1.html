@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lock-Pick Challenge</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Colors (limited palette)
+        const COLORS = {
+            background: '#0f0f1b',
+            text: '#ffffff',
+            trueBox: '#2d882d',
+            falseBox: '#aa3939',
+            progressBar: '#f6d32d',
+            progressBg: '#444444',
+            lockShine: '#c0e6ff',
+            lockBody: '#777777',
+            lockDark: '#444444',
+            spark: '#ffff00'
+        };
+
+        // Game state
+        const state = {
+            question: "The Great Wall of China is visible from space.",
+            correctAnswer: false,
+            trueProgress: 0,
+            falseProgress: 0,
+            maxProgress: 100,
+            gameOver: false,
+            locks: {
+                true: { x: canvas.width * 0.25, y: canvas.height * 0.5, width: 120, height: 150, progress: 0 },
+                false: { x: canvas.width * 0.75, y: canvas.height * 0.5, width: 120, height: 150, progress: 0 }
+            },
+            activeChoice: null,
+            sparks: [],
+            stuckPoints: [25, 50, 75], // Points where the lock gets "stuck" requiring extra taps
+            stuckPointSize: 8, // How much extra tapping needed at stuck points
+            currentStuck: null,
+            restart: { x: canvas.width/2 - 50, y: canvas.height - 80, width: 100, height: 40 }
+        };
+
+        // Generate simple beep sound
+        function beep(freq, duration, volume) {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = freq;
+                gainNode.gain.value = volume;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration);
+            } catch(e) {
+                console.log("Audio not supported");
+            }
+        }
+
+        // Draw a pixelated lock
+        function drawLock(x, y, width, height, progress, isActive, lockType) {
+            // Lock body
+            ctx.fillStyle = COLORS.lockBody;
+            ctx.fillRect(x - width/2, y - height/2, width, height);
+            
+            // Lock shackle
+            const shackleHeight = height * 0.4;
+            const shackleWidth = width * 0.6;
+            const shackleX = x - shackleWidth/2;
+            const shackleY = y - height/2 - shackleHeight * (progress/100);
+            
+            ctx.fillStyle = COLORS.lockDark;
+            ctx.fillRect(shackleX, shackleY, shackleWidth, shackleHeight);
+            
+            // Lock keyhole
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(x - width*0.15, y, width*0.3, height*0.2);
+            
+            // Lock tumblers (change based on progress)
+            const tumblerSize = width * 0.1;
+            const tumblerCount = 5;
+            const tumblerCompleted = Math.floor((progress / 100) * tumblerCount);
+            
+            for (let i = 0; i < tumblerCount; i++) {
+                if (i < tumblerCompleted) {
+                    ctx.fillStyle = i % 2 === 0 ? COLORS.progressBar : COLORS.lockShine;
+                } else {
+                    ctx.fillStyle = COLORS.lockDark;
+                }
+                ctx.fillRect(
+                    x - width*0.35 + (i * width*0.7/tumblerCount), 
+                    y + height*0.3, 
+                    tumblerSize, 
+                    tumblerSize
+                );
+            }
+            
+            // Label
+            ctx.fillStyle = lockType === 'true' ? COLORS.trueBox : COLORS.falseBox;
+            ctx.fillRect(x - width/2, y + height/2, width, height*0.2);
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${Math.floor(width/5)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(lockType.toUpperCase(), x, y + height/2 + height*0.14);
+            
+            // Border for active lock
+            if (isActive) {
+                ctx.strokeStyle = COLORS.progressBar;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(x - width/2 - 2, y - height/2 - 2, width + 4, height + height*0.2 + 4);
+            }
+            
+            // Progress bar below
+            drawProgressBar(
+                x - width/2, 
+                y + height/2 + height*0.25, 
+                width, 
+                height*0.1, 
+                progress
+            );
+            
+            // Draw stuck points indicators
+            state.stuckPoints.forEach(stuckPoint => {
+                if (Math.abs(progress - stuckPoint) < 2) {
+                    // Draw "stuck" indicator
+                    ctx.fillStyle = '#ff0000';
+                    ctx.beginPath();
+                    ctx.arc(
+                        x - width/2 + (width * stuckPoint/100), 
+                        y + height/2 + height*0.25 + height*0.05, 
+                        5, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+            });
+        }
+
+        // Draw a chunky, pixelated progress bar
+        function drawProgressBar(x, y, width, height, progress) {
+            // Background
+            ctx.fillStyle = COLORS.progressBg;
+            ctx.fillRect(x, y, width, height);
+            
+            // Progress segments (chunky pixel style)
+            const segmentCount = 10;
+            const segmentWidth = width / segmentCount;
+            const filledSegments = Math.floor((progress / 100) * segmentCount);
+            
+            for (let i = 0; i < filledSegments; i++) {
+                ctx.fillStyle = COLORS.progressBar;
+                ctx.fillRect(
+                    x + i * segmentWidth, 
+                    y, 
+                    segmentWidth - 1, 
+                    height
+                );
+            }
+        }
+
+        // Update spark particles
+        function updateSparks() {
+            // Add new sparks if actively picking
+            if (state.activeChoice && !state.gameOver) {
+                const lock = state.locks[state.activeChoice];
+                if (Math.random() < 0.2) {
+                    state.sparks.push({
+                        x: lock.x - lock.width/4 + Math.random() * lock.width/2,
+                        y: lock.y,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: -1 - Math.random() * 2,
+                        life: 20
+                    });
+                }
+            }
+            
+            // Update existing sparks
+            for (let i = state.sparks.length - 1; i >= 0; i--) {
+                const spark = state.sparks[i];
+                spark.x += spark.vx;
+                spark.y += spark.vy;
+                spark.life--;
+                
+                if (spark.life <= 0) {
+                    state.sparks.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw spark particles
+        function drawSparks() {
+            ctx.fillStyle = COLORS.spark;
+            state.sparks.forEach(spark => {
+                const size = Math.min(4, spark.life / 5);
+                ctx.fillRect(
+                    Math.floor(spark.x), 
+                    Math.floor(spark.y), 
+                    Math.ceil(size), 
+                    Math.ceil(size)
+                );
+            });
+        }
+
+        // Handle mouse click/tap
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (state.gameOver) {
+                // Check if restart button was clicked
+                if (clickX > state.restart.x && 
+                    clickX < state.restart.x + state.restart.width &&
+                    clickY > state.restart.y && 
+                    clickY < state.restart.y + state.restart.height) {
+                    // Reset game
+                    state.locks.true.progress = 0;
+                    state.locks.false.progress = 0;
+                    state.activeChoice = null;
+                    state.gameOver = false;
+                    state.sparks = [];
+                    state.currentStuck = null;
+                }
+                return;
+            }
+            
+            // Check which lock was clicked
+            let clicked = null;
+            
+            // True lock
+            if (clickX > state.locks.true.x - state.locks.true.width/2 && 
+                clickX < state.locks.true.x + state.locks.true.width/2 &&
+                clickY > state.locks.true.y - state.locks.true.height/2 && 
+                clickY < state.locks.true.y + state.locks.true.height/2 + state.locks.true.height*0.2) {
+                clicked = 'true';
+            }
+            
+            // False lock
+            if (clickX > state.locks.false.x - state.locks.false.width/2 && 
+                clickX < state.locks.false.x + state.locks.false.width/2 &&
+                clickY > state.locks.false.y - state.locks.false.height/2 && 
+                clickY < state.locks.false.y + state.locks.false.height/2 + state.locks.false.height*0.2) {
+                clicked = 'false';
+            }
+            
+            if (clicked) {
+                // Set active choice if not already set
+                if (!state.activeChoice) {
+                    state.activeChoice = clicked;
+                    beep(220, 50, 0.3);
+                }
+                
+                // Only process clicks for the active lock
+                if (clicked === state.activeChoice) {
+                    processLockPick();
+                }
+            }
+        }
+        
+        function processLockPick() {
+            const lock = state.locks[state.activeChoice];
+            
+            // Check if we're at a stuck point
+            let isStuck = false;
+            state.stuckPoints.forEach(point => {
+                if (Math.abs(lock.progress - point) < 1) {
+                    isStuck = true;
+                    
+                    if (!state.currentStuck) {
+                        state.currentStuck = state.stuckPointSize;
+                        beep(150, 80, 0.4); // Stuck sound
+                    }
+                }
+            });
+            
+            if (state.currentStuck && state.currentStuck > 0) {
+                state.currentStuck--;
+                beep(180 + Math.random() * 50, 30, 0.2);
+                
+                // Add extra sparks at stuck points
+                for (let i = 0; i < 3; i++) {
+                    state.sparks.push({
+                        x: lock.x - lock.width/4 + Math.random() * lock.width/2,
+                        y: lock.y,
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: -1 - Math.random() * 3,
+                        life: 15 + Math.random() * 10
+                    });
+                }
+                
+                return; // Don't progress until unstuck
+            } else if (state.currentStuck === 0) {
+                // Just got unstuck
+                state.currentStuck = null;
+                beep(300, 100, 0.3); // Unstuck sound
+            }
+            
+            // Progress the lock
+            const progressStep = 5 + Math.random() * 3;
+            lock.progress = Math.min(100, lock.progress + progressStep);
+            
+            // Play sound effect
+            beep(300 + lock.progress, 30, 0.2);
+            
+            // Check if lock is fully picked
+            if (lock.progress >= 100) {
+                state.gameOver = true;
+                
+                if ((state.activeChoice === 'true') === state.correctAnswer) {
+                    // Correct answer
+                    beep(440, 100, 0.3);
+                    beep(660, 100, 0.3);
+                    beep(880, 200, 0.3);
+                } else {
+                    // Incorrect answer
+                    beep(330, 100, 0.3);
+                    beep(220, 200, 0.3);
+                }
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 20 : 30}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(state.question, canvas.width / 2, canvas.height * 0.15);
+            ctx.fillText("Pick the correct lock!", canvas.width / 2, canvas.height * 0.22);
+            
+            // Update sparks
+            updateSparks();
+            
+            // Draw locks
+            drawLock(
+                state.locks.true.x, 
+                state.locks.true.y, 
+                state.locks.true.width, 
+                state.locks.true.height, 
+                state.locks.true.progress,
+                state.activeChoice === 'true',
+                'true'
+            );
+            
+            drawLock(
+                state.locks.false.x, 
+                state.locks.false.y, 
+                state.locks.false.width, 
+                state.locks.false.height, 
+                state.locks.false.progress,
+                state.activeChoice === 'false',
+                'false'
+            );
+            
+            // Draw sparks
+            drawSparks();
+            
+            // Game over state
+            if (state.gameOver) {
+                // Show result
+                ctx.fillStyle = (state.activeChoice === state.correctAnswer.toString()) ? 
+                    COLORS.trueBox : COLORS.falseBox;
+                ctx.fillRect(canvas.width/2 - 180, canvas.height * 0.7 - 30, 360, 60);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'center';
+                
+                if (state.activeChoice === state.correctAnswer.toString()) {
+                    ctx.fillText("Correct! The answer is " + state.correctAnswer + ".", 
+                        canvas.width/2, canvas.height * 0.7 + 10);
+                } else {
+                    ctx.fillText("Incorrect! The answer is " + state.correctAnswer + ".", 
+                        canvas.width/2, canvas.height * 0.7 + 10);
+                }
+                
+                // Draw restart button
+                ctx.fillStyle = COLORS.progressBg;
+                ctx.fillRect(state.restart.x, state.restart.y, state.restart.width, state.restart.height);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '20px Arial';
+                ctx.fillText("Restart", state.restart.x + state.restart.width/2, state.restart.y + state.restart.height/2 + 7);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleClick(touch);
+        }, { passive: false });
+
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

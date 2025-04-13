@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Catch</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background-color: #555;
+            color: white;
+            border: none;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Game variables
+        const colors = ['#FF6B6B', '#4ECDC4', '#FFD166', '#06D6A0', '#118AB2'];
+        let gameOver = false;
+        let gameWon = false;
+        let difficultyTimer = 0;
+        
+        // 8-bit limited color palette
+        const palette = {
+            background: '#5A6988',
+            text: '#EFEFEF',
+            correct: '#7BEF8E',
+            incorrect: '#EF7B7B',
+            player: '#FFC857',
+            playerOutline: '#333333',
+            questionBg: '#333755',
+            success: '#55DE55',
+            failure: '#DE5555'
+        };
+
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Player
+        const player = {
+            x: canvas.width / 2 - 40,
+            y: canvas.height - 70,
+            width: 80,
+            height: 40,
+            speed: 8,
+            moving: {
+                left: false,
+                right: false
+            }
+        };
+        
+        // Falling answers
+        let fallingAnswers = [];
+        
+        // Particles
+        let particles = [];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Screen shake
+        let screenShake = {
+            active: false,
+            intensity: 0,
+            duration: 0,
+            timer: 0
+        };
+        
+        // Generate random position for falling answers
+        function initAnswers() {
+            // Shuffle answers
+            const shuffled = [...answers].sort(() => Math.random() - 0.5);
+            
+            // Create falling answers with staggered positions
+            shuffled.forEach((answer, index) => {
+                fallingAnswers.push({
+                    text: answer.text,
+                    correct: answer.correct,
+                    x: Math.random() * (canvas.width - 120) + 60,
+                    y: -100 - (index * 150),
+                    width: 120,
+                    height: 50,
+                    speed: 2,
+                    color: answer.correct ? palette.correct : palette.incorrect
+                });
+            });
+        }
+        
+        // Sound effects
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function correctSound() {
+            playSound(523.25, 'square', 0.1); // C5
+            setTimeout(() => playSound(659.25, 'square', 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 'square', 0.2), 200); // G5
+        }
+        
+        function incorrectSound() {
+            playSound(311.13, 'sawtooth', 0.1); // Eb4
+            setTimeout(() => playSound(293.66, 'sawtooth', 0.3), 100); // D4
+        }
+        
+        function createShake(intensity, duration) {
+            screenShake.active = true;
+            screenShake.intensity = intensity;
+            screenShake.duration = duration;
+            screenShake.timer = 0;
+        }
+        
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 6 + 2,
+                    speedX: (Math.random() - 0.5) * 8,
+                    speedY: (Math.random() - 0.5) * 8,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Draw game objects
+        function draw() {
+            // Apply screen shake
+            ctx.save();
+            if (screenShake.active) {
+                const shakeX = (Math.random() - 0.5) * screenShake.intensity;
+                const shakeY = (Math.random() - 0.5) * screenShake.intensity;
+                ctx.translate(shakeX, shakeY);
+            }
+            
+            // Clear canvas and draw background
+            ctx.fillStyle = palette.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = palette.questionBg;
+            ctx.fillRect(0, 0, canvas.width, 80);
+            ctx.fillStyle = palette.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw falling answers
+            fallingAnswers.forEach(answer => {
+                // Answer box with 8-bit style
+                ctx.fillStyle = answer.color;
+                ctx.fillRect(answer.x, answer.y, answer.width, answer.height);
+                
+                // Pixelated border
+                ctx.strokeStyle = '#333333';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(answer.x, answer.y, answer.width, answer.height);
+                
+                // Answer text
+                ctx.fillStyle = '#333333';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(answer.text, answer.x + answer.width / 2, answer.y + answer.height / 2 + 6);
+            });
+            
+            // Draw player (basket)
+            ctx.fillStyle = palette.player;
+            
+            // Draw pixelated basket
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.fillRect(player.x + 10, player.y - 8, player.width - 20, 8);
+            
+            // Border
+            ctx.strokeStyle = palette.playerOutline;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(player.x, player.y, player.width, player.height);
+            ctx.strokeRect(player.x + 10, player.y - 8, player.width - 20, 8);
+            
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            
+            // Game over screen
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameWon ? palette.success : palette.failure;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameWon ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+                
+                restartBtn.style.display = 'block';
+            }
+            
+            ctx.restore();
+        }
+        
+        // Update game state
+        function update(deltaTime) {
+            if (gameOver) return;
+            
+            difficultyTimer += deltaTime;
+            
+            // Handle screen shake
+            if (screenShake.active) {
+                screenShake.timer += deltaTime;
+                if (screenShake.timer >= screenShake.duration) {
+                    screenShake.active = false;
+                }
+            }
+            
+            // Move the player
+            if (player.moving.left && player.x > 0) {
+                player.x -= player.speed;
+            }
+            if (player.moving.right && player.x < canvas.width - player.width) {
+                player.x += player.speed;
+            }
+            
+            // Update falling answers
+            fallingAnswers.forEach(answer => {
+                // Increase speed over time for difficulty
+                const speedIncrease = Math.min(difficultyTimer / 3000, 2);
+                answer.y += (answer.speed + speedIncrease) * deltaTime / 16;
+                
+                // Check for collision with player
+                if (
+                    answer.y + answer.height > player.y &&
+                    answer.y < player.y + player.height &&
+                    answer.x + answer.width > player.x &&
+                    answer.x < player.x + player.width
+                ) {
+                    // Collision detected
+                    gameOver = true;
+                    gameWon = answer.correct;
+                    
+                    if (answer.correct) {
+                        correctSound();
+                        createParticles(
+                            answer.x + answer.width / 2,
+                            answer.y + answer.height / 2,
+                            palette.success,
+                            30
+                        );
+                        createShake(5, 300);
+                    } else {
+                        incorrectSound();
+                        createParticles(
+                            answer.x + answer.width / 2,
+                            answer.y + answer.height / 2,
+                            palette.failure,
+                            30
+                        );
+                        createShake(10, 500);
+                    }
+                }
+                
+                // Remove answers that fall off the screen
+                if (answer.y > canvas.height) {
+                    const index = fallingAnswers.indexOf(answer);
+                    if (index !== -1) {
+                        fallingAnswers.splice(index, 1);
+                    }
+                }
+            });
+            
+            // Update particles
+            particles.forEach((p, index) => {
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(index, 1);
+                }
+            });
+            
+            // Check if we need to add more answers
+            if (fallingAnswers.length === 0 && !gameOver) {
+                initAnswers();
+            }
+        }
+        
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Controls
+        document.addEventListener('keydown', e => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') {
+                player.moving.left = true;
+            }
+            if (e.key === 'ArrowRight' || e.key === 'd') {
+                player.moving.right = true;
+            }
+        });
+        
+        document.addEventListener('keyup', e => {
+            if (e.key === 'ArrowLeft' || e.key === 'a') {
+                player.moving.left = false;
+            }
+            if (e.key === 'ArrowRight' || e.key === 'd') {
+                player.moving.right = false;
+            }
+        });
+        
+        // Touch controls for mobile
+        let touchStartX = 0;
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            touchStartX = e.touches[0].clientX;
+        });
+        
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const touchX = e.touches[0].clientX;
+            
+            // Move based on difference from start position
+            if (touchX < touchStartX - 10) {
+                player.moving.left = true;
+                player.moving.right = false;
+            } else if (touchX > touchStartX + 10) {
+                player.moving.right = true;
+                player.moving.left = false;
+            } else {
+                player.moving.left = false;
+                player.moving.right = false;
+            }
+            
+            touchStartX = touchX;
+        });
+        
+        canvas.addEventListener('touchend', e => {
+            e.preventDefault();
+            player.moving.left = false;
+            player.moving.right = false;
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', () => {
+            gameOver = false;
+            gameWon = false;
+            difficultyTimer = 0;
+            player.x = canvas.width / 2 - 40;
+            fallingAnswers = [];
+            particles = [];
+            initAnswers();
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start game
+        initAnswers();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

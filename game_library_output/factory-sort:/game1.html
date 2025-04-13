@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Factory Sorter - Educational Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #333;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      background-color: #000;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #gameContainer {
+      position: relative;
+    }
+    #restartButton {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 16px;
+      background-color: #FF5555;
+      color: white;
+      border: 3px solid #FFAAAA;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">RESTART</button>
+  </div>
+
+  <script>
+    // Canvas setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    // Set canvas size based on device
+    if (isMobile) {
+      canvas.width = 360;
+      canvas.height = 640;
+    } else {
+      canvas.width = 800;
+      canvas.height = 600;
+    }
+    
+    const restartButton = document.getElementById('restartButton');
+    
+    // Game colors - limited 8-bit palette
+    const COLORS = {
+      background: '#5D94FB',
+      factory: '#7B6B53',
+      conveyor: '#444444',
+      conveyorBelt: '#666666',
+      question: '#FFFFFF',
+      correctChute: '#55AA55',
+      incorrectChute: '#AA5555',
+      lever: '#FFAA00',
+      leverBase: '#884400',
+      itemBg: '#FFDD55',
+      itemText: '#000000',
+      pipes: '#338877',
+      gears: '#777777',
+      flash: '#FFFFFF'
+    };
+    
+    // Game state
+    let gameActive = true;
+    let gameResult = null; // 'correct', 'incorrect', or null
+    let items = [];
+    let leverPosition = 0; // 0 for incorrect, 1 for correct
+    let flashTime = 0;
+    let gearRotation = 0;
+    
+    // Game constants
+    const CONVEYOR_SPEED = canvas.width * 0.003;
+    const ITEM_SIZE = canvas.width * 0.15;
+    const LEVER_WIDTH = canvas.width * 0.08;
+    const LEVER_HEIGHT = canvas.height * 0.12;
+    
+    // Question setup
+    const question = "What is the capital of France?";
+    const answers = [
+      { text: "Paris", correct: true },
+      { text: "Rome", correct: false },
+      { text: "Berlin", correct: false },
+      { text: "Madrid", correct: false }
+    ];
+    
+    // Shuffle the answers
+    const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+    
+    // Create initial items
+    function createItems() {
+      items = [];
+      const spacing = canvas.width * 0.25;
+      
+      shuffledAnswers.forEach((answer, index) => {
+        items.push({
+          x: canvas.width + (index * spacing),
+          y: canvas.height * 0.4,
+          width: ITEM_SIZE,
+          height: ITEM_SIZE,
+          text: answer.text,
+          correct: answer.correct,
+          sorted: false,
+          sortedTime: 0,
+          yVelocity: 0
+        });
+      });
+    }
+    
+    // Audio context for sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Sound effects
+    function playSound(type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      if (type === 'correct') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+        oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+        oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+        gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.3);
+      } else if (type === 'incorrect') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(392.00, audioCtx.currentTime); // G4
+        oscillator.frequency.setValueAtTime(369.99, audioCtx.currentTime + 0.1); // F#4
+        gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.2);
+      } else if (type === 'lever') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.1);
+      }
+    }
+    
+    // Draw factory background
+    function drawFactory() {
+      // Sky background
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Factory background
+      ctx.fillStyle = COLORS.factory;
+      ctx.fillRect(0, canvas.height * 0.3, canvas.width, canvas.height * 0.7);
+      
+      // Draw some factory details - pipes
+      ctx.fillStyle = COLORS.pipes;
+      ctx.fillRect(canvas.width * 0.1, canvas.height * 0.2, canvas.width * 0.05, canvas.height * 0.2);
+      ctx.fillRect(canvas.width * 0.8, canvas.height * 0.15, canvas.width * 0.05, canvas.height * 0.25);
+      
+      // Draw gears
+      drawGear(canvas.width * 0.15, canvas.height * 0.15, canvas.width * 0.06);
+      drawGear(canvas.width * 0.75, canvas.height * 0.1, canvas.width * 0.08);
+      
+      // Conveyor belt
+      ctx.fillStyle = COLORS.conveyor;
+      ctx.fillRect(0, canvas.height * 0.45, canvas.width, canvas.height * 0.1);
+      
+      // Conveyor belt pattern
+      ctx.fillStyle = COLORS.conveyorBelt;
+      for (let i = 0; i < canvas.width; i += 20) {
+        ctx.fillRect(i, canvas.height * 0.45, 10, canvas.height * 0.1);
+      }
+      
+      // Draw sorting chutes
+      drawSortingChutes();
+      
+      // Draw lever
+      drawLever();
+      
+      // Question display
+      ctx.fillStyle = COLORS.question;
+      ctx.font = `bold ${canvas.width * 0.03}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, canvas.height * 0.15);
+      
+      // Draw sorting instruction
+      ctx.font = `${canvas.width * 0.02}px sans-serif`;
+      ctx.fillText("Sort the correct answer!", canvas.width / 2, canvas.height * 0.25);
+    }
+    
+    // Draw gear with animation
+    function drawGear(x, y, size) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(gearRotation);
+      
+      ctx.fillStyle = COLORS.gears;
+      ctx.beginPath();
+      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = '#555555';
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Gear teeth
+      ctx.fillStyle = COLORS.gears;
+      for (let i = 0; i < 8; i++) {
+        ctx.save();
+        ctx.rotate(i * Math.PI / 4);
+        ctx.fillRect(-size * 0.15, -size * 1.3, size * 0.3, size * 0.5);
+        ctx.restore();
+      }
+      
+      // Center of gear
+      ctx.fillStyle = '#333333';
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+    }
+    
+    // Draw the sorting chutes
+    function drawSortingChutes() {
+      // Sorting paths
+      const chuteY = canvas.height * 0.55;
+      const chuteHeight = canvas.height * 0.3;
+      
+      // Left chute (incorrect)
+      ctx.fillStyle = COLORS.incorrectChute;
+      ctx.fillRect(canvas.width * 0.2, chuteY, canvas.width * 0.2, chuteHeight);
+      
+      // Right chute (correct)
+      ctx.fillStyle = COLORS.correctChute;
+      ctx.fillRect(canvas.width * 0.6, chuteY, canvas.width * 0.2, chuteHeight);
+      
+      // Chute labels
+      ctx.fillStyle = COLORS.itemText;
+      ctx.font = `${canvas.width * 0.025}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText("INCORRECT", canvas.width * 0.3, chuteY + chuteHeight * 0.5);
+      ctx.fillText("CORRECT", canvas.width * 0.7, chuteY + chuteHeight * 0.5);
+      
+      // Chute dividers
+      ctx.fillStyle = COLORS.factory;
+      ctx.fillRect(canvas.width * 0.45, chuteY, canvas.width * 0.1, chuteHeight);
+    }
+    
+    // Draw the sorting lever
+    function drawLever() {
+      const leverX = canvas.width * 0.5;
+      const leverY = canvas.height * 0.3;
+      
+      // Lever base
+      ctx.fillStyle = COLORS.leverBase;
+      ctx.fillRect(leverX - LEVER_WIDTH * 0.5, leverY, LEVER_WIDTH, LEVER_HEIGHT * 0.2);
+      
+      // Lever
+      ctx.save();
+      ctx.translate(leverX, leverY + LEVER_HEIGHT * 0.1);
+      ctx.rotate(leverPosition * Math.PI / 4 - Math.PI / 8);
+      
+      ctx.fillStyle = COLORS.lever;
+      ctx.fillRect(-LEVER_WIDTH * 0.1, 0, LEVER_WIDTH * 0.2, LEVER_HEIGHT * 0.8);
+      
+      // Lever handle
+      ctx.fillStyle = 'red';
+      ctx.beginPath();
+      ctx.arc(0, LEVER_HEIGHT * 0.8, LEVER_WIDTH * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+      
+      // Lever labels
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = `${canvas.width * 0.02}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText("LEFT = WRONG", leverX - LEVER_WIDTH * 0.7, leverY + LEVER_HEIGHT * 0.1);
+      ctx.fillText("RIGHT = CORRECT", leverX + LEVER_WIDTH * 0.8, leverY + LEVER_HEIGHT * 0.1);
+    }
+    
+    // Draw the item boxes
+    function drawItems() {
+      items.forEach(item => {
+        if (item.sorted) {
+          // Skip drawing sorted items after they've been in the chute for a moment
+          if (item.sortedTime > 30) return;
+          item.sortedTime++;
+        }
+        
+        // Draw the box
+        ctx.fillStyle = COLORS.itemBg;
+        ctx.fillRect(item.x, item.y, item.width, item.height);
+        
+        // Draw border
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(item.x, item.y, item.width, item.height);
+        
+        // Draw the text
+        ctx.fillStyle = COLORS.itemText;
+        ctx.font = `${canvas.width * 0.02}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(item.text, item.x + item.width / 2, item.y + item.height / 2 + 5);
+      });
+    }
+    
+    // Update game logic
+    function update() {
+      // Animate gear rotation
+      gearRotation += 0.01;
+      
+      if (!gameActive) {
+        return;
+      }
+      
+      // Update items
+      items.forEach(item => {
+        if (!item.sorted) {
+          item.x -= CONVEYOR_SPEED;
+          
+          // Check if item reaches the sorting point
+          if (item.x < canvas.width * 0.5 && item.x + item.width > canvas.width * 0.4) {
+            const targetY = leverPosition === 1 ? canvas.height * 0.7 : canvas.height * 0.7;
+            
+            // Determine if sorting is correct
+            const correctSort = (leverPosition === 1 && item.correct) || 
+                               (leverPosition === 0 && !item.correct);
+            
+            if (leverPosition === 1) {
+              // Sorted to right (correct) chute
+              item.x = canvas.width * 0.65;
+              item.yVelocity = 5;
+              item.sorted = true;
+              
+              if (item.correct) {
+                gameResult = 'correct';
+                playSound('correct');
+                flashTime = 10;
+                gameActive = false;
+                showRestartButton();
+              } else {
+                gameResult = 'incorrect';
+                playSound('incorrect');
+                flashTime = 10;
+                gameActive = false;
+                showRestartButton();
+              }
+            } else {
+              // Sorted to left (incorrect) chute
+              item.x = canvas.width * 0.25;
+              item.yVelocity = 5;
+              item.sorted = true;
+              
+              if (!item.correct) {
+                // Correctly sorted to incorrect
+                // Let the game continue
+              } else {
+                gameResult = 'incorrect';
+                playSound('incorrect');
+                flashTime = 10;
+                gameActive = false;
+                showRestartButton();
+              }
+            }
+          }
+          
+          // If item exits the screen without being sorted
+          if (item.x + item.width < 0) {
+            if (item.correct) {
+              // Missed the correct answer
+              gameResult = 'incorrect';
+              playSound('incorrect');
+              flashTime = 10;
+              gameActive = false;
+              showRestartButton();
+            }
+          }
+        } else {
+          // Update sorted items
+          item.y += item.yVelocity;
+        }
+      });
+      
+      // Decrease flash time
+      if (flashTime > 0) {
+        flashTime--;
+      }
+    }
+    
+    // Draw the game
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      drawFactory();
+      drawItems();
+      
+      // Flash effect for feedback
+      if (flashTime > 0) {
+        const flashOpacity = flashTime / 10;
+        ctx.fillStyle = gameResult === 'correct' ? 
+          `rgba(100, 255, 100, ${flashOpacity})` : 
+          `rgba(255, 100, 100, ${flashOpacity})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Click/tap handler
+    function handleClick(e) {
+      if (!gameActive) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      
+      // Check if lever was clicked
+      const leverX = canvas.width * 0.5;
+      const leverY = canvas.height * 0.3;
+      
+      if (x > leverX - LEVER_WIDTH * 0.5 && x < leverX + LEVER_WIDTH * 0.5 &&
+          y > leverY && y < leverY + LEVER_HEIGHT) {
+        leverPosition = 1 - leverPosition; // Toggle lever position
+        playSound('lever');
+      }
+    }
+    
+    function showRestartButton() {
+      restartButton.style.display = 'block';
+    }
+    
+    function restart() {
+      gameActive = true;
+      gameResult = null;
+      leverPosition = 0;
+      flashTime = 0;
+      createItems();
+      restartButton.style.display = 'none';
+    }
+    
+    // Initialize game
+    function init() {
+      createItems();
+      canvas.addEventListener('click', handleClick);
+      restartButton.addEventListener('click', restart);
+      gameLoop();
+    }
+    
+    // Start the game
+    init();
+  </script>
+</body>
+</html>

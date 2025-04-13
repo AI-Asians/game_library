@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whack-A-Mole Planet Quiz</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      border: 4px solid #333;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #restart {
+      position: absolute;
+      padding: 8px 16px;
+      font-family: Arial, sans-serif;
+      font-size: 16px;
+      background-color: #4a752c;
+      color: white;
+      border: 3px solid #2d4a18;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Play Again</button>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 480;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game state
+    let gameOver = false;
+    let gameWon = false;
+    let hammerActive = false;
+    let hammerX = 0;
+    let hammerY = 0;
+    let hammerFrame = 0;
+    
+    // Colors - 8-bit palette
+    const COLORS = {
+      sky: '#5c94fc',
+      dirt: '#8b6914',
+      grass: '#4a752c',
+      grassDark: '#2d4a18',
+      mole: '#8b4513',
+      moleDark: '#5e2c0a',
+      sign: '#d2b48c',
+      signText: '#000000',
+      hammer: '#a52a2a',
+      hammerHandle: '#cd853f',
+      questionBg: '#000000',
+      questionText: '#ffffff',
+      correct: '#00ff00',
+      incorrect: '#ff0000'
+    };
+    
+    // Answer options
+    const answers = [
+      { text: "Mars", correct: true },
+      { text: "Venus", correct: false },
+      { text: "Jupiter", correct: false },
+      { text: "Mercury", correct: false }
+    ];
+    
+    // Shuffled answers
+    const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+    
+    // Mole hole positions
+    const holes = [
+      { x: canvas.width * 0.25, y: canvas.height * 0.4 },
+      { x: canvas.width * 0.75, y: canvas.height * 0.4 },
+      { x: canvas.width * 0.25, y: canvas.height * 0.7 },
+      { x: canvas.width * 0.75, y: canvas.height * 0.7 }
+    ];
+    
+    // Mole states
+    const moles = shuffledAnswers.map((answer, index) => ({
+      x: holes[index].x,
+      y: holes[index].y,
+      answer: answer.text,
+      correct: answer.correct,
+      visible: false,
+      poppedUp: false,
+      popProgress: 0,
+      nextPopTime: 1000 + Math.random() * 2000,
+      stayUpTime: 1500 + Math.random() * 1000,
+      whacked: false,
+      whackAnimation: 0,
+      holeWidth: canvas.width * 0.2,
+      holeHeight: canvas.width * 0.1
+    }));
+    
+    // Sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    function playSound(frequency, type, duration) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.value = 0.3;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    function playPopSound() {
+      playSound(523.25, 'square', 0.1);
+    }
+    
+    function playWhackSound() {
+      playSound(180, 'square', 0.15);
+    }
+    
+    function playCorrectSound() {
+      playSound(660, 'square', 0.1);
+      setTimeout(() => playSound(880, 'square', 0.2), 100);
+    }
+    
+    function playIncorrectSound() {
+      playSound(110, 'square', 0.3);
+    }
+    
+    // Draw pixel art grass pattern background
+    function drawBackground() {
+      // Sky
+      ctx.fillStyle = COLORS.sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Grass
+      ctx.fillStyle = COLORS.grass;
+      ctx.fillRect(0, canvas.height * 0.3, canvas.width, canvas.height * 0.7);
+      
+      // Grass pattern
+      ctx.fillStyle = COLORS.grassDark;
+      for (let x = 0; x < canvas.width; x += 16) {
+        for (let y = canvas.height * 0.3; y < canvas.height; y += 16) {
+          if (Math.random() > 0.7) {
+            ctx.fillRect(x, y, 4, 4);
+          }
+        }
+      }
+    }
+    
+    // Draw question at the top
+    function drawQuestion() {
+      const question = "Which planet is known as the Red Planet?";
+      
+      ctx.fillStyle = COLORS.questionBg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height * 0.12);
+      
+      ctx.fillStyle = COLORS.questionText;
+      ctx.font = `${isMobile ? 18 : 24}px Arial, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, canvas.height * 0.07);
+    }
+    
+    // Draw mole holes
+    function drawHoles() {
+      holes.forEach(hole => {
+        // Draw hole
+        ctx.fillStyle = COLORS.dirt;
+        ctx.beginPath();
+        ctx.ellipse(hole.x, hole.y, canvas.width * 0.12, canvas.height * 0.05, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw hole opening
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.ellipse(hole.x, hole.y, canvas.width * 0.07, canvas.height * 0.03, 0, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+    
+    // Draw moles
+    function drawMoles() {
+      moles.forEach(mole => {
+        if (mole.visible || mole.popProgress > 0) {
+          const baseHeight = mole.holeHeight * 2.5;
+          let height = baseHeight * mole.popProgress;
+          
+          if (mole.whacked && !mole.correct) {
+            height = baseHeight * (1 - mole.whackAnimation);
+          }
+          
+          // Position where mole should be drawn
+          const moleY = mole.y - height;
+          
+          // Draw mole body
+          ctx.fillStyle = COLORS.mole;
+          
+          // Head
+          ctx.fillRect(
+            mole.x - mole.holeWidth * 0.25,
+            moleY - mole.holeHeight * 0.8,
+            mole.holeWidth * 0.5,
+            mole.holeHeight * 0.8
+          );
+          
+          // Eyes
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(
+            mole.x - mole.holeWidth * 0.15,
+            moleY - mole.holeHeight * 0.7,
+            mole.holeWidth * 0.08,
+            mole.holeHeight * 0.15
+          );
+          ctx.fillRect(
+            mole.x + mole.holeWidth * 0.07,
+            moleY - mole.holeHeight * 0.7,
+            mole.holeWidth * 0.08,
+            mole.holeHeight * 0.15
+          );
+          
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(
+            mole.x - mole.holeWidth * 0.13,
+            moleY - mole.holeHeight * 0.65,
+            mole.holeWidth * 0.04,
+            mole.holeHeight * 0.08
+          );
+          ctx.fillRect(
+            mole.x + mole.holeWidth * 0.09,
+            moleY - mole.holeHeight * 0.65,
+            mole.holeWidth * 0.04,
+            mole.holeHeight * 0.08
+          );
+          
+          // Nose
+          ctx.fillStyle = COLORS.moleDark;
+          ctx.fillRect(
+            mole.x - mole.holeWidth * 0.05,
+            moleY - mole.holeHeight * 0.55,
+            mole.holeWidth * 0.1,
+            mole.holeHeight * 0.1
+          );
+          
+          // Draw sign with answer
+          ctx.fillStyle = COLORS.sign;
+          ctx.fillRect(
+            mole.x - mole.holeWidth * 0.35,
+            moleY - mole.holeHeight * 1.6,
+            mole.holeWidth * 0.7,
+            mole.holeHeight * 0.6
+          );
+          
+          // Sign border
+          ctx.strokeStyle = COLORS.moleDark;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(
+            mole.x - mole.holeWidth * 0.35,
+            moleY - mole.holeHeight * 1.6,
+            mole.holeWidth * 0.7,
+            mole.holeHeight * 0.6
+          );
+          
+          // Sign pole
+          ctx.fillStyle = COLORS.moleDark;
+          ctx.fillRect(
+            mole.x,
+            moleY - mole.holeHeight * 1.6,
+            4,
+            -mole.holeHeight * 0.4
+          );
+          
+          // Answer text
+          ctx.fillStyle = COLORS.signText;
+          ctx.font = `${isMobile ? 14 : 18}px Arial, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            mole.answer,
+            mole.x,
+            moleY - mole.holeHeight * 1.25
+          );
+          
+          // Draw stars if whacked
+          if (mole.whackAnimation > 0) {
+            if (mole.correct) {
+              ctx.fillStyle = COLORS.correct;
+            } else {
+              ctx.fillStyle = COLORS.incorrect;
+            }
+            
+            const starCount = 5;
+            const angle = Math.PI * 2 / starCount;
+            
+            for (let i = 0; i < starCount; i++) {
+              const starX = mole.x + Math.cos(i * angle) * (mole.holeWidth * 0.4 * mole.whackAnimation);
+              const starY = moleY - mole.holeHeight * 0.5 + Math.sin(i * angle) * (mole.holeWidth * 0.4 * mole.whackAnimation);
+              
+              ctx.beginPath();
+              ctx.arc(starX, starY, 5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      });
+    }
+    
+    // Draw hammer cursor
+    function drawHammer() {
+      if (hammerActive) {
+        // Draw hammer head
+        ctx.fillStyle = COLORS.hammer;
+        ctx.fillRect(hammerX - 20, hammerY - 40 + (hammerFrame * 10), 40, 30);
+        
+        // Draw hammer handle
+        ctx.fillStyle = COLORS.hammerHandle;
+        ctx.fillRect(hammerX - 5, hammerY - 10 + (hammerFrame * 10), 10, 50);
+      }
+    }
+    
+    // Draw restart button
+    function drawRestart() {
+      restartBtn.style.display = 'block';
+      restartBtn.style.top = `${canvas.height / 2 + 50}px`;
+      restartBtn.style.left = `${(window.innerWidth - restartBtn.offsetWidth) / 2}px`;
+    }
+    
+    // Update game logic
+    function update(deltaTime) {
+      if (gameOver) return;
+      
+      // Update moles
+      moles.forEach(mole => {
+        if (!mole.poppedUp && !mole.whacked) {
+          mole.nextPopTime -= deltaTime;
+          if (mole.nextPopTime <= 0) {
+            mole.poppedUp = true;
+            mole.popProgress = 0;
+            playPopSound();
+          }
+        }
+        
+        if (mole.poppedUp && !mole.whacked) {
+          if (mole.popProgress < 1) {
+            mole.popProgress += deltaTime / 200;
+            if (mole.popProgress >= 1) {
+              mole.popProgress = 1;
+              mole.visible = true;
+            }
+          } else {
+            mole.stayUpTime -= deltaTime;
+            if (mole.stayUpTime <= 0) {
+              mole.poppedUp = false;
+              mole.visible = false;
+              mole.nextPopTime = 1000 + Math.random() * 1500;
+              mole.stayUpTime = 1200 + Math.random() * 800;
+            }
+          }
+        }
+        
+        if (mole.whacked && !mole.correct) {
+          mole.whackAnimation += deltaTime / 300;
+          if (mole.whackAnimation >= 1) {
+            mole.whackAnimation = 0;
+            mole.whacked = false;
+            mole.visible = false;
+            mole.poppedUp = false;
+            mole.nextPopTime = 1000 + Math.random() * 1500;
+          }
+        }
+        
+        if (mole.whacked && mole.correct) {
+          mole.whackAnimation += deltaTime / 300;
+        }
+      });
+      
+      // Update hammer animation
+      if (hammerFrame > 0) {
+        hammerFrame -= deltaTime / 100;
+        if (hammerFrame < 0) hammerFrame = 0;
+      }
+    }
+    
+    // Render game
+    function render() {
+      drawBackground();
+      drawQuestion();
+      drawHoles();
+      drawMoles();
+      drawHammer();
+      
+      // Show game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = `${isMobile ? 24 : 36}px Arial, sans-serif`;
+        ctx.textAlign = 'center';
+        
+        if (gameWon) {
+          ctx.fillStyle = COLORS.correct;
+          ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2);
+        } else {
+          ctx.fillStyle = COLORS.incorrect;
+          ctx.fillText('Try Again!', canvas.width / 2, canvas.height / 2);
+        }
+        
+        drawRestart();
+      }
+    }
+    
+    // Game loop
+    let lastTime = 0;
+    function gameLoop(timestamp) {
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+      
+      update(deltaTime);
+      render();
+      
+      if (!gameOver) {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+    
+    // Handle player input
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      hammerX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      hammerY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      hammerActive = true;
+    });
+    
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      hammerFrame = 3;
+      
+      checkHit(mouseX, mouseY);
+    });
+    
+    canvas.addEventListener('mouseout', () => {
+      hammerActive = false;
+    });
+    
+    // Touch events for mobile
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      hammerX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+      hammerY = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+      hammerActive = true;
+    });
+    
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const touchX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+      const touchY = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+      
+      hammerX = touchX;
+      hammerY = touchY;
+      hammerActive = true;
+      hammerFrame = 3;
+      
+      checkHit(touchX, touchY);
+    });
+    
+    function checkHit(x, y) {
+      moles.forEach(mole => {
+        if (mole.visible && !mole.whacked) {
+          const moleY = mole.y - mole.holeHeight * 2.5;
+          
+          // Check if hit is within mole area
+          if (
+            x > mole.x - mole.holeWidth * 0.35 &&
+            x < mole.x + mole.holeWidth * 0.35 &&
+            y > moleY - mole.holeHeight * 1.6 &&
+            y < moleY
+          ) {
+            mole.whacked = true;
+            mole.whackAnimation = 0;
+            
+            playWhackSound();
+            
+            if (mole.correct) {
+              gameWon = true;
+              gameOver = true;
+              playCorrectSound();
+            } else {
+              playIncorrectSound();
+            }
+          }
+        }
+      });
+    }
+    
+    // Restart game
+    restartBtn.addEventListener('click', () => {
+      // Reset game state
+      gameOver = false;
+      gameWon = false;
+      hammerActive = false;
+      hammerFrame = 0;
+      
+      // Reset moles
+      moles.forEach((mole, index) => {
+        mole.visible = false;
+        mole.poppedUp = false;
+        mole.popProgress = 0;
+        mole.nextPopTime = 1000 + index * 500 + Math.random() * 1000;
+        mole.stayUpTime = 1500 + Math.random() * 1000;
+        mole.whacked = false;
+        mole.whackAnimation = 0;
+      });
+      
+      // Hide restart button
+      restartBtn.style.display = 'none';
+      
+      // Start game loop
+      lastTime = performance.now();
+      requestAnimationFrame(gameLoop);
+    });
+    
+    // Start game
+    window.addEventListener('load', () => {
+      lastTime = performance.now();
+      requestAnimationFrame(gameLoop);
+    });
+  </script>
+</body>
+</html>

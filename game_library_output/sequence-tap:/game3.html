@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz - Sequence Tap</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Determine canvas size based on device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if(isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const colors = {
+            background: '#5c94fc',
+            questionBox: '#000000',
+            questionText: '#ffffff',
+            optionBox: '#8b3f96',
+            optionBoxBorder: '#ffffff',
+            optionText: '#ffffff',
+            correctBg: '#58b330',
+            wrongBg: '#d82800',
+            timerBar: '#ffff00',
+            buttonBg: '#58b330',
+            buttonText: '#ffffff'
+        };
+        
+        const options = [
+            "Berlin",
+            "London",
+            "Paris", // Correct answer
+            "Madrid",
+            "Rome"
+        ];
+        
+        let currentOptionIndex = -1;
+        let gameState = 'playing'; // playing, correct, wrong
+        let lastUpdateTime = 0;
+        let updateInterval = 1000; // milliseconds between options
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 50,
+            width: 120,
+            height: 40
+        };
+        let gameTimer = 10; // 10 seconds total game time
+        let blinkTimer = 0;
+        let isPulsing = false;
+        
+        // Sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(frequency, type, duration) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playOptionSound() {
+            playSound(220, 'square', 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 'square', 0.2);
+            setTimeout(() => playSound(660, 'square', 0.3), 200);
+        }
+        
+        function playWrongSound() {
+            playSound(150, 'sawtooth', 0.3);
+        }
+        
+        function playPulseSound() {
+            playSound(330, 'sine', 0.1);
+        }
+        
+        // Game functions
+        function update(timestamp) {
+            const deltaTime = timestamp - lastUpdateTime;
+            
+            if(gameState === 'playing') {
+                // Update game timer
+                gameTimer -= deltaTime / 1000;
+                if(gameTimer <= 0) {
+                    gameState = 'wrong';
+                    playWrongSound();
+                }
+                
+                // Check if it's time to show next option
+                if(deltaTime > updateInterval) {
+                    currentOptionIndex = (currentOptionIndex + 1) % options.length;
+                    playOptionSound();
+                    lastUpdateTime = timestamp;
+                    
+                    // Pulse before correct answer
+                    if(options[(currentOptionIndex + 1) % options.length] === "Paris") {
+                        isPulsing = true;
+                        setTimeout(() => {
+                            isPulsing = false;
+                            playPulseSound();
+                        }, 500);
+                    }
+                }
+                
+                // Update pulse effect
+                if(isPulsing) {
+                    blinkTimer = (blinkTimer + 1) % 10;
+                }
+            }
+            
+            draw();
+            requestAnimationFrame(update);
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            const questionY = canvas.height * 0.15;
+            drawPixelRect(canvas.width * 0.1, questionY, canvas.width * 0.8, 60, colors.questionBox);
+            drawText("What is the capital of France?", canvas.width / 2, questionY + 35, colors.questionText, 24, true);
+            
+            // Draw timer bar
+            const timerWidth = (gameTimer / 10) * (canvas.width * 0.8);
+            drawPixelRect(canvas.width * 0.1, questionY + 70, canvas.width * 0.8, 15, "#333333");
+            drawPixelRect(canvas.width * 0.1, questionY + 70, timerWidth, 15, colors.timerBar);
+            
+            // Draw current option if playing
+            if(gameState === 'playing' && currentOptionIndex >= 0) {
+                const optionY = canvas.height * 0.4;
+                const optionHeight = 80;
+                const pulseEffect = isPulsing && blinkTimer > 5 ? 5 : 0;
+                
+                // Draw speech bubble
+                drawSpeechBubble(
+                    canvas.width / 2, 
+                    optionY, 
+                    canvas.width * 0.6 + pulseEffect, 
+                    optionHeight + pulseEffect, 
+                    colors.optionBox
+                );
+                
+                // Draw option text
+                drawText(options[currentOptionIndex], canvas.width / 2, optionY + 40, colors.optionText, 28, true);
+                
+                // Draw tap indicator
+                const indicatorY = optionY + optionHeight + 40;
+                drawText("TAP when you see the correct answer!", canvas.width / 2, indicatorY, "#ffffff", 20, true);
+                
+                // Draw bouncing arrow
+                const bounceOffset = Math.sin(Date.now() / 200) * 5;
+                drawArrow(canvas.width / 2, indicatorY + 50 + bounceOffset, 20, "#ffffff");
+            }
+            
+            // Draw game result
+            if(gameState === 'correct') {
+                drawGameResult("CORRECT!", colors.correctBg);
+                drawRestartButton();
+            } else if(gameState === 'wrong') {
+                drawGameResult("WRONG! The capital is Paris", colors.wrongBg);
+                drawRestartButton();
+            }
+        }
+        
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+        }
+        
+        function drawText(text, x, y, color, size, centered) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = centered ? 'center' : 'left';
+            ctx.fillText(text, x, y);
+        }
+        
+        function drawSpeechBubble(x, y, width, height, color) {
+            const halfWidth = width / 2;
+            const halfHeight = height / 2;
+            
+            // Main bubble
+            ctx.fillStyle = color;
+            ctx.fillRect(x - halfWidth, y - halfHeight, width, height);
+            
+            // Border
+            ctx.strokeStyle = colors.optionBoxBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x - halfWidth, y - halfHeight, width, height);
+            
+            // Pointer
+            ctx.beginPath();
+            ctx.moveTo(x, y + halfHeight);
+            ctx.lineTo(x - 15, y + halfHeight + 20);
+            ctx.lineTo(x + 15, y + halfHeight + 20);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+        
+        function drawArrow(x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x, y - size);
+            ctx.lineTo(x + size, y);
+            ctx.lineTo(x - size, y);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        function drawGameResult(message, bgColor) {
+            // Background overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Result box
+            const boxWidth = canvas.width * 0.8;
+            const boxHeight = 100;
+            const boxY = canvas.height / 2 - 50;
+            
+            drawPixelRect(canvas.width / 2 - boxWidth / 2, boxY, boxWidth, boxHeight, bgColor);
+            drawText(message, canvas.width / 2, boxY + boxHeight / 2, colors.optionText, 32, true);
+        }
+        
+        function drawRestartButton() {
+            drawPixelRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height, colors.buttonBg);
+            drawText("RESTART", restartButton.x + restartButton.width / 2, restartButton.y + restartButton.height / 2, colors.buttonText, 20, true);
+        }
+        
+        // Event handlers
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (event.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (event.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if(gameState === 'playing') {
+                // Check if correct answer is showing
+                if(options[currentOptionIndex] === "Paris") {
+                    gameState = 'correct';
+                    playCorrectSound();
+                } else {
+                    gameState = 'wrong';
+                    playWrongSound();
+                }
+            } else {
+                // Check if restart button was clicked
+                if(clickX >= restartButton.x && clickX <= restartButton.x + restartButton.width &&
+                   clickY >= restartButton.y && clickY <= restartButton.y + restartButton.height) {
+                    restartGame();
+                }
+            }
+        });
+        
+        function restartGame() {
+            currentOptionIndex = -1;
+            gameState = 'playing';
+            lastUpdateTime = 0;
+            gameTimer = 10;
+            isPulsing = false;
+            playOptionSound();
+        }
+        
+        // Start game
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>

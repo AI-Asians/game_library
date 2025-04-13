@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quest: Book Edition</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - 8-bit palette
+        const colors = {
+            background: '#5c94fc',
+            shelf: '#8d5524',
+            shelfDark: '#6b3e1c',
+            shelfHighlight: '#a67c52',
+            question: '#ffffff',
+            questionBg: '#213b75',
+            correct: '#58c430',
+            incorrect: '#d82800',
+            bookColors: ['#d82800', '#58c430', '#f7d038', '#4878f8', '#a442a0', '#ff8800', '#30c0d8'],
+            bookSpines: ['#b80000', '#48a420', '#e7c028', '#3868e8', '#942290', '#ee7700', '#20b0c8'],
+            dust: '#ded6af'
+        };
+        
+        // Game state
+        let gameState = {
+            question: "What is the capital of France?",
+            answers: ["Paris", "London", "Berlin", "Rome"],
+            correctAnswer: "Paris",
+            selectedBook: null,
+            gameOver: false,
+            hintTimer: 0,
+            restartBtn: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height - 70,
+                width: 120,
+                height: 40
+            },
+            dustParticles: [],
+            pulloutAnimations: {},
+            result: null
+        };
+        
+        // Books configuration
+        const books = [];
+        const shelfTop = canvas.height * 0.45;
+        const bookWidth = isMobile ? 70 : 100;
+        const bookHeight = isMobile ? 140 : 200;
+        const spacing = isMobile ? 10 : 20;
+        const startX = (canvas.width - (bookWidth * 4 + spacing * 3)) / 2;
+        
+        // Create books
+        for (let i = 0; i < 4; i++) {
+            books.push({
+                x: startX + i * (bookWidth + spacing),
+                y: shelfTop - bookHeight,
+                width: bookWidth,
+                height: bookHeight,
+                title: gameState.answers[i],
+                color: colors.bookColors[i % colors.bookColors.length],
+                spine: colors.bookSpines[i % colors.bookSpines.length],
+                baseY: shelfTop - bookHeight,
+                pullout: 0
+            });
+            gameState.pulloutAnimations[i] = 0;
+        }
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(220, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'hint') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(330, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            }
+        }
+        
+        // Create dust particles
+        function createDustParticles(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                gameState.dustParticles.push({
+                    x: x + Math.random() * 30 - 15,
+                    y: y + Math.random() * 20 - 10,
+                    size: Math.random() * 3 + 1,
+                    speedX: Math.random() * 2 - 1,
+                    speedY: -Math.random() * 2 - 1,
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw wooden shelf
+            const shelfHeight = 30;
+            ctx.fillStyle = colors.shelf;
+            ctx.fillRect(0, shelfTop, canvas.width, shelfHeight);
+            
+            // Shelf shadow
+            ctx.fillStyle = colors.shelfDark;
+            ctx.fillRect(0, shelfTop + shelfHeight - 5, canvas.width, 5);
+            
+            // Shelf grain (horizontal lines)
+            ctx.fillStyle = colors.shelfHighlight;
+            for (let i = 0; i < 5; i++) {
+                const y = shelfTop + Math.random() * shelfHeight;
+                ctx.fillRect(0, Math.floor(y), canvas.width, 1);
+            }
+            
+            // Shelf vertical supports
+            ctx.fillStyle = colors.shelfDark;
+            ctx.fillRect(startX - 15, shelfTop, 10, bookHeight + 40);
+            ctx.fillRect(startX + 4 * bookWidth + 3 * spacing + 5, shelfTop, 10, bookHeight + 40);
+        }
+        
+        function drawBooks() {
+            books.forEach((book, index) => {
+                // Calculate current position based on animation
+                const pulloutAmount = gameState.pulloutAnimations[index];
+                book.y = book.baseY - pulloutAmount * 20;
+                
+                // Draw book
+                ctx.fillStyle = book.spine;
+                ctx.fillRect(book.x, book.y, book.width, book.height);
+                
+                // Book details (simulating texture)
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.fillRect(book.x, book.y, book.width, 5); // Top shadow
+                ctx.fillRect(book.x, book.y + book.height - 5, book.width, 5); // Bottom shadow
+                
+                // Book highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillRect(book.x + 3, book.y + 3, book.width - 6, 2);
+                
+                // Book label
+                ctx.fillStyle = book.color;
+                ctx.fillRect(book.x + book.width * 0.1, book.y + book.height * 0.3, book.width * 0.8, book.height * 0.4);
+                
+                // Book title
+                ctx.fillStyle = 'white';
+                ctx.font = `${isMobile ? 12 : 16}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.save();
+                ctx.translate(book.x + book.width / 2, book.y + book.height / 2);
+                ctx.rotate(-Math.PI / 2);
+                ctx.fillText(book.title, 0, 0);
+                ctx.restore();
+                
+                // Hint animation
+                if (gameState.hintTimer > 200 && !gameState.gameOver) {
+                    const correctIndex = gameState.answers.indexOf(gameState.correctAnswer);
+                    if (index === correctIndex && Math.floor(gameState.hintTimer / 15) % 2 === 0) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                        ctx.fillRect(book.x, book.y, book.width, book.height);
+                    }
+                }
+            });
+        }
+        
+        function drawQuestion() {
+            // Question box background
+            ctx.fillStyle = colors.questionBg;
+            const questionY = 50;
+            const padding = 20;
+            ctx.fillRect(50, questionY - padding, canvas.width - 100, 80);
+            
+            // Border pixels
+            ctx.fillStyle = 'white';
+            ctx.fillRect(50, questionY - padding, canvas.width - 100, 2);
+            ctx.fillRect(50, questionY - padding, 2, 80);
+            ctx.fillRect(50, questionY - padding + 78, canvas.width - 100, 2);
+            ctx.fillRect(canvas.width - 52, questionY - padding, 2, 80);
+            
+            // Question text
+            ctx.fillStyle = colors.question;
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(gameState.question, canvas.width / 2, questionY + 20);
+        }
+        
+        function drawDustParticles() {
+            ctx.fillStyle = colors.dust;
+            gameState.dustParticles.forEach(particle => {
+                ctx.fillRect(Math.floor(particle.x), Math.floor(particle.y), Math.floor(particle.size), Math.floor(particle.size));
+            });
+        }
+        
+        function drawResult() {
+            if (gameState.result) {
+                ctx.fillStyle = gameState.result === 'correct' ? colors.correct : colors.incorrect;
+                ctx.font = `${isMobile ? 28 : 36}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    gameState.result === 'correct' ? 'Correct!' : 'Incorrect!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 60
+                );
+                
+                // Draw restart button
+                ctx.fillStyle = '#333';
+                ctx.fillRect(gameState.restartBtn.x, gameState.restartBtn.y, gameState.restartBtn.width, gameState.restartBtn.height);
+                ctx.fillStyle = '#FFF';
+                ctx.font = '18px sans-serif';
+                ctx.fillText('Restart', gameState.restartBtn.x + gameState.restartBtn.width / 2, gameState.restartBtn.y + gameState.restartBtn.height / 2);
+            }
+        }
+        
+        // Update functions
+        function updateDustParticles() {
+            for (let i = gameState.dustParticles.length - 1; i >= 0; i--) {
+                const particle = gameState.dustParticles[i];
+                particle.x += particle.speedX;
+                particle.y += particle.speedY;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    gameState.dustParticles.splice(i, 1);
+                }
+            }
+        }
+        
+        function updateAnimations() {
+            books.forEach((book, index) => {
+                if (index === gameState.selectedBook) {
+                    gameState.pulloutAnimations[index] += (1 - gameState.pulloutAnimations[index]) * 0.2;
+                    if (Math.random() > 0.7) {
+                        createDustParticles(book.x + book.width / 2, book.y + book.height, 1);
+                    }
+                } else {
+                    gameState.pulloutAnimations[index] *= 0.8;
+                }
+            });
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBackground();
+            drawBooks();
+            drawQuestion();
+            drawDustParticles();
+            drawResult();
+            
+            // Update game state
+            if (!gameState.gameOver) {
+                gameState.hintTimer++;
+                if (gameState.hintTimer === 300) { // 5 seconds (60fps * 5)
+                    playSound('hint');
+                }
+            }
+            
+            updateAnimations();
+            updateDustParticles();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle user interaction
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState.gameOver) {
+                // Check if restart button was clicked
+                if (
+                    x >= gameState.restartBtn.x && 
+                    x <= gameState.restartBtn.x + gameState.restartBtn.width &&
+                    y >= gameState.restartBtn.y && 
+                    y <= gameState.restartBtn.y + gameState.restartBtn.height
+                ) {
+                    restartGame();
+                }
+                return;
+            }
+            
+            // Check if a book was clicked
+            books.forEach((book, index) => {
+                if (
+                    x >= book.x && 
+                    x <= book.x + book.width &&
+                    y >= book.y && 
+                    y <= book.y + book.height
+                ) {
+                    gameState.selectedBook = index;
+                    playSound('select');
+                    createDustParticles(book.x + book.width / 2, book.y + book.height, 8);
+                    
+                    // Check if correct book after a slight delay
+                    setTimeout(() => {
+                        if (book.title === gameState.correctAnswer) {
+                            gameState.result = 'correct';
+                            playSound('correct');
+                            for (let i = 0; i < 20; i++) {
+                                createDustParticles(book.x + book.width / 2, book.y + book.height / 2, 2);
+                            }
+                        } else {
+                            gameState.result = 'incorrect';
+                            playSound('incorrect');
+                        }
+                        gameState.gameOver = true;
+                    }, 500);
+                }
+            });
+        }
+        
+        function restartGame() {
+            gameState.selectedBook = null;
+            gameState.gameOver = false;
+            gameState.hintTimer = 0;
+            gameState.dustParticles = [];
+            gameState.result = null;
+            
+            // Reset book positions
+            books.forEach((book, index) => {
+                gameState.pulloutAnimations[index] = 0;
+                book.y = book.baseY;
+            });
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleClick(touch);
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegraph True or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #111;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#111122',
+            wood: '#8B4513',
+            darkWood: '#5D2906',
+            brass: '#D4AF37',
+            darkBrass: '#A67C00',
+            wire: '#555555',
+            signalOn: '#FFFF00',
+            signalOff: '#444444',
+            textLight: '#FFFFFF',
+            textDark: '#222222',
+            correct: '#00FF00',
+            incorrect: '#FF0000'
+        };
+        
+        let input = '';
+        let gameState = 'playing'; // playing, correct, incorrect
+        let dotPressed = false;
+        let dashPressed = false;
+        let sendPressed = false;
+        let signalPulse = 0;
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playTone(frequency, duration) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        // Sound effects
+        function playDotSound() {
+            playTone(800, 0.1);
+        }
+        
+        function playDashSound() {
+            playTone(600, 0.2);
+        }
+        
+        function playCorrectSound() {
+            playTone(880, 0.1);
+            setTimeout(() => playTone(1320, 0.2), 150);
+        }
+        
+        function playIncorrectSound() {
+            playTone(440, 0.2);
+            setTimeout(() => playTone(330, 0.3), 250);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawTelegraphKey(x, y, width, height, isPressed, label) {
+            // Base
+            drawPixelRect(x, y + (isPressed ? 3 : 0), width, height - (isPressed ? 3 : 0), colors.wood);
+            drawPixelRect(x + 4, y + (isPressed ? 3 : 0), width - 8, height - 10 - (isPressed ? 3 : 0), colors.darkWood);
+            
+            // Metal parts
+            drawPixelRect(x + width/4, y - 10 + (isPressed ? 3 : 0), width/2, 10, colors.brass);
+            drawPixelRect(x + width/4 + 2, y - 8 + (isPressed ? 3 : 0), width/2 - 4, 6, colors.darkBrass);
+            
+            // Metal contact
+            drawPixelRect(x + width/2 - 5, y - 15, 10, 5, colors.darkBrass);
+            
+            // Label
+            ctx.fillStyle = colors.textDark;
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(label, x + width/2, y + height/2 + (isPressed ? 3 : 0));
+        }
+        
+        function drawTelegraphReceiver(x, y, width, height) {
+            // Base
+            drawPixelRect(x, y, width, height, colors.wood);
+            drawPixelRect(x + 5, y + 5, width - 10, height - 10, colors.darkWood);
+            
+            // Display
+            drawPixelRect(x + 15, y + 15, width - 30, height - 30, colors.textDark);
+            
+            // Received signal
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(input, x + width/2, y + height/2 + 8);
+            
+            // Signal meter
+            const meterWidth = width - 40;
+            drawPixelRect(x + 20, y + height - 25, meterWidth, 10, colors.signalOff);
+            if (signalPulse > 0) {
+                drawPixelRect(x + 20, y + height - 25, meterWidth * signalPulse, 10, colors.signalOn);
+            }
+        }
+        
+        function drawSendButton(x, y, width, height) {
+            const isActive = input.length > 0;
+            const isPressed = sendPressed && isActive;
+            
+            drawPixelRect(x, y + (isPressed ? 3 : 0), width, height - (isPressed ? 3 : 0), 
+                isActive ? colors.brass : colors.darkBrass);
+            
+            ctx.fillStyle = colors.textDark;
+            ctx.font = '18px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("SEND", x + width/2, y + height/2 + 6 + (isPressed ? 3 : 0));
+        }
+        
+        function drawWire(pulse) {
+            const wireY = canvas.height / 2.5;
+            const segments = 20;
+            const amplitude = 5;
+            
+            ctx.strokeStyle = colors.wire;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, wireY);
+            
+            for (let i = 0; i <= segments; i++) {
+                const x = (canvas.width / segments) * i;
+                const y = wireY + (Math.sin(i + (pulse * 10)) * amplitude);
+                ctx.lineTo(x, y);
+            }
+            
+            ctx.stroke();
+            
+            // Signal pulse
+            if (signalPulse > 0) {
+                const pulsePosition = canvas.width * signalPulse;
+                const pulseRadius = 8;
+                
+                ctx.fillStyle = colors.signalOn;
+                ctx.beginPath();
+                ctx.arc(pulsePosition, wireY + (Math.sin(pulsePosition / (canvas.width / segments) + (signalPulse * 10)) * amplitude), 
+                    pulseRadius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '18px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("The Great Wall of China is visible from space.", canvas.width / 2, 50);
+            
+            ctx.font = '14px Arial';
+            ctx.fillText("Press DOT for TRUE or DASH for FALSE", canvas.width / 2, 80);
+        }
+        
+        function drawResult() {
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                const isCorrect = gameState === 'correct';
+                
+                ctx.fillStyle = isCorrect ? colors.correct : colors.incorrect;
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(isCorrect ? "CORRECT!" : "INCORRECT!", canvas.width / 2, 120);
+                
+                // Draw restart button
+                const btnWidth = 120;
+                const btnHeight = 40;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = 140;
+                
+                drawPixelRect(btnX, btnY, btnWidth, btnHeight, colors.brass);
+                
+                ctx.fillStyle = colors.textDark;
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText("RESTART", canvas.width / 2, btnY + btnHeight / 2 + 5);
+            }
+        }
+        
+        function checkAnswer() {
+            // The correct answer is FALSE (dash)
+            return input === '-';
+        }
+        
+        function update() {
+            // Update signal pulse
+            if (signalPulse > 0) {
+                signalPulse += 0.01;
+                if (signalPulse > 1) {
+                    signalPulse = 0;
+                }
+            }
+            
+            // Reset buttons
+            if (!dotPressed && !dashPressed) {
+                sendPressed = false;
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw wire
+            drawWire(Date.now() / 1000);
+            
+            // Draw instructions
+            drawInstructions();
+            
+            // Draw telegraph keys
+            const keyWidth = 80;
+            const keyHeight = 60;
+            const spacing = 40;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height - 100;
+            
+            drawTelegraphKey(centerX - keyWidth - spacing/2, centerY, keyWidth, keyHeight, dotPressed, "DOT (T)");
+            drawTelegraphKey(centerX + spacing/2, centerY, keyWidth, keyHeight, dashPressed, "DASH (F)");
+            
+            // Draw telegraph receiver
+            const receiverWidth = 200;
+            const receiverHeight = 100;
+            drawTelegraphReceiver(centerX - receiverWidth/2, centerY - 180, receiverWidth, receiverHeight);
+            
+            // Draw send button if we have input
+            if (input.length > 0) {
+                drawSendButton(centerX - 50, centerY - 50, 100, 40);
+            }
+            
+            // Draw result
+            drawResult();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handling
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            const keyWidth = 80;
+            const keyHeight = 60;
+            const spacing = 40;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height - 100;
+            
+            // Check dot key
+            if (x >= centerX - keyWidth - spacing/2 && x <= centerX - spacing/2 &&
+                y >= centerY && y <= centerY + keyHeight && gameState === 'playing') {
+                dotPressed = true;
+                input = '.';
+                signalPulse = 0.01;
+                playDotSound();
+            }
+            
+            // Check dash key
+            if (x >= centerX + spacing/2 && x <= centerX + spacing/2 + keyWidth &&
+                y >= centerY && y <= centerY + keyHeight && gameState === 'playing') {
+                dashPressed = true;
+                input = '-';
+                signalPulse = 0.01;
+                playDashSound();
+            }
+            
+            // Check send button
+            if (input.length > 0 && gameState === 'playing') {
+                const sendBtnX = centerX - 50;
+                const sendBtnY = centerY - 50;
+                const sendBtnWidth = 100;
+                const sendBtnHeight = 40;
+                
+                if (x >= sendBtnX && x <= sendBtnX + sendBtnWidth &&
+                    y >= sendBtnY && y <= sendBtnY + sendBtnHeight) {
+                    sendPressed = true;
+                    gameState = checkAnswer() ? 'correct' : 'incorrect';
+                    
+                    // Play appropriate sound
+                    if (gameState === 'correct') {
+                        playCorrectSound();
+                    } else {
+                        playIncorrectSound();
+                    }
+                }
+            }
+            
+            // Check restart button
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                const btnWidth = 120;
+                const btnHeight = 40;
+                const btnX = canvas.width / 2 - btnWidth / 2;
+                const btnY = 140;
+                
+                if (x >= btnX && x <= btnX + btnWidth &&
+                    y >= btnY && y <= btnY + btnHeight) {
+                    // Reset game
+                    input = '';
+                    gameState = 'playing';
+                    dotPressed = false;
+                    dashPressed = false;
+                    sendPressed = false;
+                    signalPulse = 0;
+                }
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            dotPressed = false;
+            dashPressed = false;
+        });
+        
+        // Touch support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+        
+        // Keyboard support
+        window.addEventListener('keydown', (e) => {
+            if (gameState === 'playing') {
+                if (e.key === 't' || e.key === 'T') {
+                    dotPressed = true;
+                    input = '.';
+                    signalPulse = 0.01;
+                    playDotSound();
+                } else if (e.key === 'f' || e.key === 'F') {
+                    dashPressed = true;
+                    input = '-';
+                    signalPulse = 0.01;
+                    playDashSound();
+                } else if (e.key === 'Enter' && input.length > 0) {
+                    sendPressed = true;
+                    gameState = checkAnswer() ? 'correct' : 'incorrect';
+                    
+                    if (gameState === 'correct') {
+                        playCorrectSound();
+                    } else {
+                        playIncorrectSound();
+                    }
+                }
+            } else if ((gameState === 'correct' || gameState === 'incorrect') && e.key === 'Enter') {
+                // Reset game
+                input = '';
+                gameState = 'playing';
+                dotPressed = false;
+                dashPressed = false;
+                sendPressed = false;
+                signalPulse = 0;
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 't' || e.key === 'T') {
+                dotPressed = false;
+            } else if (e.key === 'f' || e.key === 'F') {
+                dashPressed = false;
+            }
+        });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

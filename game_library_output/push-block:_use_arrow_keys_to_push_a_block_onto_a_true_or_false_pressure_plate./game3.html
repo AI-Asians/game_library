@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Push-Block True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        @media (max-width: 600px) {
+            canvas {
+                width: 360px;
+                height: 640px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors
+        const COLORS = {
+            background: '#0f380f', // Dark green background
+            floor: '#306230',      // Floor green
+            floorLight: '#8bac0f', // Light floor
+            character: '#9bbc0f',  // Character color
+            characterOutline: '#0f380f',
+            block: '#e0f8d0',      // Block color
+            blockOutline: '#306230',
+            plateTrue: '#d03e19',  // True plate
+            plateFalse: '#0000a8', // False plate
+            text: '#ffffff',       // Text color
+            buttonBg: '#8bac0f',   // Button background
+            buttonText: '#0f380f'  // Button text
+        };
+        
+        // Grid configuration
+        const GRID_SIZE = isMobile ? 30 : 40;
+        const GRID_WIDTH = Math.floor(canvas.width / GRID_SIZE);
+        const GRID_HEIGHT = Math.floor(canvas.height / GRID_SIZE);
+        
+        // Game entities
+        const game = {
+            character: {
+                x: Math.floor(GRID_WIDTH / 2),
+                y: Math.floor(GRID_HEIGHT / 2) + 2,
+                lastMoveTime: 0,
+                moveDelay: 150, // Slight delay for 8-bit feel
+                direction: 'down',
+                pushAnimation: 0
+            },
+            block: {
+                x: Math.floor(GRID_WIDTH / 2),
+                y: Math.floor(GRID_HEIGHT / 2) + 1,
+                onPlate: null,
+                bounce: 0
+            },
+            plates: {
+                true: {
+                    x: Math.floor(GRID_WIDTH / 4),
+                    y: Math.floor(GRID_HEIGHT / 4) * 3
+                },
+                false: {
+                    x: Math.floor(GRID_WIDTH / 4) * 3,
+                    y: Math.floor(GRID_HEIGHT / 4) * 3
+                }
+            },
+            question: "The Great Wall of China is visible from space.",
+            gameOver: false,
+            correctAnswer: "false",
+            resetButton: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height - 50,
+                width: 120,
+                height: 40,
+                visible: false
+            },
+            restartButton: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 50,
+                width: 120,
+                height: 40,
+                visible: false
+            },
+            mobileControls: {
+                up: { x: canvas.width / 2, y: canvas.height - 120, radius: 25 },
+                down: { x: canvas.width / 2, y: canvas.height - 60, radius: 25 },
+                left: { x: canvas.width / 2 - 60, y: canvas.height - 90, radius: 25 },
+                right: { x: canvas.width / 2 + 60, y: canvas.height - 90, radius: 25 }
+            },
+            feedback: {
+                message: "",
+                color: "",
+                timer: 0
+            }
+        };
+        
+        // Sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playMoveSound() {
+            playSound(220, 0.1);
+        }
+        
+        function playPushSound() {
+            playSound(330, 0.15);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1, 'sine');
+            setTimeout(() => playSound(659.25, 0.1, 'sine'), 100);
+            setTimeout(() => playSound(783.99, 0.2, 'sine'), 200);
+        }
+        
+        function playIncorrectSound() {
+            playSound(311.13, 0.1, 'sawtooth');
+            setTimeout(() => playSound(233.08, 0.2, 'sawtooth'), 100);
+        }
+        
+        // Game drawing functions
+        function drawFloor() {
+            ctx.fillStyle = COLORS.floor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid pattern for floor
+            ctx.fillStyle = COLORS.floorLight;
+            for (let x = 0; x < GRID_WIDTH; x++) {
+                for (let y = 0; y < GRID_HEIGHT; y++) {
+                    if ((x + y) % 2 === 0) {
+                        ctx.fillRect(
+                            x * GRID_SIZE, 
+                            y * GRID_SIZE, 
+                            GRID_SIZE, 
+                            GRID_SIZE
+                        );
+                    }
+                }
+            }
+        }
+        
+        function drawCharacter() {
+            const { x, y, direction, pushAnimation } = game.character;
+            const size = GRID_SIZE - 4;
+            const posX = x * GRID_SIZE + 2;
+            const posY = y * GRID_SIZE + 2 - (pushAnimation > 0 ? 2 : 0);
+            
+            // Character body
+            ctx.fillStyle = COLORS.character;
+            ctx.fillRect(posX, posY, size, size);
+            
+            // Character outline
+            ctx.strokeStyle = COLORS.characterOutline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(posX, posY, size, size);
+            
+            // Simple face details based on direction
+            ctx.fillStyle = COLORS.characterOutline;
+            
+            // Eyes
+            const eyeSize = Math.max(3, GRID_SIZE / 10);
+            
+            if (direction === 'up') {
+                ctx.fillRect(posX + size/3 - eyeSize/2, posY + size/3, eyeSize, eyeSize);
+                ctx.fillRect(posX + size*2/3 - eyeSize/2, posY + size/3, eyeSize, eyeSize);
+            } else if (direction === 'down') {
+                ctx.fillRect(posX + size/3 - eyeSize/2, posY + size/2, eyeSize, eyeSize);
+                ctx.fillRect(posX + size*2/3 - eyeSize/2, posY + size/2, eyeSize, eyeSize);
+            } else if (direction === 'left') {
+                ctx.fillRect(posX + size/3, posY + size/3, eyeSize, eyeSize);
+                ctx.fillRect(posX + size/3, posY + size*2/3, eyeSize, eyeSize);
+            } else if (direction === 'right') {
+                ctx.fillRect(posX + size*2/3, posY + size/3, eyeSize, eyeSize);
+                ctx.fillRect(posX + size*2/3, posY + size*2/3, eyeSize, eyeSize);
+            }
+        }
+        
+        function drawBlock() {
+            const { x, y, bounce, onPlate } = game.block;
+            const bounceOffset = Math.sin(bounce * Math.PI) * 4;
+            
+            // Block shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(
+                x * GRID_SIZE + 4, 
+                y * GRID_SIZE + 4 + bounceOffset, 
+                GRID_SIZE - 8, 
+                GRID_SIZE - 8
+            );
+            
+            // Block body
+            ctx.fillStyle = COLORS.block;
+            ctx.fillRect(
+                x * GRID_SIZE, 
+                y * GRID_SIZE - bounceOffset, 
+                GRID_SIZE, 
+                GRID_SIZE
+            );
+            
+            // Block outline
+            ctx.strokeStyle = COLORS.blockOutline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                x * GRID_SIZE, 
+                y * GRID_SIZE - bounceOffset, 
+                GRID_SIZE, 
+                GRID_SIZE
+            );
+            
+            // Block details - simple pixel pattern
+            ctx.fillStyle = COLORS.blockOutline;
+            ctx.fillRect(
+                x * GRID_SIZE + GRID_SIZE/4, 
+                y * GRID_SIZE + GRID_SIZE/4 - bounceOffset, 
+                GRID_SIZE/2, 
+                GRID_SIZE/2
+            );
+        }
+        
+        function drawPlates() {
+            // True plate
+            ctx.fillStyle = COLORS.plateTrue;
+            ctx.fillRect(
+                game.plates.true.x * GRID_SIZE, 
+                game.plates.true.y * GRID_SIZE, 
+                GRID_SIZE, 
+                GRID_SIZE
+            );
+            
+            // False plate
+            ctx.fillStyle = COLORS.plateFalse;
+            ctx.fillRect(
+                game.plates.false.x * GRID_SIZE, 
+                game.plates.false.y * GRID_SIZE, 
+                GRID_SIZE, 
+                GRID_SIZE
+            );
+            
+            // Plate Labels
+            ctx.font = Math.floor(GRID_SIZE/3) + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = COLORS.text;
+            
+            // True Label
+            ctx.fillText(
+                'TRUE', 
+                game.plates.true.x * GRID_SIZE + GRID_SIZE/2, 
+                game.plates.true.y * GRID_SIZE - 10
+            );
+            
+            // False Label
+            ctx.fillText(
+                'FALSE', 
+                game.plates.false.x * GRID_SIZE + GRID_SIZE/2, 
+                game.plates.false.y * GRID_SIZE - 10
+            );
+        }
+        
+        function drawQuestion() {
+            ctx.font = (isMobile ? '16px' : '20px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = COLORS.text;
+            
+            // Break question into multiple lines if needed
+            const maxWidth = canvas.width - 40;
+            const words = game.question.split(' ');
+            let line = '';
+            let lines = [];
+            let y = 40;
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw each line
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(lines[i], canvas.width / 2, y);
+                y += 30;
+            }
+        }
+        
+        function drawButtons() {
+            // Reset button
+            if (game.resetButton.visible) {
+                ctx.fillStyle = COLORS.buttonBg;
+                ctx.fillRect(
+                    game.resetButton.x, 
+                    game.resetButton.y, 
+                    game.resetButton.width, 
+                    game.resetButton.height
+                );
+                
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = COLORS.buttonText;
+                ctx.fillText(
+                    'RESET BLOCK', 
+                    game.resetButton.x + game.resetButton.width / 2, 
+                    game.resetButton.y + game.resetButton.height / 2 + 6
+                );
+            }
+            
+            // Restart button
+            if (game.restartButton.visible) {
+                ctx.fillStyle = COLORS.buttonBg;
+                ctx.fillRect(
+                    game.restartButton.x, 
+                    game.restartButton.y, 
+                    game.restartButton.width, 
+                    game.restartButton.height
+                );
+                
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = COLORS.buttonText;
+                ctx.fillText(
+                    'PLAY AGAIN', 
+                    game.restartButton.x + game.restartButton.width / 2, 
+                    game.restartButton.y + game.restartButton.height / 2 + 6
+                );
+            }
+        }
+        
+        function drawMobileControls() {
+            if (!isMobile) return;
+            
+            const controls = game.mobileControls;
+            const arrowSize = 15;
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            
+            // Up arrow
+            ctx.beginPath();
+            ctx.arc(controls.up.x, controls.up.y, controls.up.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Down arrow
+            ctx.beginPath();
+            ctx.arc(controls.down.x, controls.down.y, controls.down.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Left arrow
+            ctx.beginPath();
+            ctx.arc(controls.left.x, controls.left.y, controls.left.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Right arrow
+            ctx.beginPath();
+            ctx.arc(controls.right.x, controls.right.y, controls.right.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Arrow symbols
+            ctx.fillStyle = '#000';
+            
+            // Up arrow symbol
+            ctx.beginPath();
+            ctx.moveTo(controls.up.x, controls.up.y - arrowSize);
+            ctx.lineTo(controls.up.x - arrowSize, controls.up.y + arrowSize/2);
+            ctx.lineTo(controls.up.x + arrowSize, controls.up.y + arrowSize/2);
+            ctx.fill();
+            
+            // Down arrow symbol
+            ctx.beginPath();
+            ctx.moveTo(controls.down.x, controls.down.y + arrowSize);
+            ctx.lineTo(controls.down.x - arrowSize, controls.down.y - arrowSize/2);
+            ctx.lineTo(controls.down.x + arrowSize, controls.down.y - arrowSize/2);
+            ctx.fill();
+            
+            // Left arrow symbol
+            ctx.beginPath();
+            ctx.moveTo(controls.left.x - arrowSize, controls.left.y);
+            ctx.lineTo(controls.left.x + arrowSize/2, controls.left.y - arrowSize);
+            ctx.lineTo(controls.left.x + arrowSize/2, controls.left.y + arrowSize);
+            ctx.fill();
+            
+            // Right arrow symbol
+            ctx.beginPath();
+            ctx.moveTo(controls.right.x + arrowSize, controls.right.y);
+            ctx.lineTo(controls.right.x - arrowSize/2, controls.right.y - arrowSize);
+            ctx.lineTo(controls.right.x - arrowSize/2, controls.right.y + arrowSize);
+            ctx.fill();
+        }
+        
+        function drawFeedback() {
+            if (game.feedback.timer > 0) {
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = game.feedback.color;
+                ctx.fillText(
+                    game.feedback.message, 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        // Game logic
+        function moveCharacter(dx, dy) {
+            const now = Date.now();
+            
+            // Apply movement delay for 8-bit feel
+            if (now - game.character.lastMoveTime < game.character.moveDelay || game.gameOver) {
+                return;
+            }
+            
+            // Set character direction
+            if (dx === 1) game.character.direction = 'right';
+            else if (dx === -1) game.character.direction = 'left';
+            else if (dy === 1) game.character.direction = 'down';
+            else if (dy === -1) game.character.direction = 'up';
+            
+            const newX = game.character.x + dx;
+            const newY = game.character.y + dy;
+            
+            // Check if character is attempting to push the block
+            if (newX === game.block.x && newY === game.block.y) {
+                const newBlockX = game.block.x + dx;
+                const newBlockY = game.block.y + dy;
+                
+                // Check if block move is valid (within canvas bounds)
+                if (newBlockX >= 0 && newBlockX < GRID_WIDTH && 
+                    newBlockY >= 0 && newBlockY < GRID_HEIGHT) {
+                    
+                    // Move block
+                    game.block.x = newBlockX;
+                    game.block.y = newBlockY;
+                    game.block.bounce = 1; // Start bounce animation
+                    
+                    // Trigger push animation
+                    game.character.pushAnimation = 3; // Push animation frames
+                    
+                    // Play push sound
+                    playPushSound();
+                    
+                    // Check if block is on a plate
+                    checkBlockOnPlate();
+                } else {
+                    // Block hit wall, show reset button
+                    game.resetButton.visible = true;
+                }
+            } else {
+                // Check if new position is valid (not occupied by block and within bounds)
+                if (newX >= 0 && newX < GRID_WIDTH && 
+                    newY >= 0 && newY < GRID_HEIGHT && 
+                    !(newX === game.block.x && newY === game.block.y)) {
+                    
+                    // Move character
+                    game.character.x = newX;
+                    game.character.y = newY;
+                    
+                    // Play move sound
+                    playMoveSound();
+                }
+            }
+            
+            game.character.lastMoveTime = now;
+        }
+        
+        function checkBlockOnPlate() {
+            const { x, y } = game.block;
+            
+            // Check if block is on true plate
+            if (x === game.plates.true.x && y === game.plates.true.y) {
+                game.block.onPlate = 'true';
+                checkAnswer('true');
+            }
+            // Check if block is on false plate
+            else if (x === game.plates.false.x && y === game.plates.false.y) {
+                game.block.onPlate = 'false';
+                checkAnswer('false');
+            }
+            else {
+                game.block.onPlate = null;
+            }
+        }
+        
+        function checkAnswer(answer) {
+            if (game.gameOver) return;
+            
+            if (answer === game.correctAnswer) {
+                game.feedback.message = "CORRECT!";
+                game.feedback.color = "#8bac0f"; // Light green
+                playCorrectSound();
+            } else {
+                game.feedback.message = "INCORRECT!";
+                game.feedback.color = "#d03e19"; // Red
+                playIncorrectSound();
+            }
+            
+            game.feedback.timer = 60; // Show for 60 frames (about 1 second)
+            game.gameOver = true;
+            game.restartButton.visible = true;
+        }
+        
+        function resetBlock() {
+            game.block.x = Math.floor(GRID_WIDTH / 2);
+            game.block.y = Math.floor(GRID_HEIGHT / 2) + 1;
+            game.block.onPlate = null;
+            game.resetButton.visible = false;
+            playMoveSound();
+        }
+        
+        function resetGame() {
+            game.character.x = Math.floor(GRID_WIDTH / 2);
+            game.character.y = Math.floor(GRID_HEIGHT / 2) + 2;
+            game.character.direction = 'down';
+            
+            resetBlock();
+            
+            game.gameOver = false;
+            game.feedback.timer = 0;
+            game.restartButton.visible = false;
+        }
+        
+        // Input handling
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'w') {
+                moveCharacter(0, -1);
+            } else if (e.key === 'ArrowDown' || e.key === 's') {
+                moveCharacter(0, 1);
+            } else if (e.key === 'ArrowLeft' || e.key === 'a') {
+                moveCharacter(-1, 0);
+            } else if (e.key === 'ArrowRight' || e.key === 'd') {
+                moveCharacter(1, 0);
+            } else if (e.key === 'r') {
+                if (game.resetButton.visible) resetBlock();
+            } else if (e.key === ' ' || e.key === 'Enter') {
+                if (game.restartButton.visible) resetGame();
+            }
+        });
+        
+        // Touch controls for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent scrolling
+            
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Check if reset button was clicked
+            if (game.resetButton.visible && 
+                x >= game.resetButton.x && 
+                x <= game.resetButton.x + game.resetButton.width &&
+                y >= game.resetButton.y && 
+                y <= game.resetButton.y + game.resetButton.height) {
+                resetBlock();
+                return;
+            }
+            
+            // Check if restart button was clicked
+            if (game.restartButton.visible && 
+                x >= game.restartButton.x && 
+                x <= game.restartButton.x + game.restartButton.width &&
+                y >= game.restartButton.y && 
+                y <= game.restartButton.y + game.restartButton.height) {
+                resetGame();
+                return;
+            }
+            
+            // Handle arrow button touches
+            const controls = game.mobileControls;
+            const distUp = Math.sqrt(Math.pow(x - controls.up.x, 2) + Math.pow(y - controls.up.y, 2));
+            const distDown = Math.sqrt(Math.pow(x - controls.down.x, 2) + Math.pow(y - controls.down.y, 2));
+            const distLeft = Math.sqrt(Math.pow(x - controls.left.x, 2) + Math.pow(y - controls.left.y, 2));
+            const distRight = Math.sqrt(Math.pow(x - controls.right.x, 2) + Math.pow(y - controls.right.y, 2));
+            
+            if (distUp <= controls.up.radius) {
+                moveCharacter(0, -1);
+            } else if (distDown <= controls.down.radius) {
+                moveCharacter(0, 1);
+            } else if (distLeft <= controls.left.radius) {
+                moveCharacter(-1, 0);
+            } else if (distRight <= controls.right.radius) {
+                moveCharacter(1, 0);
+            }
+        });
+        
+        // Mouse clicks for web
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Check if reset button was clicked
+            if (game.resetButton.visible && 
+                x >= game.resetButton.x && 
+                x <= game.resetButton.x + game.resetButton.width &&
+                y >= game.resetButton.y && 
+                y <= game.resetButton.y + game.resetButton.height) {
+                resetBlock();
+            }
+            
+            // Check if restart button was clicked
+            if (game.restartButton.visible && 
+                x >= game.restartButton.x && 
+                x <= game.restartButton.x + game.restartButton.width &&
+                y >= game.restartButton.y && 
+                y <= game.restartButton.y + game.restartButton.height) {
+                resetGame();
+            }
+            
+            // If on mobile, handle arrow button clicks
+            if (isMobile) {
+                const controls = game.mobileControls;
+                const distUp = Math.sqrt(Math.pow(x - controls.up.x, 2) + Math.pow(y - controls.up.y, 2));
+                const distDown = Math.sqrt(Math.pow(x - controls.down.x, 2) + Math.pow(y - controls.down.y, 2));
+                const distLeft = Math.sqrt(Math.pow(x - controls.left.x, 2) + Math.pow(y - controls.left.y, 2));
+                const distRight = Math.sqrt(Math.pow(x - controls.right.x, 2) + Math.pow(y - controls.right.y, 2));
+                
+                if (distUp <= controls.up.radius) {
+                    moveCharacter(0, -1);
+                } else if (distDown <= controls.down.radius) {
+                    moveCharacter(0, 1);
+                } else if (distLeft <= controls.left.radius) {
+                    moveCharacter(-1, 0);
+                } else if (distRight <= controls.right.radius) {
+                    moveCharacter(1, 0);
+                }
+            }
+        });
+        
+        // Game loop
+        function gameLoop() {
+            // Update animations
+            if (game.character.pushAnimation > 0) {
+                game.character.pushAnimation--;
+            }
+            
+            if (game.block.bounce > 0) {
+                game.block.bounce = Math.max(0, game.block.bounce - 0.1);
+            }
+            
+            if (game.feedback.timer > 0) {
+                game.feedback.timer--;
+            }
+            
+            // Check if block is stuck
+            let isStuck = true;
+            const { x, y } = game.block;
+            
+            // Check if block can move in any direction
+            if (x > 0 && !(game.character.x === x-1 && game.character.y === y)) isStuck = false;
+            if (x < GRID_WIDTH-1 && !(game.character.x === x+1 && game.character.y === y)) isStuck = false;
+            if (y > 0 && !(game.character.x === x && game.character.y === y-1)) isStuck = false;
+            if (y < GRID_HEIGHT-1 && !(game.character.x === x && game.character.y === y+1)) isStuck = false;
+            
+            // Only show reset button if block is not on a plate and is stuck
+            game.resetButton.visible = isStuck && !game.block.onPlate && !game.gameOver;
+            
+            // Draw everything
+            drawFloor();
+            drawPlates();
+            drawBlock();
+            drawCharacter();
+            drawQuestion();
+            drawButtons();
+            drawMobileControls();
+            drawFeedback();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mirror Tap - True or False</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = ctx = canvas.getContext('2d');
+        
+        // Detect if on mobile and set canvas size
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: '#0a0a2a',
+            text: '#f8f8f8',
+            mirror1: '#80a0ff', 
+            mirror2: '#80ffa0',
+            mirrorFrame1: '#2040c0',
+            mirrorFrame2: '#20c040',
+            shimmer: '#ffffff',
+            crack: '#ff4040'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let restart = false;
+        let mirrorSelected = null;
+        let mirrorShimmerOffset = 0;
+        
+        // Mirrors
+        const mirrors = [
+            { 
+                x: canvas.width * 0.25,
+                y: canvas.height * 0.5,
+                width: canvas.width * 0.3,
+                height: canvas.height * 0.25,
+                text: "TRUE",
+                color: COLORS.mirror1,
+                frameColor: COLORS.mirrorFrame1,
+                selected: false,
+                correct: true,
+                shimmerPos: 0,
+                shine: 0
+            },
+            { 
+                x: canvas.width * 0.75,
+                y: canvas.height * 0.5,
+                width: canvas.width * 0.3,
+                height: canvas.height * 0.25,
+                text: "FALSE",
+                color: COLORS.mirror2,
+                frameColor: COLORS.mirrorFrame2,
+                selected: false,
+                correct: false,
+                shimmerPos: 0,
+                shine: 0
+            }
+        ];
+        
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        
+        // Sound functions
+        function createBeepSound(frequency, duration, volume) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+                audioContext.close();
+            }, duration);
+        }
+        
+        // Sound effects
+        function playCorrectSound() {
+            createBeepSound(880, 100, 0.3);
+            setTimeout(() => createBeepSound(1320, 200, 0.3), 100);
+        }
+        
+        function playWrongSound() {
+            createBeepSound(220, 200, 0.3);
+            setTimeout(() => createBeepSound(110, 300, 0.3), 200);
+        }
+        
+        function playSelectSound() {
+            createBeepSound(440, 50, 0.2);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            
+            // Draw with a slight pixelation effect
+            const pixelSize = 4;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    const drawWidth = Math.min(pixelSize, width - i);
+                    const drawHeight = Math.min(pixelSize, height - j);
+                    ctx.fillRect(Math.floor(x + i), Math.floor(y + j), drawWidth, drawHeight);
+                }
+            }
+        }
+        
+        function drawMirror(mirror) {
+            // Mirror frame
+            drawPixelRect(
+                mirror.x - mirror.width / 2 - 10, 
+                mirror.y - mirror.height / 2 - 10,
+                mirror.width + 20,
+                mirror.height + 20,
+                mirror.frameColor
+            );
+            
+            // Mirror surface
+            drawPixelRect(
+                mirror.x - mirror.width / 2, 
+                mirror.y - mirror.height / 2,
+                mirror.width,
+                mirror.height,
+                mirror.color
+            );
+            
+            // Shimmer effect
+            if (!mirror.selected) {
+                const shimmerWidth = mirror.width * 0.2;
+                mirror.shimmerPos = (mirror.shimmerPos + 0.5) % (mirror.width * 1.5);
+                
+                // Draw shimmer
+                ctx.fillStyle = COLORS.shimmer;
+                ctx.globalAlpha = 0.3;
+                for (let i = 0; i < shimmerWidth; i += 4) {
+                    const xPos = mirror.x - mirror.width / 2 + mirror.shimmerPos - shimmerWidth + i;
+                    if (xPos > mirror.x - mirror.width / 2 && xPos < mirror.x + mirror.width / 2) {
+                        const height = Math.sin((i / shimmerWidth) * Math.PI) * mirror.height * 0.7;
+                        drawPixelRect(
+                            xPos,
+                            mirror.y - height / 2,
+                            4,
+                            height,
+                            COLORS.shimmer
+                        );
+                    }
+                }
+                ctx.globalAlpha = 1.0;
+            }
+            
+            // Shine effect (when correct)
+            if (mirror.selected && mirror.correct && mirror.shine < 1) {
+                mirror.shine += 0.05;
+                ctx.fillStyle = COLORS.shimmer;
+                ctx.globalAlpha = mirror.shine;
+                drawPixelRect(
+                    mirror.x - mirror.width / 2,
+                    mirror.y - mirror.height / 2,
+                    mirror.width,
+                    mirror.height,
+                    COLORS.shimmer
+                );
+                ctx.globalAlpha = 1.0;
+            }
+            
+            // Crack effect (when wrong)
+            if (mirror.selected && !mirror.correct) {
+                ctx.strokeStyle = COLORS.crack;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                
+                // Create a zigzag crack pattern
+                const startX = mirror.x - mirror.width * 0.3;
+                const startY = mirror.y - mirror.height * 0.3;
+                ctx.moveTo(startX, startY);
+                
+                ctx.lineTo(startX + 20, startY + 30);
+                ctx.lineTo(startX + 10, startY + 50);
+                ctx.lineTo(startX + 40, startY + 70);
+                ctx.lineTo(startX + 20, startY + 100);
+                
+                ctx.stroke();
+                
+                // Second crack
+                ctx.beginPath();
+                const startX2 = mirror.x + mirror.width * 0.1;
+                const startY2 = mirror.y - mirror.height * 0.4;
+                ctx.moveTo(startX2, startY2);
+                
+                ctx.lineTo(startX2 - 15, startY2 + 25);
+                ctx.lineTo(startX2 + 20, startY2 + 50);
+                ctx.lineTo(startX2 - 5, startY2 + 80);
+                
+                ctx.stroke();
+            }
+            
+            // Mirror text
+            ctx.fillStyle = mirror.frameColor;
+            ctx.font = `bold ${Math.floor(mirror.width * 0.2)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(mirror.text, mirror.x, mirror.y);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 16 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Word wrap for the question
+            const maxWidth = canvas.width * 0.8;
+            const words = question.split(' ');
+            let line = '';
+            let lines = [];
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw each line
+            const lineHeight = isMobile ? 24 : 32;
+            const startY = canvas.height * 0.25 - (lines.length * lineHeight / 2);
+            
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(lines[i], canvas.width / 2, startY + (i * lineHeight));
+            }
+        }
+        
+        function drawRestartButton() {
+            if (gameOver) {
+                const buttonWidth = canvas.width * 0.3;
+                const buttonHeight = canvas.height * 0.08;
+                const buttonX = canvas.width / 2 - buttonWidth / 2;
+                const buttonY = canvas.height * 0.75;
+                
+                // Button
+                drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, COLORS.mirrorFrame1);
+                
+                // Text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('RESTART', canvas.width / 2, buttonY + buttonHeight / 2);
+                
+                // Store button coordinates for click detection
+                restart = {
+                    x: buttonX,
+                    y: buttonY,
+                    width: buttonWidth,
+                    height: buttonHeight
+                };
+            }
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Update shimmer position
+                mirrorShimmerOffset = (mirrorShimmerOffset + 1) % 100;
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw mirrors
+            mirrors.forEach(drawMirror);
+            
+            // Draw restart button if game is over
+            drawRestartButton();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (restart && 
+                    x >= restart.x && 
+                    x <= restart.x + restart.width &&
+                    y >= restart.y && 
+                    y <= restart.y + restart.height) {
+                    // Reset the game
+                    gameOver = false;
+                    mirrors.forEach(mirror => {
+                        mirror.selected = false;
+                        mirror.shine = 0;
+                    });
+                    playSelectSound();
+                }
+            } else {
+                // Check if a mirror was clicked
+                mirrors.forEach(mirror => {
+                    if (x >= mirror.x - mirror.width / 2 &&
+                        x <= mirror.x + mirror.width / 2 &&
+                        y >= mirror.y - mirror.height / 2 &&
+                        y <= mirror.y + mirror.height / 2) {
+                        
+                        mirror.selected = true;
+                        gameOver = true;
+                        
+                        if (mirror.correct) {
+                            playCorrectSound();
+                        } else {
+                            playWrongSound();
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

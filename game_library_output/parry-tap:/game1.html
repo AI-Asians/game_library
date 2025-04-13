@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Parry-Tap Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            touch-action: manipulation;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #555;
+            color: white;
+            border: none;
+            cursor: pointer;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let gameOver = false;
+        let result = null; // null = in progress, true = correct, false = incorrect
+        let screenShake = 0;
+        let gameTime = 0;
+        
+        // Define colors - limited 8-bit style palette
+        const COLORS = {
+            background: '#0a1635',
+            player: '#4a90ff',
+            true: '#3fcc5c',
+            false: '#ff5367',
+            sword: '#f8f8f8',
+            text: '#ffffff',
+            impact: '#ffde59'
+        };
+        
+        // Player character
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            size: isMobile ? 25 : 40,
+            swordAngle: 0,
+            swordLength: isMobile ? 30 : 50,
+            swordWidth: isMobile ? 6 : 10,
+            isParrying: false,
+            parryTime: 0,
+            parryDuration: 15,
+            hitObjects: []
+        };
+        
+        // Answer objects
+        const objects = [
+            {
+                text: 'TRUE',
+                isCorrect: false, // The Great Wall is NOT visible from space
+                x: canvas.width * 0.25,
+                y: -50,
+                size: isMobile ? 30 : 45,
+                speedX: Math.random() * 1 - 0.5,
+                speedY: 2 + Math.random() * 1.5,
+                color: COLORS.true,
+                hit: false,
+                spinSpeed: 0.05
+            },
+            {
+                text: 'FALSE',
+                isCorrect: true, // This is the correct answer
+                x: canvas.width * 0.75,
+                y: -150,
+                size: isMobile ? 30 : 45,
+                speedX: Math.random() * 1 - 0.5,
+                speedY: 3 + Math.random() * 1.5,
+                color: COLORS.false,
+                hit: false,
+                spinSpeed: 0.05
+            }
+        ];
+        
+        // Simple particle system for impact effects
+        const particles = [];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'swing':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(200, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Creates particles for hit effect
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x,
+                    y,
+                    size: 3 + Math.random() * 4,
+                    speedX: (Math.random() - 0.5) * 8,
+                    speedY: (Math.random() - 0.5) * 8,
+                    color,
+                    life: 20 + Math.random() * 10
+                });
+            }
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            
+            // Draw as a series of pixel "blocks" for 8-bit feel
+            const pixelSize = 2;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    if (i + pixelSize <= width && j + pixelSize <= height) {
+                        ctx.fillRect(
+                            Math.floor(x + i), 
+                            Math.floor(y + j),
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw diamond shape for objects
+        function drawDiamond(x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x, y - size);
+            ctx.lineTo(x + size, y);
+            ctx.lineTo(x, y + size);
+            ctx.lineTo(x - size, y);
+            ctx.closePath();
+            ctx.fill();
+            
+            // 8-bit style highlighting
+            ctx.strokeStyle = lightenColor(color, 30);
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x, y - size);
+            ctx.lineTo(x + size, y);
+            ctx.stroke();
+            
+            // 8-bit style shadow
+            ctx.strokeStyle = darkenColor(color, 30);
+            ctx.beginPath();
+            ctx.moveTo(x + size, y);
+            ctx.lineTo(x, y + size);
+            ctx.lineTo(x - size, y);
+            ctx.lineTo(x, y - size);
+            ctx.stroke();
+        }
+        
+        // Helper functions for color manipulation
+        function lightenColor(color, percent) {
+            const num = parseInt(color.slice(1), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.min(255, (num >> 16) + amt);
+            const G = Math.min(255, (num >> 8 & 0x00FF) + amt);
+            const B = Math.min(255, (num & 0x0000FF) + amt);
+            return `#${(1 << 24 | R << 16 | G << 8 | B).toString(16).slice(1)}`;
+        }
+        
+        function darkenColor(color, percent) {
+            const num = parseInt(color.slice(1), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.max(0, (num >> 16) - amt);
+            const G = Math.max(0, (num >> 8 & 0x00FF) - amt);
+            const B = Math.max(0, (num & 0x0000FF) - amt);
+            return `#${(1 << 24 | R << 16 | G << 8 | B).toString(16).slice(1)}`;
+        }
+        
+        // Draw player character
+        function drawPlayer() {
+            const shakeX = screenShake ? (Math.random() - 0.5) * screenShake : 0;
+            const shakeY = screenShake ? (Math.random() - 0.5) * screenShake : 0;
+            
+            // Draw player body
+            drawPixelRect(
+                player.x - player.size/2 + shakeX, 
+                player.y - player.size/2 + shakeY, 
+                player.size, 
+                player.size, 
+                COLORS.player
+            );
+            
+            // Draw sword/shield
+            const swordAngle = player.isParrying 
+                ? Math.PI / 2 + Math.sin(player.parryTime * 0.4) * 2 
+                : Math.PI/2;
+                
+            const swordX = player.x + Math.cos(swordAngle) * player.swordLength/2;
+            const swordY = player.y + Math.sin(swordAngle) * player.swordLength/2;
+            
+            ctx.save();
+            ctx.translate(player.x + shakeX, player.y + shakeY);
+            ctx.rotate(swordAngle);
+            drawPixelRect(
+                0, 
+                -player.swordLength/2, 
+                player.swordWidth, 
+                player.swordLength, 
+                COLORS.sword
+            );
+            ctx.restore();
+            
+            // Draw hand
+            ctx.fillStyle = lightenColor(COLORS.player, 20);
+            ctx.beginPath();
+            ctx.arc(
+                player.x + Math.cos(swordAngle) * player.size/2 + shakeX,
+                player.y + Math.sin(swordAngle) * player.size/2 + shakeY, 
+                player.size/5, 0, Math.PI * 2
+            );
+            ctx.fill();
+        }
+        
+        // Draw answer objects
+        function drawObjects() {
+            objects.forEach(obj => {
+                if (obj.hit) return;
+                
+                // Rotate object
+                ctx.save();
+                ctx.translate(obj.x, obj.y);
+                ctx.rotate(gameTime * obj.spinSpeed);
+                
+                // Draw diamond shape
+                drawDiamond(0, 0, obj.size, obj.color);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `bold ${obj.size * 0.4}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(obj.text, 0, 0);
+                
+                ctx.restore();
+            });
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+            });
+        }
+        
+        // Draw background
+        function drawBackground() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw some pixelated stars
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 20; i++) {
+                const x = (Math.sin(i * 3547 + gameTime * 0.01) * 0.5 + 0.5) * canvas.width;
+                const y = (Math.cos(i * 2347 + gameTime * 0.02) * 0.5 + 0.5) * canvas.height;
+                const size = 1 + Math.floor(Math.sin(gameTime * 0.1 + i) + 1);
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '16px sans-serif' : '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            
+            const question = "The Great Wall of China is visible from space.";
+            const textX = canvas.width / 2;
+            const textY = 20;
+            
+            // Draw text with slight shadow for better visibility
+            ctx.fillStyle = '#000000';
+            ctx.fillText(question, textX + 2, textY + 2);
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText(question, textX, textY);
+        }
+        
+        // Draw the result
+        function drawResult() {
+            if (result !== null) {
+                const resultText = result ? "Correct!" : "Incorrect!";
+                
+                ctx.fillStyle = result ? COLORS.true : COLORS.false;
+                ctx.font = 'bold 32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(resultText, canvas.width / 2, canvas.height / 2);
+                
+                // Show restart button
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Check collision between sword and object
+        function checkCollision(obj) {
+            if (!player.isParrying || obj.hit) return false;
+            
+            // Calculate sword tip position
+            const swordAngle = Math.PI / 2 + Math.sin(player.parryTime * 0.4) * 2;
+            const swordTipX = player.x + Math.cos(swordAngle) * player.swordLength;
+            const swordTipY = player.y + Math.sin(swordAngle) * player.swordLength;
+            
+            // Check distance between sword tip and object
+            const dx = obj.x - swordTipX;
+            const dy = obj.y - swordTipY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            return distance < obj.size + player.swordWidth;
+        }
+        
+        // Update game state
+        function update() {
+            gameTime++;
+            
+            // Decrease screen shake
+            if (screenShake > 0) {
+                screenShake *= 0.8;
+                if (screenShake < 0.5) screenShake = 0;
+            }
+            
+            // Update player parry state
+            if (player.isParrying) {
+                player.parryTime++;
+                if (player.parryTime >= player.parryDuration) {
+                    player.isParrying = false;
+                    player.parryTime = 0;
+                }
+            }
+            
+            // Move objects
+            objects.forEach(obj => {
+                if (!obj.hit) {
+                    obj.y += obj.speedY;
+                    obj.x += obj.speedX;
+                    
+                    // Bounce off walls
+                    if (obj.x < obj.size || obj.x > canvas.width - obj.size) {
+                        obj.speedX *= -1;
+                    }
+                    
+                    // Check if out of bounds
+                    if (obj.y > canvas.height + obj.size) {
+                        // Object reached bottom without being hit
+                        if (obj.isCorrect) {
+                            // Player missed the correct answer
+                            result = false;
+                            gameOver = true;
+                            playSound('incorrect');
+                        }
+                    }
+                    
+                    // Check collision with player sword
+                    if (checkCollision(obj)) {
+                        obj.hit = true;
+                        player.hitObjects.push(obj);
+                        
+                        // Create particle effect
+                        createParticles(obj.x, obj.y, obj.color, 20);
+                        
+                        // Apply screen shake
+                        screenShake = 10;
+                        
+                        // Play sound
+                        if (obj.isCorrect) {
+                            playSound('correct');
+                            result = true;
+                        } else {
+                            playSound('incorrect');
+                            result = false;
+                        }
+                        
+                        gameOver = true;
+                    }
+                }
+            });
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                // Remove dead particles
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            drawBackground();
+            drawQuestion();
+            drawObjects();
+            drawPlayer();
+            drawParticles();
+            drawResult();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            if (!gameOver) {
+                update();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle player input
+        function handleInput(e) {
+            e.preventDefault();
+            if (gameOver) return;
+            
+            if (!player.isParrying) {
+                player.isParrying = true;
+                player.parryTime = 0;
+                playSound('swing');
+            }
+        }
+        
+        // Restart the game
+        function restartGame() {
+            gameOver = false;
+            result = null;
+            screenShake = 0;
+            player.isParrying = false;
+            player.parryTime = 0;
+            player.hitObjects = [];
+            
+            // Reset objects
+            objects.forEach((obj, i) => {
+                obj.x = canvas.width * (i === 0 ? 0.25 : 0.75);
+                obj.y = -50 - i * 100;
+                obj.speedY = 2 + Math.random() * 1.5;
+                obj.speedX = Math.random() * 1 - 0.5;
+                obj.hit = false;
+            });
+            
+            // Clear particles
+            particles.length = 0;
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleInput);
+        canvas.addEventListener('touchstart', handleInput);
+        restartBtn.addEventListener('click', restartGame);
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

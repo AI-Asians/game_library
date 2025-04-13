@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital of France - Balance Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+            border: 4px solid #555;
+        }
+        #restart-btn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: 2px solid #888;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart-btn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart-btn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors
+        const COLORS = {
+            background: '#5590cc',
+            platform: '#8b572a',
+            platformLines: '#704016',
+            targetZone: '#44cc44',
+            correctAnswer: '#ffff00',
+            wrongAnswer: '#ff6666',
+            text: '#ffffff',
+            shadow: '#111111',
+            particles: ['#ffcc00', '#ff9900', '#ff6600', '#ff3300']
+        };
+        
+        // Game state
+        let gameState = {
+            platformAngle: 0,
+            platformTargetAngle: 0,
+            platformX: canvas.width / 2,
+            platformY: canvas.height - 150,
+            platformWidth: canvas.width * 0.8,
+            platformHeight: 20,
+            mouseX: canvas.width / 2,
+            targetZoneWidth: 60,
+            balanceTime: 0,
+            requiredBalanceTime: 3,
+            gameOver: false,
+            gameWon: false,
+            particles: [],
+            shakeMagnitude: 0,
+            shakeDecay: 0.9,
+            offsets: [0, 0]
+        };
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "London", correct: false, x: 0, y: 0, width: 0, offset: -0.6 },
+            { text: "Paris", correct: true, x: 0, y: 0, width: 0, offset: 0 },
+            { text: "Berlin", correct: false, x: 0, y: 0, width: 0, offset: 0.6 }
+        ];
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Create a sound
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Handle input
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            gameState.mouseX = ((e.clientX - rect.left) / rect.width) * canvas.width;
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            gameState.mouseX = ((e.touches[0].clientX - rect.left) / rect.width) * canvas.width;
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            gameState = {
+                platformAngle: 0,
+                platformTargetAngle: 0,
+                platformX: canvas.width / 2,
+                platformY: canvas.height - 150,
+                platformWidth: canvas.width * 0.8,
+                platformHeight: 20,
+                mouseX: canvas.width / 2,
+                targetZoneWidth: 60,
+                balanceTime: 0,
+                requiredBalanceTime: 3,
+                gameOver: false,
+                gameWon: false,
+                particles: [],
+                shakeMagnitude: 0,
+                shakeDecay: 0.9,
+                offsets: [0, 0]
+            };
+            restartBtn.style.display = 'none';
+        });
+        
+        // Create pixels for 8-bit style
+        function drawPixelRect(x, y, width, height, color) {
+            const pixelSize = 2;
+            x = Math.floor(x / pixelSize) * pixelSize;
+            y = Math.floor(y / pixelSize) * pixelSize;
+            width = Math.floor(width / pixelSize) * pixelSize;
+            height = Math.floor(height / pixelSize) * pixelSize;
+            
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+        }
+        
+        // Draw 8-bit text
+        function drawPixelText(text, x, y, color, size = 16, align = 'center') {
+            ctx.save();
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = align;
+            ctx.fillStyle = COLORS.shadow;
+            ctx.fillText(text, x + 2, y + 2);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+        
+        // Draw the platform
+        function drawPlatform() {
+            ctx.save();
+            ctx.translate(gameState.platformX, gameState.platformY);
+            ctx.rotate(gameState.platformAngle);
+            
+            // Platform
+            drawPixelRect(-gameState.platformWidth / 2, -gameState.platformHeight / 2, 
+                          gameState.platformWidth, gameState.platformHeight, COLORS.platform);
+            
+            // Platform grid lines
+            const lineSpacing = 20;
+            for (let i = -gameState.platformWidth / 2; i < gameState.platformWidth / 2; i += lineSpacing) {
+                drawPixelRect(i, -gameState.platformHeight / 2, 2, gameState.platformHeight, COLORS.platformLines);
+            }
+            
+            // Target zone
+            drawPixelRect(-gameState.targetZoneWidth / 2, -gameState.platformHeight / 2 - 5, 
+                          gameState.targetZoneWidth, gameState.platformHeight + 10, COLORS.targetZone);
+            
+            // Draw answer blocks
+            answers.forEach(answer => {
+                const xPos = (gameState.platformWidth * answer.offset);
+                const blockWidth = 80;
+                const blockHeight = 40;
+                
+                answer.x = xPos;
+                answer.y = -blockHeight - gameState.platformHeight / 2;
+                answer.width = blockWidth;
+                
+                // Draw block
+                drawPixelRect(xPos - blockWidth / 2, -blockHeight - gameState.platformHeight / 2, 
+                              blockWidth, blockHeight, answer.correct ? COLORS.correctAnswer : COLORS.wrongAnswer);
+                
+                // Draw text
+                ctx.save();
+                ctx.translate(xPos, -gameState.platformHeight / 2 - blockHeight / 2);
+                ctx.rotate(-gameState.platformAngle);
+                drawPixelText(answer.text, 0, 6, '#000000', 14);
+                ctx.restore();
+            });
+            
+            ctx.restore();
+        }
+        
+        // Draw background
+        function drawBackground() {
+            // Sky
+            drawPixelRect(0, 0, canvas.width, canvas.height, COLORS.background);
+            
+            // Background pattern
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            for (let x = 0; x < canvas.width; x += 16) {
+                for (let y = 0; y < canvas.height; y += 16) {
+                    if ((x + y) % 32 === 0) {
+                        ctx.fillRect(x, y, 8, 8);
+                    }
+                }
+            }
+            
+            // Platform base
+            drawPixelRect(gameState.platformX - 20, gameState.platformY, 40, 100, '#6b4726');
+            
+            // Question
+            drawPixelText(question, canvas.width / 2, 60, COLORS.text, 24);
+        }
+        
+        // Update the platform angle based on mouse position
+        function updatePlatform() {
+            // Mouse influence
+            const mouseDiff = gameState.mouseX - gameState.platformX;
+            const normalizedDiff = mouseDiff / (canvas.width / 2);
+            gameState.platformTargetAngle = normalizedDiff * 0.4;
+            
+            // Apply physics
+            gameState.platformAngle += (gameState.platformTargetAngle - gameState.platformAngle) * 0.1;
+            
+            // Limit angle
+            const maxAngle = 0.8;
+            if (gameState.platformAngle > maxAngle) {
+                gameState.platformAngle = maxAngle;
+                if (!gameState.gameOver) {
+                    gameState.shakeMagnitude = 5;
+                    playSound(100, 0.2);
+                }
+            } else if (gameState.platformAngle < -maxAngle) {
+                gameState.platformAngle = -maxAngle;
+                if (!gameState.gameOver) {
+                    gameState.shakeMagnitude = 5;
+                    playSound(100, 0.2);
+                }
+            }
+            
+            // Check game over
+            if (Math.abs(gameState.platformAngle) > 0.7 && !gameState.gameOver) {
+                gameState.gameOver = true;
+                playSound(80, 0.5);
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Check if correct answer is in the target zone
+        function checkBalance() {
+            if (gameState.gameOver) return;
+            
+            // Find correct answer position in world coordinates
+            const correctAnswer = answers.find(a => a.correct);
+            const answerWorldX = Math.cos(gameState.platformAngle) * correctAnswer.x - 
+                                Math.sin(gameState.platformAngle) * correctAnswer.y + gameState.platformX;
+            
+            // Check if it's centered
+            const centered = Math.abs(answerWorldX - gameState.platformX) < gameState.targetZoneWidth / 2;
+            
+            if (centered && Math.abs(gameState.platformAngle) < 0.2) {
+                gameState.balanceTime += 1/60;
+                
+                // Success feedback
+                if (gameState.balanceTime % 0.5 < 0.1) {
+                    playSound(330, 0.1, 'sine');
+                }
+                
+                if (gameState.balanceTime >= gameState.requiredBalanceTime) {
+                    gameState.gameWon = true;
+                    gameState.gameOver = true;
+                    playSound(440, 0.1);
+                    playSound(550, 0.2);
+                    playSound(660, 0.3);
+                    createParticles(answerWorldX, gameState.platformY - 30, 20);
+                    restartBtn.style.display = 'block';
+                }
+            } else {
+                gameState.balanceTime = 0;
+            }
+        }
+        
+        // Create particles
+        function createParticles(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: -Math.random() * 8,
+                    size: 4 + Math.random() * 4,
+                    color: COLORS.particles[Math.floor(Math.random() * COLORS.particles.length)],
+                    life: 1
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.2; // Gravity
+                p.life -= 0.02;
+                
+                if (p.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            gameState.particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                drawPixelRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size, p.color);
+                ctx.globalAlpha = 1;
+            });
+        }
+        
+        // Draw progress meter
+        function drawProgressMeter() {
+            if (gameState.gameOver) return;
+            
+            const meterWidth = 200;
+            const meterHeight = 15;
+            const x = canvas.width / 2 - meterWidth / 2;
+            const y = 100;
+            
+            // Background
+            drawPixelRect(x, y, meterWidth, meterHeight, 'rgba(0,0,0,0.3)');
+            
+            // Progress
+            const progress = gameState.balanceTime / gameState.requiredBalanceTime;
+            drawPixelRect(x, y, meterWidth * progress, meterHeight, '#44ff44');
+            
+            // Border
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, meterWidth, meterHeight);
+        }
+        
+        // Update screen shake
+        function updateScreenShake() {
+            if (gameState.shakeMagnitude > 0.1) {
+                gameState.offsets = [
+                    (Math.random() - 0.5) * gameState.shakeMagnitude,
+                    (Math.random() - 0.5) * gameState.shakeMagnitude
+                ];
+                gameState.shakeMagnitude *= gameState.shakeDecay;
+            } else {
+                gameState.shakeMagnitude = 0;
+                gameState.offsets = [0, 0];
+            }
+        }
+        
+        // Draw game over message
+        function drawGameResult() {
+            if (!gameState.gameOver) return;
+            
+            let message = gameState.gameWon ? "Correct!" : "Try Again!";
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawPixelText(message, canvas.width / 2, canvas.height / 2, 
+                          gameState.gameWon ? '#44ff44' : '#ff4444', 36);
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply screen shake
+            ctx.save();
+            ctx.translate(gameState.offsets[0], gameState.offsets[1]);
+            
+            // Draw game
+            drawBackground();
+            drawPlatform();
+            drawParticles();
+            drawProgressMeter();
+            
+            // Game logic
+            if (!gameState.gameOver) {
+                updatePlatform();
+                checkBalance();
+            }
+            
+            updateParticles();
+            updateScreenShake();
+            
+            // Draw game over if necessary
+            drawGameResult();
+            
+            ctx.restore();
+            
+            // Continue loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

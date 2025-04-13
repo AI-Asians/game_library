@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Quiz - Conveyor Tap Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors - 8-bit palette
+        const COLORS = {
+            background: '#0f380f',
+            conveyor: '#8bac0f',
+            conveyorDark: '#306230',
+            hitZone: '#9bbc0f',
+            text: '#ffffff',
+            correct: '#0f8700',
+            incorrect: '#e40058',
+            option1: '#d13b27', // Mars (red)
+            option2: '#3f51b5', // Neptune (blue)
+            option3: '#e6ba3c', // Venus (yellow) 
+            option4: '#808080'  // Mercury (gray)
+        };
+
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        let restartButton = { x: canvas.width/2-60, y: canvas.height/2+60, width: 120, height: 40 };
+        
+        // Create options
+        const options = [
+            { text: "Mars", correct: true, color: COLORS.option1, planetSize: 20 },
+            { text: "Neptune", correct: false, color: COLORS.option2, planetSize: 25 },
+            { text: "Venus", correct: false, color: COLORS.option3, planetSize: 18 },
+            { text: "Mercury", correct: false, color: COLORS.option4, planetSize: 15 }
+        ];
+        
+        // Shuffle options
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+        
+        shuffleArray(options);
+        
+        // Conveyor setup
+        const hitZoneWidth = 100;
+        const hitZoneX = canvas.width/2 - hitZoneWidth/2;
+        const optionHeight = 80;
+        const optionWidth = 160;
+        const gapBetweenOptions = 50;
+        
+        // Initialize option positions
+        options.forEach((option, i) => {
+            option.x = -optionWidth - (i * (optionWidth + gapBetweenOptions));
+            option.y = canvas.height/2 - optionHeight/2;
+            option.width = optionWidth;
+            option.height = optionHeight;
+        });
+        
+        // Animation variables
+        let conveyorOffset = 0;
+        let hitZoneFlash = 0;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Generate simple beep sounds
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2), 200); // G5
+        }
+        
+        function playIncorrectSound() {
+            playSound(196.00, 0.2, 'sawtooth'); // G3
+            setTimeout(() => playSound(146.83, 0.3, 'sawtooth'), 200); // D3
+        }
+        
+        function playButtonSound() {
+            playSound(440, 0.1); // A4
+        }
+        
+        // Draw functions
+        function drawPlanet(x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw pixelated craters/details
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            
+            // Different details based on planet color
+            if (color === COLORS.option1) { // Mars
+                // Mars craters
+                ctx.fillRect(x-size/3, y-size/4, size/5, size/5);
+                ctx.fillRect(x+size/4, y+size/4, size/6, size/6);
+            } else if (color === COLORS.option2) { // Neptune
+                // Neptune bands
+                ctx.fillRect(x-size/2, y-size/5, size, size/8);
+                ctx.fillRect(x-size/2, y+size/4, size, size/10);
+            } else if (color === COLORS.option3) { // Venus
+                // Venus clouds
+                ctx.fillRect(x-size/3, y-size/3, size/4, size/4);
+                ctx.fillRect(x+size/6, y, size/3, size/5);
+            } else { // Mercury
+                // Mercury craters
+                ctx.fillRect(x, y-size/3, size/4, size/4);
+                ctx.fillRect(x-size/4, y+size/4, size/5, size/5);
+            }
+        }
+        
+        function drawConveyor() {
+            // Draw conveyor belt
+            ctx.fillStyle = COLORS.conveyor;
+            ctx.fillRect(0, canvas.height/2 + optionHeight/2, canvas.width, 20);
+            
+            // Draw animated rollers
+            const rollerWidth = 30;
+            const rollerGap = 120;
+            ctx.fillStyle = COLORS.conveyorDark;
+            for (let x = conveyorOffset % rollerGap; x < canvas.width; x += rollerGap) {
+                ctx.fillRect(x, canvas.height/2 + optionHeight/2 + 5, rollerWidth, 10);
+            }
+            
+            // Draw hit zone
+            ctx.fillStyle = hitZoneFlash > 0 ? (hitZoneFlash % 2 === 0 ? COLORS.hitZone : '#ffffff') : 'rgba(155, 188, 15, 0.2)';
+            ctx.fillRect(hitZoneX, canvas.height/2 - optionHeight/2 - 10, hitZoneWidth, optionHeight + 40);
+            
+            // Draw hit zone markers
+            ctx.fillStyle = '#ffffff';
+            const markerHeight = 30;
+            ctx.fillRect(hitZoneX, canvas.height/2 - optionHeight/2 - 10, 5, markerHeight);
+            ctx.fillRect(hitZoneX, canvas.height/2 + optionHeight/2 + 20 - markerHeight, 5, markerHeight);
+            ctx.fillRect(hitZoneX + hitZoneWidth - 5, canvas.height/2 - optionHeight/2 - 10, 5, markerHeight);
+            ctx.fillRect(hitZoneX + hitZoneWidth - 5, canvas.height/2 + optionHeight/2 + 20 - markerHeight, 5, markerHeight);
+        }
+        
+        function drawOptions() {
+            options.forEach(option => {
+                // Draw option box
+                ctx.fillStyle = option.color;
+                ctx.fillRect(option.x, option.y, option.width, option.height);
+                
+                // Draw inner box border
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(option.x + 4, option.y + 4, option.width - 8, option.height - 8);
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                ctx.fillRect(option.x + 6, option.y + 6, option.width - 12, option.height - 12);
+                
+                // Draw planet
+                drawPlanet(option.x + 35, option.y + option.height/2, option.planetSize, option.color);
+                
+                // Draw text
+                ctx.fillStyle = '#000';
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, option.x + option.width - 65, option.y + option.height/2 + 6);
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width/2, 60);
+        }
+        
+        function drawGameOver() {
+            // Transparent overlay
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Result text
+            ctx.fillStyle = gameWon ? COLORS.correct : COLORS.incorrect;
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameWon ? 'CORRECT!' : 'WRONG!', canvas.width/2, canvas.height/2 - 20);
+            
+            // Draw restart button
+            ctx.fillStyle = '#444';
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px sans-serif';
+            ctx.fillText('Restart', canvas.width/2, restartButton.y + 25);
+        }
+        
+        function updateGame() {
+            if (!gameOver) {
+                // Move conveyor
+                conveyorOffset += 2;
+                
+                // Flash hit zone (when active)
+                if (hitZoneFlash > 0) {
+                    hitZoneFlash--;
+                }
+                
+                // Move options
+                options.forEach(option => {
+                    option.x += 3;
+                    
+                    // If option goes off screen, reset it to beginning
+                    if (option.x > canvas.width) {
+                        const lastOption = options.reduce((prev, curr) => 
+                            (curr.x < 0 && curr.x > prev.x) ? curr : prev, {x: -1000});
+                        option.x = lastOption.x - optionWidth - gapBetweenOptions;
+                    }
+                });
+            }
+        }
+        
+        function checkCollision(option) {
+            return option.x + option.width >= hitZoneX && 
+                   option.x <= hitZoneX + hitZoneWidth;
+        }
+        
+        function handleClick(e) {
+            // Get click position adjusted for canvas scaling
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (clickX >= restartButton.x && 
+                    clickX <= restartButton.x + restartButton.width && 
+                    clickY >= restartButton.y && 
+                    clickY <= restartButton.y + restartButton.height) {
+                    playButtonSound();
+                    resetGame();
+                }
+            } else {
+                // Check if any option in hit zone was clicked
+                options.forEach(option => {
+                    if (checkCollision(option) && 
+                        clickX >= option.x && 
+                        clickX <= option.x + option.width && 
+                        clickY >= option.y && 
+                        clickY <= option.y + option.height) {
+                        
+                        hitZoneFlash = 10; // Start flashing
+                        
+                        if (option.correct) {
+                            gameWon = true;
+                            playCorrectSound();
+                        } else {
+                            playIncorrectSound();
+                        }
+                        
+                        gameOver = true;
+                    }
+                });
+            }
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            gameWon = false;
+            shuffleArray(options);
+            
+            // Reset option positions
+            options.forEach((option, i) => {
+                option.x = -optionWidth - (i * (optionWidth + gapBetweenOptions));
+            });
+        }
+        
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawConveyor();
+            drawOptions();
+            drawQuestion();
+            
+            // Update game state
+            updateGame();
+            
+            // Draw game over if needed
+            if (gameOver) {
+                drawGameOver();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            handleClick(e.touches[0]);
+        }, {passive: false});
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

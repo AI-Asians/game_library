@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital of France Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas { 
+            border: 4px solid #555; 
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive canvas sizing
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const question = "What is the capital of France?";
+        const answers = ["Paris", "London", "Berlin", "Rome"];
+        const correctAnswerIndex = 0;
+        
+        // Create answer option objects
+        const options = [];
+        const cols = 2;
+        const rows = 2;
+        const optionWidth = canvas.width * 0.35;
+        const optionHeight = canvas.height * 0.2;
+        const xGap = canvas.width * 0.15;
+        const yGap = canvas.height * 0.1;
+        const xStart = (canvas.width - (optionWidth * cols + xGap * (cols - 1))) / 2;
+        const yStart = canvas.height * 0.4;
+        
+        for (let i = 0; i < answers.length; i++) {
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            options.push({
+                x: xStart + col * (optionWidth + xGap),
+                y: yStart + row * (optionHeight + yGap),
+                width: optionWidth,
+                height: optionHeight,
+                text: answers[i],
+                lit: false,
+                hoverGlow: 0
+            });
+        }
+        
+        // Game state
+        let gameActive = true;
+        let gameResult = null; // "win" or "lose"
+        let nextLitIndex = null;
+        let activeLitIndex = null;
+        let lightUpTimer = 0;
+        let lightUpInterval = 1500; // milliseconds
+        let lightUpDuration = 900; // milliseconds
+        let lightUpElapsed = 0;
+        let minInterval = 500; // milliseconds - increases speed
+        let intervalDecrement = 100; // speed up by this amount each cycle
+        
+        // Sound generation
+        function playSound(frequency, duration, type = 'square') {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = 0.2;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function playWinSound() {
+            playSound(523.25, 100); // C5
+            setTimeout(() => playSound(659.25, 100), 100); // E5
+            setTimeout(() => playSound(783.99, 200), 200); // G5
+        }
+        
+        function playLoseSound() {
+            playSound(311.13, 200); // E♭4
+            setTimeout(() => playSound(233.08, 300), 200); // B♭3
+        }
+        
+        function playLightUpSound() {
+            playSound(440, 50, 'sine'); // A4
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPixelText(text, x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, x, y);
+        }
+        
+        // Main draw function
+        function draw() {
+            // Background
+            drawPixelRect(0, 0, canvas.width, canvas.height, "#111");
+            
+            // Draw grid pattern background
+            ctx.fillStyle = "#1a1a2e";
+            for (let x = 0; x < canvas.width; x += 20) {
+                for (let y = 0; y < canvas.height; y += 20) {
+                    if ((x + y) % 40 === 0) {
+                        ctx.fillRect(x, y, 10, 10);
+                    }
+                }
+            }
+            
+            // Draw question
+            drawPixelText(question, canvas.width / 2, canvas.height * 0.2, 28, "#c0c0c0");
+            
+            // Draw answer options
+            options.forEach((option, index) => {
+                // Base colors
+                let bgColor = "#333344";
+                let borderColor = "#555566";
+                let textColor = "#888899";
+                
+                // If this option is lit up
+                if (option.lit) {
+                    bgColor = "#5555ff";
+                    borderColor = "#8888ff";
+                    textColor = "#ffffff";
+                    
+                    // Add neon-like glow
+                    ctx.shadowColor = "#8888ff";
+                    ctx.shadowBlur = 15;
+                } else if (gameResult === "win" && index === correctAnswerIndex) {
+                    // Show correct answer when game is over
+                    bgColor = "#55cc55";
+                    borderColor = "#88ff88";
+                    textColor = "#ffffff";
+                } else if (gameResult === "lose" && index === correctAnswerIndex) {
+                    // Show correct answer when game is over
+                    bgColor = "#55cc55";
+                    borderColor = "#88ff88";
+                    textColor = "#ffffff";
+                } else if (gameResult === "lose" && option.wasWrongSelection) {
+                    bgColor = "#cc5555";
+                    borderColor = "#ff8888";
+                    textColor = "#ffffff";
+                }
+                
+                // Subtle glow for hint
+                if (gameActive && nextLitIndex === index && !option.lit) {
+                    option.hoverGlow = Math.min(option.hoverGlow + 0.02, 0.3);
+                    bgColor = blendColors("#333344", "#5555aa", option.hoverGlow);
+                } else {
+                    option.hoverGlow = Math.max(option.hoverGlow - 0.05, 0);
+                }
+                
+                // Draw option box with 8-bit style (chunky borders)
+                // Main box
+                drawPixelRect(option.x, option.y, option.width, option.height, bgColor);
+                
+                // Thick border
+                const borderSize = 4;
+                drawPixelRect(option.x, option.y, option.width, borderSize, borderColor); // Top
+                drawPixelRect(option.x, option.y + option.height - borderSize, option.width, borderSize, borderColor); // Bottom
+                drawPixelRect(option.x, option.y, borderSize, option.height, borderColor); // Left
+                drawPixelRect(option.x + option.width - borderSize, option.y, borderSize, option.height, borderColor); // Right
+                
+                // Draw text
+                drawPixelText(option.text, option.x + option.width / 2, option.y + option.height / 2, 24, textColor);
+                
+                // Reset shadow
+                ctx.shadowBlur = 0;
+            });
+            
+            // Draw game result or instructions
+            if (gameResult) {
+                const resultText = gameResult === "win" ? "CORRECT!" : "WRONG!";
+                const resultColor = gameResult === "win" ? "#55ff55" : "#ff5555";
+                drawPixelText(resultText, canvas.width / 2, canvas.height * 0.8, 36, resultColor);
+                
+                // Draw restart button
+                const btnWidth = 160;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height * 0.85;
+                
+                // Button background
+                drawPixelRect(btnX, btnY, btnWidth, btnHeight, "#444466");
+                
+                // Button border
+                drawPixelRect(btnX, btnY, btnWidth, 4, "#7777aa");
+                drawPixelRect(btnX, btnY + btnHeight - 4, btnWidth, 4, "#7777aa");
+                drawPixelRect(btnX, btnY, 4, btnHeight, "#7777aa");
+                drawPixelRect(btnX + btnWidth - 4, btnY, 4, btnHeight, "#7777aa");
+                
+                // Button text
+                drawPixelText("RESTART", btnX + btnWidth / 2, btnY + btnHeight / 2, 20, "#ffffff");
+            } else {
+                // Simple instruction
+                drawPixelText("Tap when the correct answer lights up!", canvas.width / 2, canvas.height * 0.85, 18, "#999999");
+            }
+        }
+        
+        function blendColors(color1, color2, ratio) {
+            // Convert hex to RGB
+            const r1 = parseInt(color1.substring(1,3), 16);
+            const g1 = parseInt(color1.substring(3,5), 16);
+            const b1 = parseInt(color1.substring(5,7), 16);
+            
+            const r2 = parseInt(color2.substring(1,3), 16);
+            const g2 = parseInt(color2.substring(3,5), 16);
+            const b2 = parseInt(color2.substring(5,7), 16);
+            
+            // Blend colors
+            const r = Math.round(r1 + (r2 - r1) * ratio);
+            const g = Math.round(g1 + (g2 - g1) * ratio);
+            const b = Math.round(b1 + (b2 - b1) * ratio);
+            
+            // Convert back to hex
+            return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        }
+        
+        // Handle mouse/touch input
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameResult) {
+                // Check if restart button was clicked
+                const btnWidth = 160;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height * 0.85;
+                
+                if (x >= btnX && x <= btnX + btnWidth && y >= btnY && y <= btnY + btnHeight) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            if (!gameActive) return;
+            
+            // Check if any option was clicked
+            let optionClicked = false;
+            options.forEach((option, index) => {
+                if (x >= option.x && x <= option.x + option.width && 
+                    y >= option.y && y <= option.y + option.height) {
+                    optionClicked = true;
+                    
+                    if (activeLitIndex === null) {
+                        // Clicked when nothing lit
+                        gameResult = "lose";
+                        gameActive = false;
+                        option.wasWrongSelection = true;
+                        playLoseSound();
+                    } else if (index === activeLitIndex) {
+                        // Clicked on lit option
+                        if (index === correctAnswerIndex) {
+                            gameResult = "win";
+                            playWinSound();
+                        } else {
+                            gameResult = "lose";
+                            option.wasWrongSelection = true;
+                            playLoseSound();
+                        }
+                        gameActive = false;
+                    } else {
+                        // Clicked on wrong option
+                        gameResult = "lose";
+                        gameActive = false;
+                        option.wasWrongSelection = true;
+                        playLoseSound();
+                    }
+                }
+            });
+        }
+        
+        function resetGame() {
+            gameActive = true;
+            gameResult = null;
+            nextLitIndex = null;
+            activeLitIndex = null;
+            lightUpTimer = 0;
+            lightUpElapsed = 0;
+            lightUpInterval = 1500;
+            
+            options.forEach(option => {
+                option.lit = false;
+                option.wasWrongSelection = false;
+                option.hoverGlow = 0;
+            });
+        }
+        
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            if (gameActive) {
+                lightUpTimer += deltaTime;
+                
+                if (activeLitIndex !== null) {
+                    lightUpElapsed += deltaTime;
+                    
+                    if (lightUpElapsed >= lightUpDuration) {
+                        // Turn off the currently lit option
+                        options[activeLitIndex].lit = false;
+                        activeLitIndex = null;
+                        lightUpElapsed = 0;
+                    }
+                } else if (lightUpTimer >= lightUpInterval) {
+                    lightUpTimer = 0;
+                    lightUpElapsed = 0;
+                    
+                    // Speed up as game progresses
+                    lightUpInterval = Math.max(minInterval, lightUpInterval - intervalDecrement);
+                    
+                    // Randomly select next option to light up
+                    // Make correct answer more likely
+                    const rand = Math.random();
+                    if (rand < 0.4) {
+                        activeLitIndex = correctAnswerIndex; // 40% chance for correct answer
+                    } else {
+                        // Get a random wrong answer
+                        let wrongIndex;
+                        do {
+                            wrongIndex = Math.floor(Math.random() * answers.length);
+                        } while (wrongIndex === correctAnswerIndex);
+                        activeLitIndex = wrongIndex;
+                    }
+                    
+                    options[activeLitIndex].lit = true;
+                    playLightUpSound();
+                    
+                    // Set next hint
+                    setTimeout(() => {
+                        if (gameActive && activeLitIndex === null) {
+                            nextLitIndex = Math.floor(Math.random() * answers.length);
+                            // 60% chance to hint the correct answer
+                            if (Math.random() < 0.6) {
+                                nextLitIndex = correctAnswerIndex;
+                            }
+                        }
+                    }, lightUpInterval * 0.6);
+                }
+            }
+            
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        canvas.addEventListener("click", handleClick);
+        gameLoop(0);
+    </script>
+</body>
+</html>

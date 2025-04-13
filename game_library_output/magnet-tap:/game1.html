@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Magnet True or False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - 8-bit style palette
+        const COLORS = {
+            background: '#0A0A1A',
+            question: '#FFFFFF',
+            targetZone: '#003366',
+            targetGlow: '#0099FF',
+            trueMagnet: '#00CC66',
+            falseMagnet: '#FF5566',
+            trueText: '#003300',
+            falseText: '#330000',
+            correct: '#00FF66',
+            incorrect: '#FF3333',
+            restartBtn: '#555555',
+            restartText: '#FFFFFF',
+            outline: '#FFCC00'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let isCorrect = false;
+        let draggedOption = null;
+        let mouseX = 0;
+        let mouseY = 0;
+        let particles = [];
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        const answer = false; // The correct answer is "False"
+        
+        // Game objects
+        const targetZone = {
+            x: canvas.width / 2,
+            y: canvas.height / 2 - 100,
+            radius: canvas.width / 8,
+            draw() {
+                // Pixelated target zone
+                ctx.save();
+                ctx.fillStyle = COLORS.targetZone;
+                const pixelSize = 4;
+                const baseRadius = this.radius;
+                
+                // Draw pixelated circle
+                for (let y = -baseRadius; y <= baseRadius; y += pixelSize) {
+                    for (let x = -baseRadius; x <= baseRadius; x += pixelSize) {
+                        if (x*x + y*y <= baseRadius*baseRadius) {
+                            ctx.fillRect(
+                                Math.floor((this.x + x) / pixelSize) * pixelSize,
+                                Math.floor((this.y + y) / pixelSize) * pixelSize,
+                                pixelSize, pixelSize
+                            );
+                        }
+                    }
+                }
+                
+                // Draw magnetic field lines (pixelated)
+                if (!gameOver) {
+                    ctx.strokeStyle = COLORS.targetGlow;
+                    ctx.lineWidth = 2;
+                    const time = Date.now() / 300;
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i / 8) * Math.PI * 2 + time % (Math.PI * 2);
+                        const innerRadius = this.radius * 0.5;
+                        const outerRadius = this.radius * 1.3;
+                        
+                        // Pixelated lines
+                        const startX = this.x + Math.cos(angle) * innerRadius;
+                        const startY = this.y + Math.sin(angle) * innerRadius;
+                        const endX = this.x + Math.cos(angle) * outerRadius;
+                        const endY = this.y + Math.sin(angle) * outerRadius;
+                        
+                        drawPixelatedLine(startX, startY, endX, endY, 3);
+                    }
+                }
+                ctx.restore();
+            }
+        };
+        
+        // Magnet options
+        const magnetOptions = [
+            {
+                value: true,
+                x: canvas.width / 4,
+                y: canvas.height * 0.7,
+                width: 80,
+                height: 40,
+                color: COLORS.trueMagnet,
+                textColor: COLORS.trueText,
+                text: "TRUE",
+                velocityX: 0,
+                velocityY: 0
+            },
+            {
+                value: false,
+                x: canvas.width * 3 / 4,
+                y: canvas.height * 0.7,
+                width: 80,
+                height: 40,
+                color: COLORS.falseMagnet,
+                textColor: COLORS.falseText,
+                text: "FALSE",
+                velocityX: 0,
+                velocityY: 0
+            }
+        ];
+        
+        // Restart button
+        const restartBtn = {
+            x: canvas.width / 2,
+            y: canvas.height * 0.85,
+            width: 120,
+            height: 40,
+            visible: false,
+            draw() {
+                if (!this.visible) return;
+                
+                // Pixelated button
+                ctx.fillStyle = COLORS.restartBtn;
+                // Outer shape (pixelated rectangle)
+                drawPixelatedRect(
+                    this.x - this.width/2, 
+                    this.y - this.height/2, 
+                    this.width, 
+                    this.height, 
+                    4
+                );
+                
+                // Text
+                ctx.fillStyle = COLORS.restartText;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('RESTART', this.x, this.y);
+            },
+            isClicked(x, y) {
+                return this.visible && 
+                    x >= this.x - this.width/2 && 
+                    x <= this.x + this.width/2 && 
+                    y >= this.y - this.height/2 && 
+                    y <= this.y + this.height/2;
+            }
+        };
+        
+        // Helper functions
+        function drawPixelatedRect(x, y, width, height, pixelSize) {
+            for (let py = 0; py < height; py += pixelSize) {
+                for (let px = 0; px < width; px += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x / pixelSize) * pixelSize + px,
+                        Math.floor(y / pixelSize) * pixelSize + py,
+                        pixelSize, pixelSize
+                    );
+                }
+            }
+        }
+        
+        function drawPixelatedLine(x1, y1, x2, y2, pixelSize) {
+            const dx = Math.abs(x2 - x1);
+            const dy = Math.abs(y2 - y1);
+            const sx = x1 < x2 ? pixelSize : -pixelSize;
+            const sy = y1 < y2 ? pixelSize : -pixelSize;
+            let err = dx - dy;
+            
+            while (true) {
+                ctx.fillRect(
+                    Math.floor(x1 / pixelSize) * pixelSize,
+                    Math.floor(y1 / pixelSize) * pixelSize,
+                    pixelSize, pixelSize
+                );
+                
+                if (Math.abs(x1 - x2) < pixelSize && Math.abs(y1 - y2) < pixelSize) break;
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x1 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y1 += sy;
+                }
+            }
+        }
+        
+        function drawPixelatedMagnet(magnet) {
+            ctx.save();
+            
+            // Main body
+            ctx.fillStyle = magnet.color;
+            drawPixelatedRect(
+                magnet.x - magnet.width/2, 
+                magnet.y - magnet.height/2, 
+                magnet.width, 
+                magnet.height, 
+                4
+            );
+            
+            // North/South poles
+            ctx.fillStyle = '#FFFFFF';
+            drawPixelatedRect(
+                magnet.x - magnet.width/2, 
+                magnet.y - magnet.height/2, 
+                magnet.width/4, 
+                magnet.height, 
+                3
+            );
+            
+            ctx.fillStyle = '#000000';
+            drawPixelatedRect(
+                magnet.x + magnet.width/4, 
+                magnet.y - magnet.height/2, 
+                magnet.width/4, 
+                magnet.height, 
+                3
+            );
+            
+            // Text
+            ctx.fillStyle = magnet.textColor;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(magnet.text, magnet.x, magnet.y);
+            
+            ctx.restore();
+        }
+        
+        function distance(x1, y1, x2, y2) {
+            return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+        }
+        
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                const size = 2 + Math.random() * 4;
+                
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    color: color,
+                    size: size,
+                    life: 20 + Math.random() * 20
+                });
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x / 3) * 3,
+                    Math.floor(p.y / 3) * 3,
+                    p.size, p.size
+                );
+            });
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                switch(type) {
+                    case 'pickup':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(440, audioContext.currentTime + 0.1);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.2);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                        break;
+                    case 'correct':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                        oscillator.frequency.setValueAtTime(550, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                    case 'incorrect':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                        oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                }
+            } catch (e) {
+                console.log("Audio not supported");
+            }
+        }
+        
+        // Event handlers
+        function handleMouseDown(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (restartBtn.isClicked(x, y)) {
+                restartGame();
+                return;
+            }
+            
+            if (gameOver) return;
+            
+            magnetOptions.forEach(magnet => {
+                if (x >= magnet.x - magnet.width/2 && 
+                    x <= magnet.x + magnet.width/2 && 
+                    y >= magnet.y - magnet.height/2 && 
+                    y <= magnet.y + magnet.height/2) {
+                    draggedOption = magnet;
+                    playSound('pickup');
+                    createParticles(magnet.x, magnet.y, magnet.color, 10);
+                }
+            });
+        }
+        
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            mouseX = (e.clientX - rect.left) * scaleX;
+            mouseY = (e.clientY - rect.top) * scaleY;
+        }
+        
+        function handleMouseUp() {
+            if (!draggedOption || gameOver) return;
+            
+            // Check if dropped in target zone
+            if (distance(draggedOption.x, draggedOption.y, targetZone.x, targetZone.y) < targetZone.radius) {
+                isCorrect = draggedOption.value === answer;
+                gameOver = true;
+                restartBtn.visible = true;
+                
+                if (isCorrect) {
+                    playSound('correct');
+                    createParticles(targetZone.x, targetZone.y, COLORS.correct, 30);
+                } else {
+                    playSound('incorrect');
+                    createParticles(targetZone.x, targetZone.y, COLORS.incorrect, 30);
+                }
+            }
+            
+            draggedOption = null;
+        }
+        
+        // Touch handlers (for mobile)
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            handleMouseDown(mouseEvent);
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            handleMouseMove(mouseEvent);
+        }
+        
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            handleMouseUp();
+        }
+        
+        // Game loop
+        function update() {
+            // Update magnet positions and apply forces
+            magnetOptions.forEach(magnet => {
+                if (magnet === draggedOption) {
+                    // Add magnetic "wobble" effect
+                    const dx = mouseX - magnet.x;
+                    const dy = mouseY - magnet.y;
+                    const dist = Math.max(1, Math.sqrt(dx*dx + dy*dy));
+                    
+                    // This creates the 8-bit stepped movement
+                    const step = Math.min(12, dist * 0.3);
+                    const angle = Math.atan2(dy, dx);
+                    
+                    magnet.velocityX = Math.cos(angle) * step;
+                    magnet.velocityY = Math.sin(angle) * step;
+                    
+                    // Round to create the pixelated movement feel
+                    magnet.x += Math.round(magnet.velocityX / 4) * 4;
+                    magnet.y += Math.round(magnet.velocityY / 4) * 4;
+                    
+                    // Add small random wobble
+                    if (Math.random() < 0.3) {
+                        magnet.x += (Math.random() - 0.5) * 6;
+                        magnet.y += (Math.random() - 0.5) * 6;
+                    }
+                    
+                    // Create particles occasionally
+                    if (Math.random() < 0.1) {
+                        createParticles(magnet.x, magnet.y, magnet.color, 2);
+                    }
+                }
+                
+                // Apply repulsion between magnets
+                magnetOptions.forEach(otherMagnet => {
+                    if (magnet !== otherMagnet) {
+                        const dx = otherMagnet.x - magnet.x;
+                        const dy = otherMagnet.y - magnet.y;
+                        const dist = Math.max(1, Math.sqrt(dx*dx + dy*dy));
+                        
+                        if (dist < 100) { // Repulsion distance
+                            const force = 20 / (dist * dist);
+                            const angle = Math.atan2(dy, dx);
+                            
+                            if (magnet !== draggedOption) {
+                                magnet.x -= Math.cos(angle) * force;
+                                magnet.y -= Math.sin(angle) * force;
+                            }
+                        }
+                    }
+                });
+                
+                // Apply attraction to the target zone if close
+                if (!gameOver && magnet === draggedOption) {
+                    const dx = targetZone.x - magnet.x;
+                    const dy = targetZone.y - magnet.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < targetZone.radius * 2) {
+                        const force = (targetZone.radius * 2 - dist) * 0.02;
+                        const angle = Math.atan2(dy, dx);
+                        
+                        magnet.x += Math.cos(angle) * force;
+                        magnet.y += Math.sin(angle) * force;
+                        
+                        // Create attraction particles
+                        if (Math.random() < 0.2) {
+                            createParticles(
+                                magnet.x + (Math.random() - 0.5) * 20,
+                                magnet.y + (Math.random() - 0.5) * 20,
+                                COLORS.targetGlow, 1
+                            );
+                        }
+                    }
+                }
+            });
+            
+            // Update particles
+            updateParticles();
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw target zone
+            targetZone.draw();
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw magnets
+            magnetOptions.forEach(magnet => {
+                drawPixelatedMagnet(magnet);
+            });
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Word wrapping for question
+            const words = question.split(' ');
+            let line = '';
+            const lines = [];
+            const maxWidth = canvas.width - 40;
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            // Draw wrapped text
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(
+                    lines[i], 
+                    canvas.width / 2, 
+                    50 + i * 30
+                );
+            }
+            
+            // Game over state
+            if (gameOver) {
+                // Display result
+                ctx.fillStyle = isCorrect ? COLORS.correct : COLORS.incorrect;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    isCorrect ? 'CORRECT!' : 'WRONG!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 + 50
+                );
+            } else {
+                // Draw instruction
+                ctx.fillStyle = '#AAAAAA';
+                ctx.font = '16px sans-serif';
+                ctx.fillText(
+                    'Drag correct answer to target', 
+                    canvas.width / 2, 
+                    canvas.height * 0.6 - 30
+                );
+            }
+            
+            // Draw restart button
+            restartBtn.draw();
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function restartGame() {
+            gameOver = false;
+            isCorrect = false;
+            draggedOption = null;
+            particles = [];
+            restartBtn.visible = false;
+            
+            // Reset magnet positions
+            magnetOptions[0].x = canvas.width / 4;
+            magnetOptions[0].y = canvas.height * 0.7;
+            magnetOptions[1].x = canvas.width * 3 / 4;
+            magnetOptions[1].y = canvas.height * 0.7;
+        }
+        
+        // Set up event listeners
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

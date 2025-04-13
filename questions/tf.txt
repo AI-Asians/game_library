@@ -1,0 +1,62 @@
+**True/False:**
+
+1. **Swipe-Sort (T/F):** An object representing the question appears; swipe left for False, right for True to sort it into correct bins.  
+2. **Tap-Lane Change:** Character runs forward; tap left/right side of screen to switch lanes, collecting True statements and avoiding False ones (or vice-versa).  
+3. **Quick-Dodge (T/F):** Obstacles labeled True or False fall; tap to move character left/right to dodge the incorrect type based on the question.  
+4. **Tilt-Balance (T/F):** (Uses accelerometer if available, fallback to tap) Tilt device/tap sides to keep a platform balanced towards True or False based on the statement.  
+5. **Tap-Defend (T/F):** Tap the screen to raise a shield. Raise shield for False statements, lower it for True statements (or vice-versa) as they approach.  
+6. **Binary-Jump:** Character stands between two platforms (True/False); tap to jump to the correct one before the current platform disappears.  
+7. **Gate-Tap:** Tap to open the True gate or the False gate for an approaching item/character based on the statement.  
+8. **Push-Pull Tap:** Tap one side to push (False), the other side to pull (True) an object into the correct zone.  
+9. **Color-Flip Tap:** Screen is split T/F (e.g., Green/Red); tap to flip character's color to match the correct side for the statement.  
+10. **Grow/Shrink Tap:** Tap True side to grow, False side to shrink; match the required state based on the statement (e.g., "Statement is True? Grow\!").  
+11. **Light-Switch Tap:** Tap a switch; On for True, Off for False. Must set it correctly before time runs out.  
+12. **Sound-Wave Tap:** Tap left/right to send a sound wave; hit the True or False target based on the statement.  
+13. **Charge-Beam Tap:** Hold tap to charge; release to fire beam. Aim left (False) or right (True) based on statement. Quick charge needed.  
+14. **Parry-Tap:** Time a tap perfectly to parry incoming "False" attacks, let "True" ones pass (or vice versa).  
+15. **Rotate-Shield Tap:** Tap to rotate a shield with T/F sides to face an incoming projectile representing the statement.  
+16. **Bridge-Tap:** Tap to extend a bridge towards the True or False platform.  
+17. **Magnet-Tap:** Tap to activate a magnet pulling an object towards True or False zone.  
+18. **Fan-Tap:** Tap to activate a fan blowing an object towards True or False zone.  
+19. **Cut/Connect Tap:** Tap to cut a wire (False) or connect a wire (True) to complete a circuit based on the statement.  
+20. **Fill/Empty Tap:** Tap to fill a container (True) or empty it (False) based on the statement.  
+21. **Yes/No Tap:** Simple large "YES" (True) and "NO" (False) buttons; tap the correct one quickly.  
+22. **Path-Paint Tap:** Tap to paint the path ahead Green (True) or Red (False); character follows the painted path.  
+23. **Mirror-Tap:** Tap the correct reflection (True/False side) of an object based on the statement.  
+24. **Phase-Tap:** Tap to phase through "False" walls, remain solid for "True" walls (or vice versa).  
+25. **Morse-Tap:** Tap short/long (dot/dash) to signal True (e.g., dot) or False (e.g., dash).  
+26. **Heartbeat-Tap:** Tap in rhythm; tap on beat for True, off beat for False (or vice versa).  
+27. **Lock-Pick Tap:** Tap left/right tumblers; align them correctly based on True/False statement to open lock.  
+28. **Plant/Weed Tap:** Tap to plant a flower (True) or pull a weed (False) based on the statement.  
+29. **Sun/Moon Tap:** Tap to switch between Sun (True) and Moon (False) background/mode based on statement.  
+30. **Anchor-Tap:** Tap to drop anchor on True side or False side as ship sails past.  
+31. **Flash-Dodge:** Move (arrow keys) between lanes to avoid incorrect answers while collecting correct ones (simplified Frogger). *\[As provided\]*  
+32. *Momentum-Sling: Slingshot objects (mouse drag/release) with precise angle and power to hit True/False targets. Slingshot centered. \[As provided\]*  
+33. *Quick-Sort: Drag a single falling object (mouse) into the correct True or False boxes before it hits bottom (inspired by Tetris but sorting-focused). \[As provided\]*  
+34. *Gate-Keeper: Press a key (e.g., Left Arrow for False, Right Arrow for True) to open the corresponding gate for an approaching object/character.*  
+35. *Binary-Beam: Use mouse to aim a continuous beam left (False) or right (True) to hit targets or guide objects.*  
+36. *Deflection: Control a paddle (mouse/keys); hit a ball into the "True" goal or "False" goal based on the statement.*  
+37. *Polarity-Switch: Press a key (e.g., Spacebar) to switch player polarity (attract/repel); navigate towards True or away from False zones/objects.*  
+38. *Two-Button Rhythm: Hit Left key for False, Right key for True, timed to markers on a rhythm track.*  
+39. *Binary-Jump Platformer: Character runs automatically; press Jump key (Spacebar) only if the statement is True to clear gaps or collect items. If False, do nothing.*  
+40. *Split-Decision: Screen splits; click the True side or False side quickly based on the statement.*  
+41. *Truth-Laser: Press T key to fire "True" laser, F key for "False" laser; destroy targets matching the statement's validity.*  
+42. *Balance-Beam: Use Left/Right arrow keys to shift weight on a beam; keep balance if statement is True, deliberately unbalance if False (or vice versa).*  
+43. *Sword & Shield: Use Left click (Sword \- attack False) and Right click (Shield \- block True) based on incoming statement-attacks.*  
+44. *Path-Switcher: An object moves along a path; press a key to switch tracks towards a True or False destination.*  
+45. *Grow/Shrink Key: Press Up Arrow to grow (True), Down Arrow to shrink (False); match size needed to pass obstacles based on statement.*  
+46. *Light/Dark Toggle: Press Spacebar to toggle between Light (True) and Dark (False) modes; reveal hidden paths or objects based on statement.*  
+47. *Build/Destroy: Click to Build a bridge segment (True) or Destroy an obstacle (False) based on the statement to allow passage.*  
+48. *Push-Block: Use arrow keys to push a block onto a True or False pressure plate.*  
+49. *Color-Switcher: Press a key to switch player color to Green (True) or Red (False); only allows passing through gates of the same color.*  
+50. *Sound-Toggle: Press a key to turn sound On (True) or Off (False); match the required state based on the statement (e.g., "Silence is needed" \= False).*  
+51. *Filter-Gate: Press key to activate True filter or False filter, allowing correctly labeled items to pass.*  
+52. *Charge-Up T/F: Hold Left mouse (charge False) or Right mouse (charge True); release to activate corresponding effect.*  
+53. *Morse-Code Key: Tap one key for Dot (True), another for Dash (False) to input the correct signal.*  
+54. *Elevator Up/Down: Press Up Arrow (True) or Down Arrow (False) to move elevator to correct floor/level based on statement.*  
+55. *Water/Drain: Click to turn on faucet (True) or open drain (False) to manage water level based on statement.*  
+56. *Open/Close Door: Press key to Open (True) or Close (False) a door for an approaching character.*  
+57. *Agree/Disagree: Click an "Agree" (True) or "Disagree" (False) button presented clearly. Speed counts.*  
+58. *Correct/Incorrect Stamp: Click a "Correct" (True) or "Incorrect" (False) stamp to mark a document/object based on the statement.*  
+59. *Thumbs Up/Down: Click a Thumbs Up (True) or Thumbs Down (False) icon.*  
+60. *Checkmark/Cross: Click a Checkmark (True) or Cross (False) icon.*

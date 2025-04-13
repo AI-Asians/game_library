@@ -1,0 +1,99 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type TF.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ Water boils at 100 degrees Celsius at sea level.
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Color-Switcher: Press a key to switch player color to Green (True) or Red (False); only allows passing through gates of the same color.**  
+ Description of mechanic: 
+
+* Player controls a character that can switch between green (True) and red (False) colors
+* Player must navigate through gates/obstacles that correspond to the colors
+* Green gates only allow green player to pass through (representing True)
+* Red gates only allow red player to pass through (representing False)
+* Player must select the correct color (True/False) that matches the answer to the question
+* Clear visual feedback when player tries to pass through a gate of the wrong color
+* Success is determined by passing through the correct gate (True or False)
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+Use contrasting colors for the True (green) and False (red) gates to make them clearly distinguishable.
+Add pixelated particle effects when player changes color or collides with gates.
+Include a simple pixelated character design that changes color completely when switching between True/False states.
+Keep the environment simple but visually engaging with 8-bit style walls or barriers.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+Include a clear visual prompt showing which key to press to switch colors.
+Ensure the switching animation is quick and responsive.
+Add a visual indicator showing the player's current selected state (True/False).
+Make sure the gates are large enough to be clearly visible but challenging to navigate.
+Provide immediate feedback when player attempts to pass through a gate.
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

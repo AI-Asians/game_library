@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (8-bit style palette)
+        const colors = {
+            background: '#0f380f',
+            border: '#8bac0f',
+            text: '#9bbc0f',
+            tile: '#306230',
+            tileBack: '#0f380f',
+            correct: '#9bbc0f',
+            incorrect: '#e83030',
+            highlight: '#ffffff'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let selectedTile = null;
+        let restartButton = null;
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.value = 0.1;
+            
+            if (type === 'flip') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = 220;
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(110, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        }
+        
+        // Create tiles
+        class Tile {
+            constructor(x, y, width, height, answer, isCorrect) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.answer = answer;
+                this.isCorrect = isCorrect;
+                this.flipped = false;
+                this.flipProgress = 0;
+                this.flipping = false;
+                this.selected = false;
+            }
+            
+            draw() {
+                // Flip animation
+                let displayWidth = this.width;
+                if (this.flipping) {
+                    displayWidth = this.width * Math.abs(Math.cos(this.flipProgress * Math.PI));
+                }
+                
+                ctx.save();
+                ctx.translate(this.x + this.width/2, this.y + this.height/2);
+                
+                // Draw border
+                ctx.fillStyle = colors.border;
+                ctx.fillRect(-displayWidth/2 - 4, -this.height/2 - 4, displayWidth + 8, this.height + 8);
+                
+                if (this.selected) {
+                    ctx.fillStyle = colors.highlight;
+                    ctx.fillRect(-displayWidth/2 - 8, -this.height/2 - 8, displayWidth + 16, this.height + 16);
+                }
+                
+                // Draw tile back or front
+                if (!this.flipped || this.flipProgress < 0.5) {
+                    // Back of tile
+                    ctx.fillStyle = colors.tile;
+                    ctx.fillRect(-displayWidth/2, -this.height/2, displayWidth, this.height);
+                    
+                    // Question mark
+                    if (displayWidth > 20) {
+                        ctx.fillStyle = colors.text;
+                        const pixelSize = Math.max(2, Math.floor(this.width / 16));
+                        
+                        // Draw pixel art question mark
+                        const questionMark = [
+                            [0,0,1,1,1,0,0],
+                            [0,1,1,0,1,1,0],
+                            [0,0,0,0,1,1,0],
+                            [0,0,0,1,1,0,0],
+                            [0,0,1,1,0,0,0],
+                            [0,0,1,1,0,0,0],
+                            [0,0,0,0,0,0,0],
+                            [0,0,1,1,0,0,0]
+                        ];
+                        
+                        for (let y = 0; y < questionMark.length; y++) {
+                            for (let x = 0; x < questionMark[y].length; x++) {
+                                if (questionMark[y][x]) {
+                                    ctx.fillRect(
+                                        -displayWidth/4 + x * pixelSize,
+                                        -this.height/4 + y * pixelSize,
+                                        pixelSize,
+                                        pixelSize
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Front of tile
+                    ctx.fillStyle = this.selected ? 
+                                    (this.isCorrect ? colors.correct : colors.incorrect) : 
+                                    colors.tileBack;
+                    ctx.fillRect(-displayWidth/2, -this.height/2, displayWidth, this.height);
+                    
+                    // Draw answer text
+                    if (displayWidth > 20) {
+                        ctx.fillStyle = colors.text;
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        
+                        const fontSize = Math.max(16, Math.min(24, this.width / 8));
+                        ctx.font = `${fontSize}px sans-serif`;
+                        
+                        // Draw text if tile is wide enough to show it
+                        ctx.fillText(this.answer, 0, 0);
+                    }
+                }
+                
+                ctx.restore();
+            }
+            
+            flip() {
+                if (!this.flipping && !this.flipped) {
+                    this.flipping = true;
+                    playSound('flip');
+                    this.animateFlip();
+                }
+            }
+            
+            animateFlip() {
+                this.flipProgress += 0.1;
+                if (this.flipProgress >= 1) {
+                    this.flipProgress = 1;
+                    this.flipping = false;
+                    this.flipped = true;
+                    
+                    if (this.selected) {
+                        if (this.isCorrect) {
+                            playSound('correct');
+                        } else {
+                            playSound('incorrect');
+                        }
+                        gameOver = true;
+                        createRestartButton();
+                    }
+                    return;
+                }
+                
+                setTimeout(() => this.animateFlip(), 30);
+            }
+            
+            contains(x, y) {
+                return x >= this.x && x <= this.x + this.width &&
+                       y >= this.y && y <= this.y + this.height;
+            }
+        }
+        
+        // Create restart button
+        function createRestartButton() {
+            const buttonWidth = Math.min(200, canvas.width / 3);
+            const buttonHeight = 50;
+            const buttonX = (canvas.width - buttonWidth) / 2;
+            const buttonY = canvas.height - buttonHeight - 20;
+            
+            restartButton = {
+                x: buttonX,
+                y: buttonY,
+                width: buttonWidth, 
+                height: buttonHeight,
+                contains: function(x, y) {
+                    return x >= this.x && x <= this.x + this.width &&
+                           y >= this.y && y <= this.y + this.height;
+                }
+            };
+        }
+        
+        // Create tiles
+        const answers = ["Paris", "London", "Berlin", "Rome"];
+        const correctAnswerIndex = 0;
+        const tiles = [];
+        
+        function createTiles() {
+            const padding = isMobile ? 15 : 25;
+            const tilesPerRow = 2;
+            const tileWidth = (canvas.width - (padding * (tilesPerRow + 1))) / tilesPerRow;
+            const tileHeight = tileWidth * 0.75;
+            const startY = canvas.height / 2;
+            
+            for (let i = 0; i < answers.length; i++) {
+                const row = Math.floor(i / tilesPerRow);
+                const col = i % tilesPerRow;
+                
+                const x = padding + col * (tileWidth + padding);
+                const y = startY - tileHeight - padding + row * (tileHeight + padding);
+                
+                tiles.push(new Tile(
+                    x, y, tileWidth, tileHeight,
+                    answers[i], i === correctAnswerIndex
+                ));
+            }
+        }
+        
+        // Handle user input
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver && restartButton && restartButton.contains(x, y)) {
+                restartGame();
+                return;
+            }
+            
+            if (!gameOver) {
+                for (const tile of tiles) {
+                    if (tile.contains(x, y) && !tile.flipped && !tile.flipping) {
+                        selectedTile = tile;
+                        tile.selected = true;
+                        tile.flip();
+                    }
+                }
+            }
+        }
+        
+        canvas.addEventListener('click', handleClick);
+        
+        // Mobile touch support
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleClick(touch);
+        });
+        
+        // Draw game
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw title
+            ctx.fillStyle = colors.text;
+            ctx.textAlign = "center";
+            ctx.font = "28px sans-serif";
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 60);
+            
+            // Draw tiles
+            for (const tile of tiles) {
+                tile.draw();
+            }
+            
+            // Draw restart button if game is over
+            if (gameOver && restartButton) {
+                ctx.fillStyle = colors.border;
+                ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+                
+                ctx.fillStyle = colors.background;
+                ctx.fillRect(
+                    restartButton.x + 4, 
+                    restartButton.y + 4, 
+                    restartButton.width - 8, 
+                    restartButton.height - 8
+                );
+                
+                ctx.fillStyle = colors.text;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.font = "20px sans-serif";
+                ctx.fillText(
+                    "Restart", 
+                    restartButton.x + restartButton.width / 2, 
+                    restartButton.y + restartButton.height / 2
+                );
+            }
+            
+            requestAnimationFrame(draw);
+        }
+        
+        // Restart game
+        function restartGame() {
+            gameOver = false;
+            selectedTile = null;
+            restartButton = null;
+            tiles.length = 0;
+            createTiles();
+        }
+        
+        // Start game
+        createTiles();
+        draw();
+    </script>
+</body>
+</html>

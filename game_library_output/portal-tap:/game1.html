@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal-Tap Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            border: 2px solid #555;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize game
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - 8-bit palette
+        const COLORS = {
+            background: '#0A2463',
+            text: '#E7ECEF',
+            correct: '#30CA5C',
+            incorrect: '#FB3640',
+            portalBorders: ['#86BBD8', '#F9C22E', '#FC9E4F', '#F86624'],
+            portalFills: ['#5158BB', '#9762BB', '#73BB61', '#BB6B73']
+        };
+        
+        // Game state
+        let gameOver = false;
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 60,
+            width: 120,
+            height: 40
+        };
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle answers
+        const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+        
+        // Create portals
+        const portals = [];
+        const portalRadius = isMobile ? 55 : 70;
+        
+        // Position portals based on canvas size
+        function setupPortals() {
+            const positions = [];
+            const margin = portalRadius * 1.5;
+            
+            if (isMobile) {
+                // Portrait layout for mobile
+                positions.push(
+                    { x: canvas.width / 2, y: canvas.height / 3 },
+                    { x: canvas.width / 2, y: canvas.height / 3 + portalRadius * 2.5 },
+                    { x: canvas.width / 2, y: canvas.height / 3 + portalRadius * 5 },
+                    { x: canvas.width / 2, y: canvas.height / 3 + portalRadius * 7.5 }
+                );
+            } else {
+                // Landscape layout for web
+                positions.push(
+                    { x: canvas.width / 4, y: canvas.height / 2 },
+                    { x: canvas.width / 2, y: canvas.height / 3 },
+                    { x: canvas.width * 3/4, y: canvas.height / 2 },
+                    { x: canvas.width / 2, y: canvas.height * 2/3 }
+                );
+            }
+            
+            // Create portals with shuffled answers
+            for (let i = 0; i < 4; i++) {
+                portals.push({
+                    x: positions[i].x,
+                    y: positions[i].y,
+                    radius: portalRadius,
+                    answer: shuffledAnswers[i],
+                    colorIndex: i,
+                    pulse: 0,
+                    pulseDir: 1,
+                    rotation: 0
+                });
+            }
+        }
+        
+        setupPortals();
+        
+        // Animation variables
+        let selectedPortal = null;
+        let animationTime = 0;
+        let resultMessage = "";
+        
+        // Sound generation
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(392.00, audioContext.currentTime); // G4
+                oscillator.frequency.setValueAtTime(349.23, audioContext.currentTime + 0.1); // F4
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'hover') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+        }
+        
+        // Draw pixelated circle
+        function drawPixelatedCircle(x, y, radius, color, borderColor) {
+            const pixelSize = 4;
+            const radiusSq = radius * radius;
+            
+            ctx.fillStyle = color;
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = pixelSize;
+            
+            for (let px = -radius; px <= radius; px += pixelSize) {
+                for (let py = -radius; py <= radius; py += pixelSize) {
+                    const distSq = px * px + py * py;
+                    if (distSq <= radiusSq) {
+                        ctx.fillRect(x + px, y + py, pixelSize, pixelSize);
+                    }
+                }
+            }
+            
+            // Draw pixelated border
+            for (let angle = 0; angle < Math.PI * 2; angle += 0.1) {
+                const px = Math.cos(angle) * radius;
+                const py = Math.sin(angle) * radius;
+                ctx.fillRect(x + px - pixelSize/2, y + py - pixelSize/2, pixelSize, pixelSize);
+            }
+        }
+        
+        // Draw pixelated text
+        function drawText(text, x, y, fontSize, color, align = 'center') {
+            ctx.font = `${fontSize}px sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = align;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw portal animation
+        function drawPortal(portal) {
+            const pulseAmount = Math.sin(portal.pulse) * 5;
+            const displayRadius = portal.radius + pulseAmount;
+            
+            // Draw portal background
+            drawPixelatedCircle(
+                portal.x, 
+                portal.y, 
+                displayRadius,
+                COLORS.portalFills[portal.colorIndex],
+                COLORS.portalBorders[portal.colorIndex]
+            );
+            
+            // Draw answer text
+            const fontSize = isMobile ? 18 : 22;
+            drawText(portal.answer.text, portal.x, portal.y, fontSize, COLORS.text);
+            
+            // Update portal animation
+            portal.pulse += 0.05 * portal.pulseDir;
+            portal.rotation += 0.01;
+        }
+        
+        // Draw selected portal animation
+        function drawSelectedPortalAnimation() {
+            if (!selectedPortal) return;
+            
+            animationTime += 0.05;
+            const portal = selectedPortal;
+            
+            if (portal.answer.correct) {
+                // Correct answer animation
+                const expandRadius = portal.radius + animationTime * 15;
+                drawPixelatedCircle(
+                    portal.x, portal.y, 
+                    expandRadius, 
+                    `rgba(48, 202, 92, ${1 - animationTime/2})`,
+                    `rgba(230, 240, 230, ${1 - animationTime/2})`
+                );
+                
+                if (animationTime >= 1) {
+                    gameOver = true;
+                }
+            } else {
+                // Incorrect answer animation
+                const shrinkRadius = portal.radius * (1 - animationTime/2);
+                drawPixelatedCircle(
+                    portal.x, portal.y, 
+                    shrinkRadius, 
+                    `rgba(251, 54, 64, ${1 - animationTime/2})`,
+                    `rgba(230, 240, 230, ${1 - animationTime/2})`
+                );
+                
+                if (animationTime >= 1) {
+                    gameOver = true;
+                }
+            }
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas with pixel pattern background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated background grid
+            ctx.fillStyle = '#1A3473';
+            const gridSize = 20;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                for (let y = 0; y < canvas.height; y += gridSize) {
+                    if ((x + y) % (gridSize * 2) === 0) {
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    }
+                }
+            }
+            
+            // Draw question
+            const questionY = isMobile ? 80 : 100;
+            drawText(question, canvas.width / 2, questionY, isMobile ? 24 : 30, COLORS.text);
+            
+            // Draw portals
+            if (!gameOver) {
+                portals.forEach(drawPortal);
+            }
+            
+            // Draw selected portal animation
+            if (selectedPortal && !gameOver) {
+                drawSelectedPortalAnimation();
+            }
+            
+            // Draw game over screen
+            if (gameOver) {
+                // Show result message
+                drawText(
+                    selectedPortal.answer.correct ? "Correct!" : "Incorrect!",
+                    canvas.width / 2,
+                    canvas.height / 2 - 50,
+                    isMobile ? 30 : 40,
+                    selectedPortal.answer.correct ? COLORS.correct : COLORS.incorrect
+                );
+                
+                drawText(
+                    "The correct answer is Paris",
+                    canvas.width / 2,
+                    canvas.height / 2,
+                    isMobile ? 20 : 24,
+                    COLORS.text
+                );
+                
+                // Draw restart button
+                ctx.fillStyle = '#444';
+                ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+                drawText("Restart", canvas.width / 2, restartButton.y + restartButton.height / 2, 20, COLORS.text);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        gameLoop();
+        
+        // Handle user input
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const mouseX = (event.clientX - rect.left) * scaleX;
+            const mouseY = (event.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                // Check restart button
+                if (
+                    mouseX >= restartButton.x && 
+                    mouseX <= restartButton.x + restartButton.width &&
+                    mouseY >= restartButton.y && 
+                    mouseY <= restartButton.y + restartButton.height
+                ) {
+                    // Reset game
+                    gameOver = false;
+                    selectedPortal = null;
+                    animationTime = 0;
+                    // Reshuffle answers
+                    const newShuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+                    // Reset portals with new answers
+                    portals.forEach((portal, i) => {
+                        portal.answer = newShuffledAnswers[i];
+                        portal.pulse = 0;
+                        portal.rotation = 0;
+                    });
+                }
+            } else {
+                // Check portal clicks
+                for (const portal of portals) {
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - portal.x, 2) + 
+                        Math.pow(mouseY - portal.y, 2)
+                    );
+                    
+                    if (distance <= portal.radius) {
+                        selectedPortal = portal;
+                        animationTime = 0;
+                        
+                        // Play sound based on answer
+                        if (portal.answer.correct) {
+                            playSound('correct');
+                        } else {
+                            playSound('incorrect');
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Optional: Add hover effect
+        canvas.addEventListener('mousemove', function(event) {
+            if (gameOver || selectedPortal) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const mouseX = (event.clientX - rect.left) * scaleX;
+            const mouseY = (event.clientY - rect.top) * scaleY;
+            
+            let hovering = false;
+            
+            for (const portal of portals) {
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - portal.x, 2) + 
+                    Math.pow(mouseY - portal.y, 2)
+                );
+                
+                if (distance <= portal.radius) {
+                    portal.pulseDir = 2;
+                    hovering = true;
+                } else {
+                    portal.pulseDir = 1;
+                }
+            }
+        });
+    </script>
+</body>
+</html>

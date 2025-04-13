@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fishing for Knowledge</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 4px solid #777;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+        }
+        #restart:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        let correctAnswerCaught = false;
+        
+        // Colors (limited palette)
+        const COLORS = {
+            water: '#4478BC',
+            waterDark: '#3366A3',
+            sand: '#E6C88C',
+            sky: '#8CCCFF',
+            rod: '#593930',
+            line: '#FFFFFF',
+            hook: '#DDDDDD',
+            text: '#FFFFFF',
+            fishOutline: '#111111',
+            correctGreen: '#44AF44',
+            incorrectRed: '#CC4444'
+        };
+        
+        // Fish data
+        const fishOptions = [
+            { text: 'Paris', correct: true, color: '#FF8844' },
+            { text: 'Lyon', correct: false, color: '#FFCC44' },
+            { text: 'Marseille', correct: false, color: '#44CCFF' },
+            { text: 'Nice', correct: false, color: '#FF44AA' }
+        ];
+        
+        // Fish class
+        class Fish {
+            constructor(option, x, y) {
+                this.text = option.text;
+                this.correct = option.correct;
+                this.color = option.color;
+                this.x = x;
+                this.y = y;
+                this.width = this.text.length * 10 + 40;
+                this.height = 30;
+                this.speed = 0.5 + Math.random() * 1;
+                this.direction = Math.random() > 0.5 ? 1 : -1;
+                this.wiggleTime = 0;
+                this.wiggleOffset = 0;
+            }
+            
+            update(deltaTime) {
+                // Move fish horizontally
+                this.x += this.speed * this.direction * deltaTime / 16;
+                
+                // Make fish swim in a wavy pattern
+                this.wiggleTime += deltaTime / 100;
+                this.wiggleOffset = Math.sin(this.wiggleTime) * 5;
+                
+                // Change direction if hitting edge of screen
+                if (this.x < -this.width && this.direction < 0) {
+                    this.direction = 1;
+                    this.x = -this.width;
+                } else if (this.x > canvas.width && this.direction > 0) {
+                    this.direction = -1;
+                    this.x = canvas.width;
+                }
+            }
+            
+            draw() {
+                ctx.save();
+                
+                // Fish body
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                if (this.direction > 0) {
+                    // Fish facing right
+                    ctx.ellipse(this.x, this.y + this.wiggleOffset, this.width/2, this.height/2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Tail
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - this.width/2, this.y + this.wiggleOffset);
+                    ctx.lineTo(this.x - this.width/2 - 15, this.y - 15 + this.wiggleOffset);
+                    ctx.lineTo(this.x - this.width/2 - 15, this.y + 15 + this.wiggleOffset);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Eye
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.beginPath();
+                    ctx.arc(this.x + this.width/4, this.y - 5 + this.wiggleOffset, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.arc(this.x + this.width/4 + 2, this.y - 5 + this.wiggleOffset, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Fish facing left
+                    ctx.ellipse(this.x, this.y + this.wiggleOffset, this.width/2, this.height/2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Tail
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + this.width/2, this.y + this.wiggleOffset);
+                    ctx.lineTo(this.x + this.width/2 + 15, this.y - 15 + this.wiggleOffset);
+                    ctx.lineTo(this.x + this.width/2 + 15, this.y + 15 + this.wiggleOffset);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Eye
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.beginPath();
+                    ctx.arc(this.x - this.width/4, this.y - 5 + this.wiggleOffset, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.arc(this.x - this.width/4 - 2, this.y - 5 + this.wiggleOffset, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Fish text (answer option)
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x, this.y + this.wiggleOffset);
+                
+                ctx.restore();
+            }
+            
+            isHooked(hookX, hookY, hookRadius) {
+                const dx = this.x - hookX;
+                const dy = (this.y + this.wiggleOffset) - hookY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                return distance < this.width / 2;
+            }
+        }
+        
+        // Create fishes
+        const fishes = [];
+        
+        function initFishes() {
+            fishes.length = 0; // Clear existing fish
+            
+            // Shuffle the options so fish positions are random each time
+            const shuffledOptions = [...fishOptions].sort(() => Math.random() - 0.5);
+            
+            // Create fishes with options
+            const waterArea = {
+                top: canvas.height * 0.3,
+                bottom: canvas.height * 0.8,
+                height: canvas.height * 0.5
+            };
+            
+            shuffledOptions.forEach((option, i) => {
+                const yPos = waterArea.top + (waterArea.height / (shuffledOptions.length + 1)) * (i + 1);
+                const xPos = Math.random() * canvas.width;
+                fishes.push(new Fish(option, xPos, yPos));
+            });
+        }
+        
+        // Fishing rod variables
+        let rodX = canvas.width / 2;
+        let rodY = 60;
+        let lineEndX = rodX;
+        let lineEndY = rodY + 30;
+        let hookRadius = 6;
+        let isCasting = false;
+        let canCatch = false;
+        let catchTimer = 0;
+        let hookSpeed = 5;
+        
+        // Mouse/touch position
+        let mouseX = canvas.width / 2;
+        let mouseY = canvas.height / 2;
+        
+        // Sound effects (minimal audio)
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                switch(type) {
+                    case 'cast':
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(220, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                    case 'splash':
+                        oscillator.type = 'triangle';
+                        oscillator.frequency.setValueAtTime(100, audioContext.currentTime);
+                        oscillator.frequency.linearRampToValueAtTime(50, audioContext.currentTime + 0.3);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.4);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.4);
+                        break;
+                    case 'correct':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                        oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                        oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                    case 'incorrect':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                        oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.2);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                        break;
+                }
+            } catch (e) {
+                console.log("Audio couldn't play:", e);
+            }
+        }
+        
+        // Ripple effect when casting
+        const ripples = [];
+        
+        function createRipple(x, y) {
+            ripples.push({
+                x,
+                y,
+                radius: 5,
+                maxRadius: 25,
+                alpha: 1
+            });
+        }
+        
+        function updateRipples(deltaTime) {
+            for (let i = ripples.length - 1; i >= 0; i--) {
+                ripples[i].radius += deltaTime / 30;
+                ripples[i].alpha -= deltaTime / 800;
+                
+                if (ripples[i].alpha <= 0 || ripples[i].radius >= ripples[i].maxRadius) {
+                    ripples.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawRipples() {
+            ctx.save();
+            for (let i = 0; i < ripples.length; i++) {
+                const ripple = ripples[i];
+                ctx.strokeStyle = `rgba(255, 255, 255, ${ripple.alpha})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(ripple.x, ripple.y, ripple.radius, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+        
+        // Game initialization
+        function init() {
+            gameOver = false;
+            correctAnswerCaught = false;
+            isCasting = false;
+            canCatch = false;
+            initFishes();
+            
+            lineEndX = rodX;
+            lineEndY = rodY + 30;
+            
+            restartBtn.style.display = 'none';
+            
+            lastTime = Date.now();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handlers
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+        });
+        
+        canvas.addEventListener('mousedown', castLine);
+        canvas.addEventListener('touchstart', castLine);
+        
+        function castLine(e) {
+            e.preventDefault();
+            if (gameOver) return;
+            
+            if (!isCasting) {
+                isCasting = true;
+                playSound('cast');
+            } else if (canCatch) {
+                // Check if any fish is hooked
+                let caughtFish = null;
+                
+                for (let fish of fishes) {
+                    if (fish.isHooked(lineEndX, lineEndY, hookRadius)) {
+                        caughtFish = fish;
+                        break;
+                    }
+                }
+                
+                if (caughtFish) {
+                    gameOver = true;
+                    correctAnswerCaught = caughtFish.correct;
+                    
+                    if (caughtFish.correct) {
+                        playSound('correct');
+                    } else {
+                        playSound('incorrect');
+                    }
+                    
+                    // Show restart button after a brief delay
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 1500);
+                }
+            }
+        }
+        
+        restartBtn.addEventListener('click', init);
+        
+        // Game rendering
+        function drawBackground() {
+            // Sky
+            ctx.fillStyle = COLORS.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height * 0.3);
+            
+            // Water
+            ctx.fillStyle = COLORS.water;
+            ctx.fillRect(0, canvas.height * 0.3, canvas.width, canvas.height * 0.5);
+            
+            // Simple wave pattern
+            ctx.fillStyle = COLORS.waterDark;
+            const waveHeight = 5;
+            const waveCount = 20;
+            const waterTop = canvas.height * 0.3;
+            
+            for (let i = 0; i < waveCount; i++) {
+                const waveWidth = canvas.width / waveCount;
+                
+                ctx.beginPath();
+                ctx.moveTo(i * waveWidth, waterTop);
+                ctx.quadraticCurveTo(
+                    i * waveWidth + waveWidth / 2, 
+                    waterTop - waveHeight, 
+                    i * waveWidth + waveWidth, 
+                    waterTop
+                );
+                ctx.lineTo(i * waveWidth + waveWidth, waterTop + waveHeight);
+                ctx.lineTo(i * waveWidth, waterTop + waveHeight);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            // Sand
+            ctx.fillStyle = COLORS.sand;
+            ctx.fillRect(0, canvas.height * 0.8, canvas.width, canvas.height * 0.2);
+            
+            // Draw the question
+            ctx.fillStyle = '#222222';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 30);
+        }
+        
+        function drawFishingRod() {
+            // Rod base/handle
+            ctx.fillStyle = COLORS.rod;
+            ctx.fillRect(rodX - 5, rodY - 50, 10, 50);
+            
+            // Rod pole
+            ctx.strokeStyle = COLORS.rod;
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(rodX, rodY - 50);
+            ctx.lineTo(rodX + 40, rodY - 30);
+            ctx.stroke();
+            
+            // Fishing line
+            ctx.strokeStyle = COLORS.line;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(rodX + 40, rodY - 30);
+            ctx.lineTo(lineEndX, lineEndY);
+            ctx.stroke();
+            
+            // Hook
+            ctx.strokeStyle = COLORS.hook;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(lineEndX, lineEndY, hookRadius, 0, Math.PI * 1.5);
+            ctx.stroke();
+            
+            // Visual cue when close to a fish
+            let nearFish = false;
+            for (let fish of fishes) {
+                if (fish.isHooked(lineEndX, lineEndY, hookRadius * 2)) {
+                    nearFish = true;
+                    break;
+                }
+            }
+            
+            if (nearFish && canCatch) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(lineEndX, lineEndY, hookRadius * 2, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+        
+        function showResult() {
+            ctx.save();
+            ctx.fillStyle = correctAnswerCaught ? 'rgba(0, 200, 0, 0.3)' : 'rgba(200, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '32px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(
+                correctAnswerCaught ? 'Correct! Paris is the capital of France.' : 'Try Again!',
+                canvas.width / 2,
+                canvas.height / 2
+            );
+            ctx.restore();
+        }
+        
+        // Game loop
+        let lastTime = Date.now();
+        
+        function gameLoop() {
+            const currentTime = Date.now();
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBackground();
+            drawRipples();
+            
+            // Update and draw fish
+            for (let fish of fishes) {
+                fish.update(deltaTime);
+                fish.draw();
+            }
+            
+            // Update fishing line if casting
+            if (isCasting) {
+                // Move line toward mouse position
+                const dx = mouseX - lineEndX;
+                const dy = mouseY - lineEndY;
+                lineEndX += dx * 0.1;
+                lineEndY += dy * 0.1;
+                
+                // Add ripple effect when line hits water
+                if (lineEndY >= canvas.height * 0.3 && !canCatch) {
+                    playSound('splash');
+                    createRipple(lineEndX, lineEndY);
+                    
+                    // Start catch timer (slight delay before being able to catch)
+                    catchTimer = 500; // milliseconds
+                    setTimeout(() => {
+                        canCatch = true;
+                    }, catchTimer);
+                }
+            }
+            
+            // Update ripples
+            updateRipples(deltaTime);
+            
+            // Draw fishing rod and line
+            drawFishingRod();
+            
+            // Show result if game is over
+            if (gameOver) {
+                showResult();
+            }
+            
+            // Continue loop
+            if (!gameOver || gameOver && !restartBtn.style.display === 'block') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

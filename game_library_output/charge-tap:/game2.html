@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Planet Power Selector</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#0a0a2a',
+            question: '#ffffff',
+            meter: {
+                bg: '#333344',
+                border: '#8888ff',
+                fill: '#44ff44',
+                sweetSpot: '#ffff44'
+            },
+            options: ['#ff5555', '#55ff55', '#5555ff', '#ffff55'],
+            correct: '#00ff00',
+            incorrect: '#ff0000',
+            button: '#5555aa',
+            buttonHover: '#7777cc',
+            buttonText: '#ffffff'
+        };
+        
+        // Game state
+        let gameState = {
+            question: 'Which planet is known as the Red Planet?',
+            options: ['Earth', 'Mars', 'Venus', 'Jupiter'],
+            correctAnswer: 1,
+            power: 0,
+            maxPower: 100,
+            charging: false,
+            answered: false,
+            answerCorrect: null,
+            currentOption: -1,
+            resetTimer: null,
+            cooldown: false,
+            cooldownTimer: null,
+            chargeSpeed: 60, // power units per second
+            startTime: 0,
+            lastFrameTime: 0,
+            flashing: false,
+            flashTimer: 0,
+            restart: false,
+            shake: {
+                active: false,
+                duration: 0,
+                intensity: 0
+            }
+        };
+        
+        // Sound functions
+        function createBeepSound(frequency, duration, volume, type) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type || 'square';
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = volume || 0.1;
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        }
+        
+        function playChargeSound() {
+            createBeepSound(200 + gameState.power * 3, 60, 0.05, 'square');
+        }
+        
+        function playSelectSound(correct) {
+            if (correct) {
+                createBeepSound(880, 200, 0.1, 'square');
+                setTimeout(() => createBeepSound(1320, 300, 0.1, 'square'), 200);
+            } else {
+                createBeepSound(220, 300, 0.1, 'sawtooth');
+            }
+        }
+        
+        function playThresholdSound() {
+            createBeepSound(440, 80, 0.08, 'square');
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPixelBorder(x, y, width, height, thickness, color) {
+            drawPixelRect(x, y, width, thickness, color); // Top
+            drawPixelRect(x, y + height - thickness, width, thickness, color); // Bottom
+            drawPixelRect(x, y + thickness, thickness, height - (thickness * 2), color); // Left
+            drawPixelRect(x + width - thickness, y + thickness, thickness, height - (thickness * 2), color); // Right
+        }
+        
+        function drawText(text, x, y, size, color, align = 'center') {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = align;
+            ctx.fillText(text, x, y);
+        }
+        
+        function drawPowerMeter() {
+            const meterWidth = canvas.width * 0.8;
+            const meterHeight = 40;
+            const meterX = (canvas.width - meterWidth) / 2;
+            const meterY = canvas.height / 2;
+            
+            // Calculate segment width
+            const segmentWidth = meterWidth / gameState.options.length;
+            
+            // Draw meter background
+            drawPixelRect(meterX, meterY, meterWidth, meterHeight, colors.meter.bg);
+            
+            // Draw segments
+            for (let i = 0; i < gameState.options.length; i++) {
+                // Draw segment separator
+                if (i > 0) {
+                    drawPixelRect(meterX + (segmentWidth * i), meterY, 2, meterHeight, '#ffffff');
+                }
+                
+                // Draw segment label
+                const labelX = meterX + (segmentWidth * i) + (segmentWidth / 2);
+                const labelY = meterY + meterHeight + 25;
+                
+                // If this segment is the correct answer, highlight the sweet spot
+                if (i === gameState.correctAnswer && gameState.flashing) {
+                    const sweetSpotWidth = segmentWidth / 3;
+                    const sweetSpotX = meterX + (segmentWidth * i) + (segmentWidth / 2) - (sweetSpotWidth / 2);
+                    drawPixelRect(sweetSpotX, meterY, sweetSpotWidth, meterHeight, colors.meter.sweetSpot);
+                }
+                
+                drawText(gameState.options[i], labelX, labelY, 20, colors.options[i]);
+            }
+            
+            // Draw filled meter based on power
+            const powerWidth = (gameState.power / gameState.maxPower) * meterWidth;
+            drawPixelRect(meterX, meterY, powerWidth, meterHeight, colors.meter.fill);
+            
+            // Draw meter border
+            drawPixelBorder(meterX, meterY, meterWidth, meterHeight, 3, colors.meter.border);
+            
+            // Draw current option indicator
+            if (gameState.currentOption >= 0 && !gameState.answered) {
+                drawText('▼', meterX + (segmentWidth * gameState.currentOption) + (segmentWidth / 2), meterY - 10, 24, colors.options[gameState.currentOption]);
+            }
+        }
+        
+        function drawQuestion() {
+            const y = canvas.height / 3;
+            drawText(gameState.question, canvas.width / 2, y, 26, colors.question);
+        }
+        
+        function drawResult() {
+            if (gameState.answered) {
+                const text = gameState.answerCorrect ? "CORRECT!" : "WRONG!";
+                const color = gameState.answerCorrect ? colors.correct : colors.incorrect;
+                drawText(text, canvas.width / 2, canvas.height * 0.7, 40, color);
+                
+                // Draw restart button
+                const buttonWidth = 160;
+                const buttonHeight = 50;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height * 0.8;
+                
+                // Button hover effect
+                const buttonColor = gameState.restart ? colors.buttonHover : colors.button;
+                
+                drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, buttonColor);
+                drawPixelBorder(buttonX, buttonY, buttonWidth, buttonHeight, 3, '#ffffff');
+                drawText("PLAY AGAIN", canvas.width / 2, buttonY + 33, 20, colors.buttonText);
+            }
+        }
+        
+        function drawInstructions() {
+            if (!gameState.answered) {
+                drawText("HOLD to charge - RELEASE to select", canvas.width / 2, canvas.height * 0.85, 16, '#aaaaff');
+            }
+        }
+        
+        function drawChargePixels() {
+            if (gameState.charging && !gameState.answered) {
+                const particleCount = Math.floor(gameState.power / 5) + 1;
+                for (let i = 0; i < particleCount; i++) {
+                    const size = Math.random() * 6 + 2;
+                    const x = Math.random() * canvas.width;
+                    const y = canvas.height - Math.random() * 100;
+                    drawPixelRect(x, y, size, size, colors.meter.fill);
+                }
+            }
+        }
+        
+        function applyScreenShake() {
+            if (gameState.shake.active) {
+                const intensity = gameState.shake.intensity;
+                ctx.save();
+                ctx.translate(
+                    Math.random() * intensity * 2 - intensity,
+                    Math.random() * intensity * 2 - intensity
+                );
+            }
+        }
+        
+        function removeScreenShake() {
+            if (gameState.shake.active) {
+                ctx.restore();
+                gameState.shake.duration -= 16; // Assume ~60fps
+                if (gameState.shake.duration <= 0) {
+                    gameState.shake.active = false;
+                }
+            }
+        }
+        
+        function draw(timestamp) {
+            const deltaTime = (timestamp - gameState.lastFrameTime) / 1000;
+            gameState.lastFrameTime = timestamp;
+            
+            // Clear canvas with pixelated background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply screen shake if active
+            applyScreenShake();
+            
+            // Draw pixelated grid (background effect)
+            for (let x = 0; x < canvas.width; x += 20) {
+                for (let y = 0; y < canvas.height; y += 20) {
+                    if (Math.random() > 0.97) {
+                        const size = 2;
+                        const brightness = Math.floor(Math.random() * 50) + 20;
+                        drawPixelRect(x, y, size, size, `rgb(${brightness}, ${brightness}, ${brightness + 20})`);
+                    }
+                }
+            }
+            
+            // Game elements
+            drawQuestion();
+            drawPowerMeter();
+            drawChargePixels();
+            drawResult();
+            drawInstructions();
+            
+            // Remove screen shake
+            removeScreenShake();
+            
+            // Update game state
+            if (gameState.charging && !gameState.answered && !gameState.cooldown) {
+                gameState.power += gameState.chargeSpeed * deltaTime;
+                
+                // Play charge sound every few frames
+                if (Math.random() > 0.7) {
+                    playChargeSound();
+                }
+                
+                // Check if reached a new option threshold
+                const newOption = Math.floor((gameState.power / gameState.maxPower) * gameState.options.length);
+                if (newOption !== gameState.currentOption && newOption < gameState.options.length) {
+                    gameState.currentOption = newOption;
+                    
+                    // Screen shake when reaching a threshold
+                    gameState.shake = {
+                        active: true,
+                        duration: 100,
+                        intensity: 3
+                    };
+                    
+                    playThresholdSound();
+                }
+                
+                // Sweet spot flashing effect
+                gameState.flashTimer += deltaTime;
+                if (gameState.flashTimer > 0.2) {
+                    gameState.flashing = !gameState.flashing;
+                    gameState.flashTimer = 0;
+                }
+                
+                // Reset power if maxed out
+                if (gameState.power >= gameState.maxPower) {
+                    gameState.power = 0;
+                    gameState.currentOption = -1;
+                }
+            }
+            
+            requestAnimationFrame(draw);
+        }
+        
+        // Event handlers
+        function handleStart(e) {
+            e.preventDefault();
+            if (gameState.answered) {
+                // Check if click is on restart button
+                const buttonWidth = 160;
+                const buttonHeight = 50;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height * 0.8;
+                
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (e.clientX || e.touches[0].clientX) - rect.left;
+                const clickY = (e.clientY || e.touches[0].clientY) - rect.top;
+                
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                
+                const scaledX = clickX * scaleX;
+                const scaledY = clickY * scaleY;
+                
+                if (
+                    scaledX >= buttonX && 
+                    scaledX <= buttonX + buttonWidth && 
+                    scaledY >= buttonY && 
+                    scaledY <= buttonY + buttonHeight
+                ) {
+                    resetGame();
+                }
+            } else if (!gameState.cooldown) {
+                gameState.charging = true;
+                gameState.startTime = Date.now();
+            }
+        }
+        
+        function handleEnd(e) {
+            e.preventDefault();
+            if (gameState.charging && !gameState.answered) {
+                gameState.charging = false;
+                
+                // Select answer based on power level
+                const selectedOption = Math.floor((gameState.power / gameState.maxPower) * gameState.options.length);
+                
+                if (selectedOption >= 0 && selectedOption < gameState.options.length) {
+                    gameState.answered = true;
+                    gameState.answerCorrect = (selectedOption === gameState.correctAnswer);
+                    
+                    // Bigger screen shake on answer
+                    gameState.shake = {
+                        active: true,
+                        duration: 300,
+                        intensity: gameState.answerCorrect ? 5 : 8
+                    };
+                    
+                    playSelectSound(gameState.answerCorrect);
+                }
+                
+                // Add cooldown to prevent rapid tapping
+                gameState.cooldown = true;
+                clearTimeout(gameState.cooldownTimer);
+                gameState.cooldownTimer = setTimeout(() => {
+                    gameState.cooldown = false;
+                }, 300);
+            }
+        }
+        
+        function handleMouseMove(e) {
+            if (gameState.answered) {
+                const buttonWidth = 160;
+                const buttonHeight = 50;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height * 0.8;
+                
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                
+                const scaledX = mouseX * scaleX;
+                const scaledY = mouseY * scaleY;
+                
+                gameState.restart = (
+                    scaledX >= buttonX && 
+                    scaledX <= buttonX + buttonWidth && 
+                    scaledY >= buttonY && 
+                    scaledY <= buttonY + buttonHeight
+                );
+            }
+        }
+        
+        function resetGame() {
+            gameState = {
+                ...gameState,
+                power: 0,
+                charging: false,
+                answered: false,
+                answerCorrect: null,
+                currentOption: -1,
+                cooldown: false,
+                restart: false,
+                flashing: false,
+                flashTimer: 0
+            };
+        }
+        
+        // Set up event listeners
+        const startEvents = ['mousedown', 'touchstart'];
+        const endEvents = ['mouseup', 'touchend'];
+        
+        startEvents.forEach(event => {
+            canvas.addEventListener(event, handleStart);
+        });
+        
+        endEvents.forEach(event => {
+            canvas.addEventListener(event, handleEnd);
+        });
+        
+        canvas.addEventListener('mousemove', handleMouseMove);
+        
+        // Start the game
+        gameState.lastFrameTime = performance.now();
+        requestAnimationFrame(draw);
+    </script>
+</body>
+</html>

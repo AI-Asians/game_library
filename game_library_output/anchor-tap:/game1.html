@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Anchor Tap: True or False</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Detect if on mobile
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // Set canvas size based on device
+    if (isMobile) {
+      canvas.width = 360;
+      canvas.height = 640;
+    } else {
+      canvas.width = 800;
+      canvas.height = 600;
+    }
+    
+    // Game variables
+    const colors = {
+      background: '#0a2e38',
+      anchor: '#ff7700',
+      anchorGlow: '#ffaa33',
+      text: '#ffffff',
+      trueColor: '#33dd33',
+      falseColor: '#dd3333',
+      correctFeedback: '#33ff33',
+      incorrectFeedback: '#ff3333'
+    };
+    
+    // The answer is FALSE - The Great Wall is NOT visible from space with the naked eye
+    const correctAnswer = false;
+    
+    // Game state
+    let gameState = 'playing'; // playing, correct, incorrect
+    let pulseCycle = 0;
+    let questionDisplayTime = 0;
+    let anchorReady = false;
+    let answerSelected = null;
+    let feedbackAlpha = 0;
+    
+    // Position variables
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const anchorRadius = isMobile ? 40 : 60;
+    const answerButtonRadius = isMobile ? 25 : 35;
+    const answerDistance = isMobile ? 100 : 150;
+    
+    // Audio context for sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Simple sound effect function
+    function playSound(freq, type, duration) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    // Draw pixelated circle
+    function drawPixelatedCircle(x, y, radius, color) {
+      const pixelSize = isMobile ? 3 : 4;
+      ctx.fillStyle = color;
+      
+      for (let px = -radius; px < radius; px += pixelSize) {
+        for (let py = -radius; py < radius; py += pixelSize) {
+          const dist = Math.sqrt(px * px + py * py);
+          if (dist < radius) {
+            ctx.fillRect(
+              Math.floor((x + px) / pixelSize) * pixelSize,
+              Math.floor((y + py) / pixelSize) * pixelSize,
+              pixelSize,
+              pixelSize
+            );
+          }
+        }
+      }
+    }
+    
+    // Draw the game elements
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = colors.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw question
+      ctx.fillStyle = colors.text;
+      ctx.font = isMobile ? '16px sans-serif' : '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('The Great Wall of China is visible from space.', centerX, centerY - (isMobile ? 150 : 180));
+      
+      // Determine if anchor should be shown
+      if (questionDisplayTime > 1.5) {
+        anchorReady = true;
+      }
+      
+      // Draw anchor point with pulsing effect
+      if (anchorReady && gameState === 'playing') {
+        const pulseScale = 1 + Math.sin(pulseCycle) * 0.15;
+        const glowRadius = anchorRadius * (1.2 + Math.sin(pulseCycle) * 0.1);
+        
+        // Draw glow effect
+        drawPixelatedCircle(
+          centerX, 
+          centerY, 
+          glowRadius, 
+          colors.anchorGlow + Math.floor(Math.abs(Math.sin(pulseCycle) * 80)).toString(16)
+        );
+        
+        // Draw anchor
+        drawPixelatedCircle(
+          centerX, 
+          centerY, 
+          anchorRadius * pulseScale, 
+          colors.anchor
+        );
+        
+        // Draw T/F text inside
+        ctx.fillStyle = colors.text;
+        ctx.font = isMobile ? '20px sans-serif' : '30px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('TAP', centerX, centerY + (isMobile ? 8 : 10));
+        
+        // Draw True and False options
+        if (gameState === 'playing') {
+          // True button
+          drawPixelatedCircle(
+            centerX - answerDistance, 
+            centerY, 
+            answerButtonRadius, 
+            colors.trueColor
+          );
+          
+          ctx.fillStyle = '#000';
+          ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+          ctx.fillText('T', centerX - answerDistance, centerY + (isMobile ? 6 : 7));
+          
+          // False button
+          drawPixelatedCircle(
+            centerX + answerDistance, 
+            centerY, 
+            answerButtonRadius, 
+            colors.falseColor
+          );
+          
+          ctx.fillStyle = '#000';
+          ctx.fillText('F', centerX + answerDistance, centerY + (isMobile ? 6 : 7));
+        }
+      }
+      
+      // Draw feedback if answer was selected
+      if (gameState === 'correct' || gameState === 'incorrect') {
+        const feedbackColor = gameState === 'correct' ? colors.correctFeedback : colors.incorrectFeedback;
+        
+        // Draw expanding feedback circle
+        drawPixelatedCircle(
+          centerX, 
+          centerY, 
+          anchorRadius * (1 + feedbackAlpha * 2), 
+          feedbackColor + Math.floor((1 - feedbackAlpha) * 255).toString(16)
+        );
+        
+        // Draw result text
+        ctx.fillStyle = colors.text;
+        ctx.font = isMobile ? '20px sans-serif' : '28px sans-serif';
+        
+        if (feedbackAlpha > 0.3) {
+          const resultText = gameState === 'correct' ? 'Correct!' : 'Incorrect!';
+          ctx.fillText(resultText, centerX, centerY - (isMobile ? 80 : 100));
+          
+          // Show the actual answer
+          ctx.font = isMobile ? '16px sans-serif' : '22px sans-serif';
+          ctx.fillText('The Great Wall is NOT visible from space', centerX, centerY + (isMobile ? 80 : 100));
+          ctx.fillText('with the naked eye.', centerX, centerY + (isMobile ? 105 : 130));
+        }
+        
+        // Draw restart button
+        if (feedbackAlpha > 0.8) {
+          ctx.fillStyle = '#555';
+          const restartWidth = isMobile ? 120 : 150;
+          const restartHeight = isMobile ? 40 : 50;
+          ctx.fillRect(
+            centerX - restartWidth/2,
+            centerY + (isMobile ? 150 : 180),
+            restartWidth,
+            restartHeight
+          );
+          
+          ctx.fillStyle = '#fff';
+          ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+          ctx.fillText('Restart', centerX, centerY + (isMobile ? 175 : 210));
+        }
+      }
+    }
+    
+    // Update game logic
+    function update(deltaTime) {
+      if (gameState === 'playing') {
+        questionDisplayTime += deltaTime;
+        pulseCycle += deltaTime * 3;
+      } else if (gameState === 'correct' || gameState === 'incorrect') {
+        feedbackAlpha = Math.min(feedbackAlpha + deltaTime * 2, 1);
+      }
+    }
+    
+    // Handle user input
+    canvas.addEventListener('click', function(event) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (event.clientX - rect.left) * scaleX;
+      const y = (event.clientY - rect.top) * scaleY;
+      
+      if (gameState === 'playing' && anchorReady) {
+        // Check if anchor was clicked
+        const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+        
+        if (distance < anchorRadius) {
+          // Show T/F options
+          // Check if True button was clicked
+          const distanceToTrue = Math.sqrt(Math.pow(x - (centerX - answerDistance), 2) + Math.pow(y - centerY, 2));
+          if (distanceToTrue < answerButtonRadius) {
+            answerSelected = true;
+            if (answerSelected === correctAnswer) {
+              gameState = 'correct';
+              playSound(660, 'square', 0.1);
+              setTimeout(() => playSound(880, 'square', 0.2), 100);
+            } else {
+              gameState = 'incorrect';
+              playSound(220, 'sawtooth', 0.2);
+              setTimeout(() => playSound(180, 'sawtooth', 0.3), 200);
+            }
+          }
+          
+          // Check if False button was clicked
+          const distanceToFalse = Math.sqrt(Math.pow(x - (centerX + answerDistance), 2) + Math.pow(y - centerY, 2));
+          if (distanceToFalse < answerButtonRadius) {
+            answerSelected = false;
+            if (answerSelected === correctAnswer) {
+              gameState = 'correct';
+              playSound(660, 'square', 0.1);
+              setTimeout(() => playSound(880, 'square', 0.2), 100);
+            } else {
+              gameState = 'incorrect';
+              playSound(220, 'sawtooth', 0.2);
+              setTimeout(() => playSound(180, 'sawtooth', 0.3), 200);
+            }
+          }
+        }
+      } else if (gameState === 'correct' || gameState === 'incorrect') {
+        // Check if restart button was clicked
+        if (feedbackAlpha > 0.8) {
+          const restartWidth = isMobile ? 120 : 150;
+          const restartHeight = isMobile ? 40 : 50;
+          if (
+            x > centerX - restartWidth/2 &&
+            x < centerX + restartWidth/2 &&
+            y > centerY + (isMobile ? 150 : 180) &&
+            y < centerY + (isMobile ? 150 : 180) + restartHeight
+          ) {
+            // Restart game
+            gameState = 'playing';
+            pulseCycle = 0;
+            questionDisplayTime = 0;
+            anchorReady = false;
+            answerSelected = null;
+            feedbackAlpha = 0;
+            playSound(440, 'sine', 0.1);
+          }
+        }
+      }
+    });
+    
+    // Game loop
+    let lastTime = 0;
+    function gameLoop(timestamp) {
+      const deltaTime = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
+      
+      update(deltaTime);
+      draw();
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start game on first interaction for audio
+    canvas.addEventListener('click', function startGame() {
+      canvas.removeEventListener('click', startGame);
+      playSound(440, 'sine', 0.1);
+      requestAnimationFrame(gameLoop);
+    });
+    
+    // Initial draw to show something before first click
+    draw();
+  </script>
+</body>
+</html>

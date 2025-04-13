@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound Wave Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #333;
+            color: white;
+            border: 3px solid #666;
+            display: none;
+            font-family: sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Set up the canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#0f0f23',
+            text: '#ffffff',
+            trueWave: '#5fcc5f',
+            falseWave: '#cc5f5f',
+            highlight: '#ffcc00'
+        };
+        
+        let gameOver = false;
+        let result = null; // 'correct' or 'incorrect'
+        let audioContext = null;
+        
+        // Wave animation variables
+        const trueWave = {
+            active: false,
+            amplitude: 50,
+            frequency: 0.03,
+            speed: 0.08,
+            phase: 0,
+            height: canvas.height / 2 - 100,
+            color: colors.trueWave,
+            pulseTimer: 0,
+            pulseState: false
+        };
+        
+        const falseWave = {
+            active: false,
+            amplitude: 40,
+            frequency: 0.05,
+            speed: 0.06,
+            phase: Math.PI / 2,
+            height: canvas.height / 2 + 100,
+            color: colors.falseWave,
+            pulseTimer: 0,
+            pulseState: false
+        };
+        
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Initialize the game
+        function init() {
+            gameOver = false;
+            result = null;
+            trueWave.pulseTimer = 0;
+            falseWave.pulseTimer = 0;
+            trueWave.pulseState = false;
+            falseWave.pulseState = false;
+            restartBtn.style.display = 'none';
+            
+            // Initialize Audio Context on first user interaction
+            if (!audioContext) {
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    console.log('Web Audio API not supported');
+                }
+            }
+            
+            // Start the animation loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Play a simple beep sound effect
+        function playSound(type) {
+            if (!audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            // Different sound types
+            switch(type) {
+                case 'true':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'false':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime);
+                    }, 100);
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime);
+                    }, 200);
+                    
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(196.00, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(185.00, audioContext.currentTime);
+                    }, 150);
+                    
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw a pixelated sound wave
+        function drawWave(wave) {
+            const width = canvas.width;
+            const step = 8; // Step size for pixelated effect
+            
+            ctx.beginPath();
+            ctx.strokeStyle = wave.pulseState ? colors.highlight : wave.color;
+            ctx.lineWidth = 6;
+            
+            // Draw wave as connected line segments with pixelated steps
+            for (let x = 0; x < width; x += step) {
+                const y = wave.height + Math.floor(wave.amplitude * Math.sin(x * wave.frequency + wave.phase) / step) * step;
+                
+                if (x === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            
+            ctx.stroke();
+            
+            // Draw wave label
+            ctx.fillStyle = wave.color;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            // Label text
+            const label = wave === trueWave ? "TRUE" : "FALSE";
+            ctx.fillText(label, canvas.width / 2, wave.height + (wave === trueWave ? -70 : 90));
+            
+            // Draw speaker icon
+            const iconSize = isMobile ? 20 : 30;
+            const iconX = canvas.width / 2 - 100;
+            const iconY = wave.height - iconSize/2;
+            
+            // Speaker box
+            ctx.fillRect(iconX, iconY, iconSize/2, iconSize);
+            
+            // Speaker cone (simplified for 8-bit look)
+            ctx.beginPath();
+            ctx.moveTo(iconX + iconSize/2, iconY);
+            ctx.lineTo(iconX + iconSize, iconY - iconSize/2);
+            ctx.lineTo(iconX + iconSize, iconY + iconSize*1.5);
+            ctx.lineTo(iconX + iconSize/2, iconY + iconSize);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Sound waves (when pulsing)
+            if (wave.pulseState) {
+                ctx.beginPath();
+                ctx.strokeStyle = wave.color;
+                ctx.lineWidth = 3;
+                ctx.moveTo(iconX + iconSize + 5, iconY + iconSize/4);
+                ctx.lineTo(iconX + iconSize + 15, iconY + iconSize/4);
+                ctx.moveTo(iconX + iconSize + 8, iconY + iconSize/2);
+                ctx.lineTo(iconX + iconSize + 20, iconY + iconSize/2);
+                ctx.moveTo(iconX + iconSize + 5, iconY + iconSize*3/4);
+                ctx.lineTo(iconX + iconSize + 15, iconY + iconSize*3/4);
+                ctx.stroke();
+            }
+        }
+        
+        // Update wave animation
+        function updateWaves(deltaTime) {
+            // Update wave phases for animation
+            trueWave.phase += trueWave.speed;
+            falseWave.phase += falseWave.speed;
+            
+            // Pulse effect timing
+            trueWave.pulseTimer += deltaTime;
+            falseWave.pulseTimer += deltaTime;
+            
+            // Alternate which wave is active
+            if (trueWave.pulseTimer > 1200) {
+                trueWave.pulseTimer = 0;
+                trueWave.pulseState = !trueWave.pulseState;
+                
+                if (trueWave.pulseState) {
+                    playSound('true');
+                }
+            }
+            
+            if (falseWave.pulseTimer > 1500) {
+                falseWave.pulseTimer = 0;
+                falseWave.pulseState = !falseWave.pulseState;
+                
+                if (falseWave.pulseState) {
+                    playSound('false');
+                }
+            }
+        }
+        
+        // Main game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Clear the canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText("Water boils at 100 degrees Celsius at sea level.", canvas.width / 2, 80);
+            
+            // Instructions
+            ctx.font = `${isMobile ? 16 : 18}px sans-serif`;
+            ctx.fillText("Tap the sound wave when it's pulsing to answer", canvas.width / 2, 120);
+            
+            if (!gameOver) {
+                // Update and draw waves
+                updateWaves(deltaTime);
+                drawWave(trueWave);
+                drawWave(falseWave);
+            } else {
+                // Show result text
+                ctx.font = `${isMobile ? 32 : 48}px sans-serif`;
+                ctx.fillStyle = result === 'correct' ? colors.trueWave : colors.falseWave;
+                ctx.fillText(result === 'correct' ? "CORRECT!" : "INCORRECT!", canvas.width / 2, canvas.height / 2);
+                restartBtn.style.display = 'block';
+            }
+            
+            // Continue the game loop if not game over
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Handle clicks/taps
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseY = e.clientY - rect.top;
+            
+            // Check which wave was clicked (based on vertical position)
+            const clickedTrue = Math.abs(mouseY - trueWave.height) < 70;
+            const clickedFalse = Math.abs(mouseY - falseWave.height) < 70;
+            
+            if (clickedTrue) {
+                if (trueWave.pulseState) {
+                    // Correct answer - the statement is true
+                    result = 'correct';
+                    playSound('correct');
+                } else {
+                    // Timing was off
+                    result = 'incorrect';
+                    playSound('incorrect');
+                }
+                gameOver = true;
+            } else if (clickedFalse) {
+                if (falseWave.pulseState) {
+                    // Incorrect answer - the statement is true, not false
+                    result = 'incorrect';
+                    playSound('incorrect');
+                } else {
+                    // Timing was off
+                    result = 'incorrect'; 
+                    playSound('incorrect');
+                }
+                gameOver = true;
+            }
+        });
+        
+        // Add restart functionality
+        restartBtn.addEventListener('click', init);
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

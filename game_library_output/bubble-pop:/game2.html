@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Bubble Pop</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .restart-btn {
+            position: absolute;
+            bottom: 20px;
+            background-color: #444;
+            color: #fff;
+            border: 4px solid #888;
+            padding: 8px 16px;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button class="restart-btn" id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const question = "Which planet is known as the Red Planet?";
+        const answers = ["Mars", "Venus", "Jupiter", "Mercury"];
+        const correctAnswer = "Mars";
+        
+        let gameOver = false;
+        let bubbles = [];
+        let stars = [];
+
+        // Colors
+        const COLORS = {
+            background: "#0A0A2A",
+            question: "#FFFFFF",
+            bubbleOutline: "#88AAFF",
+            bubbleFill: ["#FF5555", "#55FF55", "#5555FF", "#FFFF55"],
+            correct: "#55FF55",
+            incorrect: "#FF5555",
+            textColor: "#FFFFFF",
+            stars: ["#FFFFFF", "#AAAAFF", "#FFAAAA", "#AAFFAA"]
+        };
+
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === "correct") {
+                oscillator.type = "square";
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(587.33, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === "incorrect") {
+                oscillator.type = "sawtooth";
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === "pop") {
+                oscillator.type = "triangle";
+                oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+        }
+
+        // Create stars
+        function createStars() {
+            for (let i = 0; i < 100; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.floor(Math.random() * 3) + 1,
+                    color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)],
+                    twinkle: Math.random() * 0.05
+                });
+            }
+        }
+
+        // Create bubbles
+        function createBubbles() {
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                const size = Math.floor(Math.random() * 20) + 60;
+                bubbles.push({
+                    x: Math.random() * (canvas.width - size),
+                    y: Math.random() * (canvas.height - size) + canvas.height / 3,
+                    size: size,
+                    speedX: (Math.random() - 0.5) * 2,
+                    speedY: (Math.random() - 0.5) * 2,
+                    text: shuffledAnswers[i],
+                    color: COLORS.bubbleFill[i],
+                    wobble: 0,
+                    wobbleSpeed: 0.05 + Math.random() * 0.05,
+                    wobbleAmount: 2 + Math.random() * 3,
+                    popping: false,
+                    popFrame: 0
+                });
+            }
+        }
+
+        // Draw pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 2;
+            
+            ctx.fillStyle = color;
+            for (let px = -radius; px < radius; px += pixelSize) {
+                for (let py = -radius; py < radius; py += pixelSize) {
+                    const dist = Math.sqrt(px * px + py * py);
+                    if (dist < radius) {
+                        ctx.fillRect(
+                            Math.floor((x + px) / pixelSize) * pixelSize,
+                            Math.floor((y + py) / pixelSize) * pixelSize,
+                            pixelSize,
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+
+        // Draw pixelated text
+        function drawPixelatedText(text, x, y, size) {
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = COLORS.textColor;
+            ctx.fillText(text, x, y);
+        }
+
+        // Handle click/tap
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            for (let i = 0; i < bubbles.length; i++) {
+                const bubble = bubbles[i];
+                if (bubble.popping) continue;
+                
+                const distance = Math.sqrt(
+                    Math.pow(clickX - bubble.x - bubble.size/2, 2) + 
+                    Math.pow(clickY - bubble.y - bubble.size/2, 2)
+                );
+                
+                if (distance < bubble.size / 2) {
+                    bubble.popping = true;
+                    playSound("pop");
+                    
+                    if (bubble.text === correctAnswer) {
+                        setTimeout(() => {
+                            gameOver = true;
+                            playSound("correct");
+                            restartBtn.style.display = "block";
+                        }, 500);
+                    } else {
+                        setTimeout(() => {
+                            gameOver = true;
+                            playSound("incorrect");
+                            restartBtn.style.display = "block";
+                        }, 500);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Draw stars
+        function drawStars() {
+            for (let i = 0; i < stars.length; i++) {
+                const star = stars[i];
+                const brightness = Math.sin(Date.now() * star.twinkle) * 0.5 + 0.5;
+                ctx.fillStyle = star.color;
+                ctx.globalAlpha = 0.5 + brightness * 0.5;
+                ctx.fillRect(
+                    Math.floor(star.x / 2) * 2,
+                    Math.floor(star.y / 2) * 2,
+                    star.size,
+                    star.size
+                );
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // Update game
+        function update() {
+            for (let i = 0; i < bubbles.length; i++) {
+                const bubble = bubbles[i];
+                
+                if (!bubble.popping) {
+                    bubble.x += bubble.speedX;
+                    bubble.y += bubble.speedY;
+                    bubble.wobble += bubble.wobbleSpeed;
+                    
+                    if (bubble.x < 0 || bubble.x > canvas.width - bubble.size) {
+                        bubble.speedX *= -1;
+                    }
+                    
+                    if (bubble.y < canvas.height / 3 || bubble.y > canvas.height - bubble.size) {
+                        bubble.speedY *= -1;
+                    }
+                } else {
+                    bubble.popFrame++;
+                }
+            }
+        }
+
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            drawStars();
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = `${isMobile ? 20 : 28}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(question, canvas.width / 2, canvas.height / 6);
+            
+            // Draw bubbles
+            for (let i = 0; i < bubbles.length; i++) {
+                const bubble = bubbles[i];
+                
+                if (bubble.popping) {
+                    if (bubble.popFrame < 6) {
+                        // Draw pop animation
+                        const popSize = bubble.size * (1 + bubble.popFrame * 0.15);
+                        const alpha = 1 - (bubble.popFrame / 6);
+                        ctx.globalAlpha = alpha;
+                        
+                        // Draw shards
+                        for (let j = 0; j < 8; j++) {
+                            const angle = j * Math.PI / 4;
+                            const distance = bubble.size * 0.3 * bubble.popFrame;
+                            const x = bubble.x + bubble.size/2 + Math.cos(angle) * distance;
+                            const y = bubble.y + bubble.size/2 + Math.sin(angle) * distance;
+                            
+                            ctx.fillStyle = bubble.color;
+                            ctx.fillRect(
+                                Math.floor(x / 2) * 2 - 4,
+                                Math.floor(y / 2) * 2 - 4,
+                                8,
+                                8
+                            );
+                        }
+                        
+                        ctx.globalAlpha = 1;
+                    }
+                } else {
+                    // Wobble effect
+                    const wobbleX = Math.sin(bubble.wobble) * bubble.wobbleAmount;
+                    const wobbleY = Math.cos(bubble.wobble * 0.7) * bubble.wobbleAmount;
+                    
+                    // Draw outline
+                    drawPixelatedCircle(
+                        bubble.x + bubble.size/2 + wobbleX,
+                        bubble.y + bubble.size/2 + wobbleY,
+                        bubble.size/2 + 4,
+                        COLORS.bubbleOutline
+                    );
+                    
+                    // Draw bubble
+                    drawPixelatedCircle(
+                        bubble.x + bubble.size/2 + wobbleX,
+                        bubble.y + bubble.size/2 + wobbleY,
+                        bubble.size/2,
+                        bubble.color
+                    );
+                    
+                    // Draw highlight
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+                    ctx.beginPath();
+                    ctx.arc(
+                        bubble.x + bubble.size/2 - bubble.size/5 + wobbleX,
+                        bubble.y + bubble.size/2 - bubble.size/5 + wobbleY,
+                        bubble.size/6,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    // Draw text
+                    drawPixelatedText(
+                        bubble.text,
+                        bubble.x + bubble.size/2 + wobbleX,
+                        bubble.y + bubble.size/2 + wobbleY,
+                        Math.min(20, bubble.size / 4)
+                    );
+                }
+            }
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+                ctx.fillStyle = "#FFFFFF";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                
+                const selectedBubble = bubbles.find(b => b.popping);
+                if (selectedBubble && selectedBubble.text === correctAnswer) {
+                    ctx.fillStyle = COLORS.correct;
+                    ctx.fillText("Correct!", canvas.width / 2, canvas.height / 2 - 40);
+                } else {
+                    ctx.fillStyle = COLORS.incorrect;
+                    ctx.fillText("Incorrect!", canvas.width / 2, canvas.height / 2 - 40);
+                    ctx.fillStyle = COLORS.correct;
+                    ctx.fillText(`The correct answer is ${correctAnswer}`, canvas.width / 2, canvas.height / 2 + 10);
+                }
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize game
+        function init() {
+            gameOver = false;
+            bubbles = [];
+            restartBtn.style.display = "none";
+            createStars();
+            createBubbles();
+            gameLoop();
+        }
+
+        // Event listeners
+        canvas.addEventListener("click", handleClick);
+        restartBtn.addEventListener("click", init);
+
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

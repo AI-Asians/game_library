@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Quiz - Arkanoid Style</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 5px 10px;
+            background-color: #222;
+            color: #fff;
+            border: 2px solid #555;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">RESTART</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        const restartBtn = document.getElementById('restart');
+
+        // Colors (8-bit palette)
+        const COLORS = {
+            background: '#0f0f1b',
+            text: '#ffffff',
+            paddle: '#5fcde4',
+            paddleOutline: '#1a7fb5',
+            ball: '#ffd866',
+            ballOutline: '#e6b800',
+            correct: '#78dd72',
+            incorrect: '#ff6188',
+            brick: '#ab9df2',
+            brickOutline: '#7970b3'
+        };
+
+        // Game variables
+        let gameOver = false;
+        let correctAnswerHit = false;
+        let screenShake = 0;
+
+        // Question and answers
+        const question = "Which planet is known as the Red Planet?";
+        const answers = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+
+        // Shuffle answers
+        for (let i = answers.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [answers[i], answers[j]] = [answers[j], answers[i]];
+        }
+
+        // Brick setup
+        const brickRows = 2;
+        const brickCols = 2;
+        const brickWidth = (canvas.width - 60) / brickCols;
+        const brickHeight = 60;
+        const brickPadding = 15;
+        const brickOffsetTop = 100;
+        const brickOffsetLeft = 30;
+
+        let bricks = [];
+        let answerIndex = 0;
+
+        for (let r = 0; r < brickRows; r++) {
+            for (let c = 0; c < brickCols; c++) {
+                if (answerIndex < answers.length) {
+                    bricks.push({
+                        x: c * (brickWidth + brickPadding) + brickOffsetLeft,
+                        y: r * (brickHeight + brickPadding) + brickOffsetTop,
+                        width: brickWidth,
+                        height: brickHeight,
+                        answer: answers[answerIndex],
+                        visible: true
+                    });
+                    answerIndex++;
+                }
+            }
+        }
+
+        // Paddle setup
+        const paddleHeight = 20;
+        const paddleWidth = 120;
+        let paddleX = (canvas.width - paddleWidth) / 2;
+
+        // Ball setup
+        const ballRadius = 8;
+        let ballX = canvas.width / 2;
+        let ballY = canvas.height - paddleHeight - ballRadius - 10;
+        let ballDX = 4;
+        let ballDY = -4;
+
+        // Particles
+        let particles = [];
+
+        // Game controls
+        let rightPressed = false;
+        let leftPressed = false;
+        let mouseX = 0;
+        let touchX = 0;
+
+        // Sound effects
+        function createBeepSound(frequency, duration, type = 'square') {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        }
+
+        function paddleHitSound() {
+            createBeepSound(300, 0.1);
+        }
+
+        function brickHitSound(correct) {
+            createBeepSound(correct ? 800 : 200, 0.2);
+        }
+
+        function wallHitSound() {
+            createBeepSound(150, 0.1);
+        }
+
+        // Event listeners
+        document.addEventListener('keydown', keyDownHandler);
+        document.addEventListener('keyup', keyUpHandler);
+        document.addEventListener('mousemove', mouseMoveHandler);
+        canvas.addEventListener('touchmove', touchMoveHandler);
+        canvas.addEventListener('touchstart', touchMoveHandler);
+        restartBtn.addEventListener('click', restartGame);
+
+        function keyDownHandler(e) {
+            if (e.key === 'Right' || e.key === 'ArrowRight') {
+                rightPressed = true;
+            } else if (e.key === 'Left' || e.key === 'ArrowLeft') {
+                leftPressed = true;
+            }
+        }
+
+        function keyUpHandler(e) {
+            if (e.key === 'Right' || e.key === 'ArrowRight') {
+                rightPressed = false;
+            } else if (e.key === 'Left' || e.key === 'ArrowLeft') {
+                leftPressed = false;
+            }
+        }
+
+        function mouseMoveHandler(e) {
+            const relativeX = e.clientX - canvas.offsetLeft;
+            if (relativeX > 0 && relativeX < canvas.width) {
+                mouseX = relativeX;
+            }
+        }
+
+        function touchMoveHandler(e) {
+            e.preventDefault();
+            if (e.touches) {
+                const relativeX = e.touches[0].clientX - canvas.offsetLeft;
+                if (relativeX > 0 && relativeX < canvas.width) {
+                    touchX = relativeX;
+                }
+            }
+        }
+
+        function createParticles(x, y, color, count = 10) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    dx: (Math.random() - 0.5) * 5,
+                    dy: (Math.random() - 0.5) * 5,
+                    radius: Math.random() * 3 + 1,
+                    alpha: 1,
+                    color: color
+                });
+            }
+        }
+
+        function drawPixelRect(x, y, width, height, fillColor, outlineColor) {
+            // Main fill
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x, y, width, height);
+            
+            // Pixel art style outline
+            ctx.fillStyle = outlineColor;
+            ctx.fillRect(x, y, width, 2); // Top
+            ctx.fillRect(x, y + height - 2, width, 2); // Bottom
+            ctx.fillRect(x, y, 2, height); // Left
+            ctx.fillRect(x + width - 2, y, 2, height); // Right
+            
+            // Lighter highlight (top and left)
+            ctx.fillStyle = lightenColor(fillColor, 30);
+            ctx.fillRect(x + 2, y + 2, width - 4, 2); // Top inner
+            ctx.fillRect(x + 2, y + 2, 2, height - 4); // Left inner
+            
+            // Darker shadow (bottom and right)
+            ctx.fillStyle = darkenColor(fillColor, 30);
+            ctx.fillRect(x + 2, y + height - 4, width - 4, 2); // Bottom inner
+            ctx.fillRect(x + width - 4, y + 2, 2, height - 4); // Right inner
+        }
+
+        function lightenColor(color, percent) {
+            const num = parseInt(color.slice(1), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.min(255, (num >> 16) + amt);
+            const G = Math.min(255, ((num >> 8) & 0x00FF) + amt);
+            const B = Math.min(255, (num & 0x0000FF) + amt);
+            return `#${(1 << 24 | R << 16 | G << 8 | B).toString(16).slice(1)}`;
+        }
+
+        function darkenColor(color, percent) {
+            const num = parseInt(color.slice(1), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.max(0, (num >> 16) - amt);
+            const G = Math.max(0, ((num >> 8) & 0x00FF) - amt);
+            const B = Math.max(0, (num & 0x0000FF) - amt);
+            return `#${(1 << 24 | R << 16 | G << 8 | B).toString(16).slice(1)}`;
+        }
+
+        function drawPixelCircle(x, y, radius, fillColor, outlineColor) {
+            ctx.fillStyle = fillColor;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.strokeStyle = outlineColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        function drawBricks() {
+            bricks.forEach(brick => {
+                if (brick.visible) {
+                    const brickColor = brick.answer.correct ? COLORS.correct : COLORS.incorrect;
+                    drawPixelRect(brick.x, brick.y, brick.width, brick.height, brickColor, darkenColor(brickColor, 30));
+                    
+                    // Text
+                    ctx.fillStyle = '#000';
+                    ctx.font = '16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(brick.answer.text, brick.x + brick.width / 2, brick.y + brick.height / 2);
+                }
+            });
+        }
+
+        function drawPaddle() {
+            drawPixelRect(paddleX, canvas.height - paddleHeight, paddleWidth, paddleHeight, COLORS.paddle, COLORS.paddleOutline);
+        }
+
+        function drawBall() {
+            drawPixelCircle(ballX, ballY, ballRadius, COLORS.ball, COLORS.ballOutline);
+        }
+
+        function drawParticles() {
+            particles.forEach((p, index) => {
+                p.x += p.dx;
+                p.y += p.dy;
+                p.alpha -= 0.02;
+                
+                if (p.alpha <= 0) {
+                    particles.splice(index, 1);
+                    return;
+                }
+                
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.radius, p.radius);
+                ctx.globalAlpha = 1;
+            });
+        }
+
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = 'bold 20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, 50);
+        }
+
+        function restartGame() {
+            gameOver = false;
+            correctAnswerHit = false;
+            screenShake = 0;
+            
+            // Reset ball
+            ballX = canvas.width / 2;
+            ballY = canvas.height - paddleHeight - ballRadius - 10;
+            ballDX = 4 * (Math.random() > 0.5 ? 1 : -1);
+            ballDY = -4;
+            
+            // Reset paddle
+            paddleX = (canvas.width - paddleWidth) / 2;
+            
+            // Reset bricks
+            bricks.forEach(brick => {
+                brick.visible = true;
+            });
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+            
+            // Clear particles
+            particles = [];
+            
+            // Restart game loop
+            requestAnimationFrame(draw);
+        }
+
+        function handleGameOver(correct) {
+            gameOver = true;
+            correctAnswerHit = correct;
+            restartBtn.style.display = 'block';
+        }
+
+        function collisionDetection() {
+            for (let i = 0; i < bricks.length; i++) {
+                const brick = bricks[i];
+                if (brick.visible) {
+                    if (ballX > brick.x && ballX < brick.x + brick.width && 
+                        ballY > brick.y && ballY < brick.y + brick.height) {
+                        ballDY = -ballDY;
+                        brick.visible = false;
+                        
+                        // Create particles at brick position
+                        const particleColor = brick.answer.correct ? COLORS.correct : COLORS.incorrect;
+                        createParticles(ballX, ballY, particleColor, 15);
+                        
+                        // Screen shake
+                        screenShake = 5;
+                        
+                        // Play sound
+                        brickHitSound(brick.answer.correct);
+                        
+                        // Check if correct answer was hit
+                        if (brick.answer.correct) {
+                            handleGameOver(true);
+                        }
+                        
+                        // Check if all incorrect answers are gone
+                        const remainingIncorrect = bricks.filter(b => !b.answer.correct && b.visible).length;
+                        if (remainingIncorrect === 0) {
+                            handleGameOver(false);
+                        }
+                    }
+                }
+            }
+        }
+
+        function applyScreenShake() {
+            if (screenShake > 0) {
+                const shakeX = Math.random() * screenShake - screenShake / 2;
+                const shakeY = Math.random() * screenShake - screenShake / 2;
+                ctx.translate(shakeX, shakeY);
+                screenShake -= 0.5;
+            }
+        }
+
+        function draw() {
+            if (gameOver) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.save();
+            applyScreenShake();
+            
+            drawBricks();
+            drawPaddle();
+            drawBall();
+            drawParticles();
+            drawQuestion();
+            
+            // Ball movement
+            ballX += ballDX;
+            ballY += ballDY;
+            
+            // Wall collision
+            if (ballX + ballDX > canvas.width - ballRadius || ballX + ballDX < ballRadius) {
+                ballDX = -ballDX;
+                wallHitSound();
+            }
+            
+            if (ballY + ballDY < ballRadius) {
+                ballDY = -ballDY;
+                wallHitSound();
+            }
+            
+            // Paddle collision
+            if (ballY + ballDY > canvas.height - paddleHeight - ballRadius) {
+                if (ballX > paddleX && ballX < paddleX + paddleWidth) {
+                    // Adjust angle based on where ball hits paddle
+                    const hitPos = (ballX - paddleX) / paddleWidth;
+                    const angle = hitPos * Math.PI - Math.PI/2; // -90 to 90 degrees
+                    
+                    const speed = Math.sqrt(ballDX * ballDX + ballDY * ballDY);
+                    ballDX = Math.cos(angle) * speed;
+                    ballDY = Math.sin(angle) * speed;
+                    
+                    // Ensure ball always moves upward after paddle hit
+                    if (ballDY > 0) ballDY = -ballDY;
+                    
+                    paddleHitSound();
+                }
+            }
+            
+            // Ball fell below screen
+            if (ballY + ballDY > canvas.height) {
+                // Respawn ball
+                ballX = canvas.width / 2;
+                ballY = canvas.height - paddleHeight - ballRadius - 10;
+                ballDX = 4 * (Math.random() > 0.5 ? 1 : -1);
+                ballDY = -4;
+            }
+            
+            // Paddle movement
+            if (rightPressed && paddleX < canvas.width - paddleWidth) {
+                paddleX += 7;
+            } else if (leftPressed && paddleX > 0) {
+                paddleX -= 7;
+            }
+            
+            // Mouse/touch control
+            if (mouseX > 0 || touchX > 0) {
+                const targetX = mouseX || touchX;
+                paddleX = targetX - paddleWidth / 2;
+                
+                // Keep paddle in bounds
+                if (paddleX < 0) {
+                    paddleX = 0;
+                } else if (paddleX + paddleWidth > canvas.width) {
+                    paddleX = canvas.width - paddleWidth;
+                }
+                
+                // Reset after using
+                mouseX = 0;
+                touchX = 0;
+            }
+            
+            // Collision detection
+            collisionDetection();
+            
+            ctx.restore();
+            
+            requestAnimationFrame(draw);
+        }
+
+        // Start the game
+        draw();
+    </script>
+</body>
+</html>

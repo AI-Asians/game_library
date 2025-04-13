@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <input id="hiddenInput" type="text" autocomplete="off">
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const hiddenInput = document.getElementById('hiddenInput');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game state
+        let userInput = '';
+        let gameState = 'playing'; // 'playing', 'correct', 'incorrect'
+        let restartTimer = 0;
+        let keyboardFocus = true;
+        let cursorVisible = true;
+        let cursorTimer = 0;
+        let inputBoxX = canvas.width / 2 - 120;
+        let inputBoxY = canvas.height / 2 - 20;
+        let inputBoxWidth = 240;
+        let inputBoxHeight = 40;
+        
+        // Colors
+        const COLORS = {
+            background: '#0f380f',
+            question: '#8bac0f',
+            inputBg: '#306230',
+            inputBorder: '#8bac0f',
+            inputText: '#e0f8d0',
+            buttonBg: '#0f380f',
+            buttonHighlight: '#306230',
+            buttonShadow: '#072200',
+            buttonText: '#8bac0f',
+            correctText: '#8bac0f',
+            incorrectText: '#d03e19'
+        };
+        
+        // Submit button
+        const submitButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 40,
+            width: 120,
+            height: 40,
+            text: 'SUBMIT',
+            hovered: false
+        };
+        
+        // Restart button
+        const restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 100,
+            width: 120,
+            height: 40,
+            text: 'RESTART',
+            hovered: false
+        };
+
+        // Sound effects
+        function playKeySound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.value = 440 + Math.random() * 220;
+                gainNode.gain.value = 0.1;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+        
+        function playCorrectSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                [440, 554, 659].forEach((freq, i) => {
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    
+                    oscillator.type = 'square';
+                    oscillator.frequency.value = freq;
+                    gainNode.gain.value = 0.1;
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    
+                    oscillator.start(audioCtx.currentTime + i * 0.1);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.1 + 0.2);
+                    setTimeout(() => oscillator.stop(), i * 100 + 200);
+                });
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+        
+        function playIncorrectSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                [330, 300, 270].forEach((freq, i) => {
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    
+                    oscillator.type = 'square';
+                    oscillator.frequency.value = freq;
+                    gainNode.gain.value = 0.1;
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    
+                    oscillator.start(audioCtx.currentTime + i * 0.1);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.1 + 0.2);
+                    setTimeout(() => oscillator.stop(), i * 100 + 200);
+                });
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPixelText(text, x, y, color, size = 20) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(text, Math.floor(x), Math.floor(y));
+        }
+        
+        function drawButton(button) {
+            // Button shadow (3D effect)
+            drawPixelRect(button.x + 3, button.y + 3, button.width, button.height, COLORS.buttonShadow);
+            
+            // Button base
+            drawPixelRect(button.x, button.y, button.width, button.height, 
+                          button.hovered ? COLORS.buttonHighlight : COLORS.buttonBg);
+            
+            // Button border
+            ctx.strokeStyle = COLORS.inputBorder;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(button.x, button.y, button.width, button.height);
+            
+            // Button text
+            drawPixelText(button.text, button.x + button.width / 2, button.y + button.height / 2 + 7, COLORS.buttonText);
+        }
+
+        function drawPixelBorder(x, y, width, height, color, thickness = 4) {
+            drawPixelRect(x, y, width, thickness, color); // Top
+            drawPixelRect(x, y + height - thickness, width, thickness, color); // Bottom
+            drawPixelRect(x, y + thickness, thickness, height - thickness * 2, color); // Left
+            drawPixelRect(x + width - thickness, y + thickness, thickness, height - thickness * 2, color); // Right
+        }
+        
+        function drawInputBox() {
+            // Input box background
+            drawPixelRect(inputBoxX, inputBoxY, inputBoxWidth, inputBoxHeight, COLORS.inputBg);
+            
+            // Pixelated border
+            drawPixelBorder(inputBoxX, inputBoxY, inputBoxWidth, inputBoxHeight, COLORS.inputBorder);
+            
+            // Input text
+            let displayText = userInput;
+            if (cursorVisible && gameState === 'playing') {
+                displayText += '|';
+            }
+            drawPixelText(displayText, inputBoxX + inputBoxWidth / 2, inputBoxY + inputBoxHeight / 2 + 7, COLORS.inputText);
+        }
+        
+        function drawBackground() {
+            // Background pattern
+            drawPixelRect(0, 0, canvas.width, canvas.height, COLORS.background);
+            
+            // Decorative pixel elements
+            for (let i = 0; i < 20; i++) {
+                const size = 4 + (i % 3) * 2;
+                const x = (canvas.width / 20) * i + 5;
+                drawPixelRect(x, 20, size, size, COLORS.inputBorder);
+                drawPixelRect(x, canvas.height - 30, size, size, COLORS.inputBorder);
+            }
+        }
+        
+        function drawGame() {
+            drawBackground();
+            
+            // Question
+            drawPixelText("What is the capital of France?", canvas.width / 2, canvas.height / 3, COLORS.question, 24);
+            
+            // Input box
+            drawInputBox();
+            
+            // Submit button
+            if (gameState === 'playing') {
+                drawButton(submitButton);
+            }
+            
+            // Result message
+            if (gameState === 'correct') {
+                drawPixelText("CORRECT!", canvas.width / 2, canvas.height / 2 + 100, COLORS.correctText, 28);
+                drawButton(restartButton);
+            } else if (gameState === 'incorrect') {
+                drawPixelText("INCORRECT! Try again.", canvas.width / 2, canvas.height / 2 + 100, COLORS.incorrectText, 28);
+                drawButton(restartButton);
+            }
+        }
+        
+        function checkAnswer() {
+            const correctAnswer = 'paris';
+            if (userInput.toLowerCase() === correctAnswer) {
+                gameState = 'correct';
+                playCorrectSound();
+            } else {
+                gameState = 'incorrect';
+                playIncorrectSound();
+            }
+        }
+        
+        function resetGame() {
+            userInput = '';
+            gameState = 'playing';
+            cursorVisible = true;
+            hiddenInput.value = '';
+            hiddenInput.focus();
+        }
+        
+        // Event handlers
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if mouse is over submit button
+            if (gameState === 'playing') {
+                submitButton.hovered = mouseX >= submitButton.x && mouseX <= submitButton.x + submitButton.width &&
+                                      mouseY >= submitButton.y && mouseY <= submitButton.y + submitButton.height;
+            } else {
+                submitButton.hovered = false;
+            }
+            
+            // Check if mouse is over restart button
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                restartButton.hovered = mouseX >= restartButton.x && mouseX <= restartButton.x + restartButton.width &&
+                                       mouseY >= restartButton.y && mouseY <= restartButton.y + restartButton.height;
+            } else {
+                restartButton.hovered = false;
+            }
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Click on submit button
+            if (gameState === 'playing' && 
+                mouseX >= submitButton.x && mouseX <= submitButton.x + submitButton.width &&
+                mouseY >= submitButton.y && mouseY <= submitButton.y + submitButton.height) {
+                checkAnswer();
+            }
+            
+            // Click on restart button
+            if ((gameState === 'correct' || gameState === 'incorrect') &&
+                mouseX >= restartButton.x && mouseX <= restartButton.x + restartButton.width &&
+                mouseY >= restartButton.y && mouseY <= restartButton.y + restartButton.height) {
+                resetGame();
+            }
+            
+            // Click on input box
+            if (mouseX >= inputBoxX && mouseX <= inputBoxX + inputBoxWidth &&
+                mouseY >= inputBoxY && mouseY <= inputBoxY + inputBoxHeight) {
+                keyboardFocus = true;
+                hiddenInput.focus();
+            } else {
+                keyboardFocus = false;
+            }
+        });
+        
+        // Handle keyboard input
+        hiddenInput.addEventListener('input', (e) => {
+            if (gameState === 'playing' && keyboardFocus) {
+                userInput = e.target.value;
+                playKeySound();
+            }
+        });
+        
+        // Handle Enter key
+        hiddenInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && gameState === 'playing') {
+                checkAnswer();
+            }
+        });
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game
+            drawGame();
+            
+            // Cursor blinking
+            cursorTimer++;
+            if (cursorTimer > 30) {
+                cursorVisible = !cursorVisible;
+                cursorTimer = 0;
+            }
+            
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        hiddenInput.focus();
+        gameLoop();
+    </script>
+</body>
+</html>

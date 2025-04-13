@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Binary Jump Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+        }
+        canvas {
+            border: 2px solid #555;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            padding: 10px 20px;
+            background-color: #444;
+            color: white;
+            border: 3px solid #666;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restartButton">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Game constants
+        const GRAVITY = 0.6;
+        const JUMP_FORCE = -15;
+        const COLORS = {
+            sky: '#5C94FC',
+            ground: '#507800',
+            character: '#FC0000',
+            truePlatform: '#00A800',
+            falsePlatform: '#D82800',
+            text: '#FFFFFF'
+        };
+        
+        // Game state
+        let gameState = {
+            character: {
+                x: 100,
+                y: 400,
+                width: 30,
+                height: 30,
+                velocityY: 0,
+                isJumping: false,
+                speed: 3
+            },
+            platforms: [
+                { x: 400, y: 450, width: 120, height: 30, isTrue: false, label: "FALSE" },
+                { x: 650, y: 450, width: 120, height: 30, isTrue: true, label: "TRUE" }
+            ],
+            gameOver: false,
+            won: false,
+            question: "The Great Wall of China is visible from space."
+        };
+
+        // The correct answer is FALSE
+        const correctAnswer = false;
+        
+        // Sound effects
+        function playJumpSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+        }
+        
+        function playWinSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(500, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(800, audioContext.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+        
+        function playLoseSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.3);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.4);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), width, height);
+        }
+        
+        function drawCharacter() {
+            const char = gameState.character;
+            
+            // Draw body
+            drawPixelRect(char.x, char.y, char.width, char.height, COLORS.character);
+            
+            // Draw eyes
+            drawPixelRect(char.x + 7, char.y + 8, 4, 4, '#FFFFFF');
+            drawPixelRect(char.x + 19, char.y + 8, 4, 4, '#FFFFFF');
+            
+            // Draw mouth
+            drawPixelRect(char.x + 10, char.y + 18, 10, 3, '#FFFFFF');
+        }
+        
+        function drawPlatform(platform) {
+            drawPixelRect(platform.x, platform.y, platform.width, platform.height, 
+                platform.isTrue ? COLORS.truePlatform : COLORS.falsePlatform);
+            
+            // Draw label
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(platform.label, platform.x + platform.width / 2, platform.y + platform.height / 2 + 5);
+        }
+        
+        function drawBackground() {
+            // Sky
+            drawPixelRect(0, 0, canvas.width, canvas.height, COLORS.sky);
+            
+            // Ground
+            drawPixelRect(0, 480, canvas.width, 120, COLORS.ground);
+            
+            // Simple clouds
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(100, 100, 60, 20);
+            ctx.fillRect(120, 90, 30, 10);
+            
+            ctx.fillRect(400, 70, 70, 25);
+            ctx.fillRect(420, 60, 40, 10);
+            
+            ctx.fillRect(650, 120, 50, 15);
+            ctx.fillRect(670, 110, 20, 10);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.question, canvas.width / 2, 100);
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Press SPACE to jump", canvas.width / 2, 550);
+        }
+        
+        function drawResult() {
+            if (!gameState.gameOver) return;
+            
+            ctx.fillStyle = gameState.won ? '#00A800' : '#D82800';
+            ctx.font = 'bold 32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameState.won ? "Correct!" : "Wrong!", canvas.width / 2, 200);
+            
+            // Show restart button
+            restartButton.style.display = 'block';
+            restartButton.style.top = `${canvas.height / 2 + 50}px`;
+            restartButton.style.left = `${canvas.width / 2 - 50 + canvas.offsetLeft}px`;
+        }
+        
+        // Game logic
+        function update() {
+            if (gameState.gameOver) return;
+            
+            const char = gameState.character;
+            
+            // Apply gravity
+            char.velocityY += GRAVITY;
+            char.y += char.velocityY;
+            
+            // Move character forward
+            char.x += char.speed;
+            
+            // Check if character is on a platform
+            let onPlatform = false;
+            let selectedPlatform = null;
+            
+            for (const platform of gameState.platforms) {
+                if (char.x + char.width > platform.x && 
+                    char.x < platform.x + platform.width &&
+                    char.y + char.height > platform.y && 
+                    char.y + char.height < platform.y + 15) {
+                    
+                    char.y = platform.y - char.height;
+                    char.velocityY = 0;
+                    onPlatform = true;
+                    selectedPlatform = platform;
+                    break;
+                }
+            }
+            
+            // Check if character falls off the screen
+            if (char.y > canvas.height) {
+                gameState.gameOver = true;
+                gameState.won = false;
+                playLoseSound();
+            }
+            
+            // Check if player selected an answer
+            if (selectedPlatform !== null) {
+                gameState.gameOver = true;
+                gameState.won = (selectedPlatform.isTrue === correctAnswer);
+                
+                if (gameState.won) {
+                    playWinSound();
+                } else {
+                    playLoseSound();
+                }
+            }
+        }
+        
+        function jump() {
+            const char = gameState.character;
+            if (!char.isJumping) {
+                char.velocityY = JUMP_FORCE;
+                char.isJumping = true;
+                playJumpSound();
+            }
+        }
+        
+        function resetGame() {
+            gameState = {
+                character: {
+                    x: 100,
+                    y: 400,
+                    width: 30,
+                    height: 30,
+                    velocityY: 0,
+                    isJumping: false,
+                    speed: 3
+                },
+                platforms: [
+                    { x: 400, y: 450, width: 120, height: 30, isTrue: false, label: "FALSE" },
+                    { x: 650, y: 450, width: 120, height: 30, isTrue: true, label: "TRUE" }
+                ],
+                gameOver: false,
+                won: false,
+                question: "The Great Wall of China is visible from space."
+            };
+            
+            restartButton.style.display = 'none';
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update game state
+            update();
+            
+            // Draw everything
+            drawBackground();
+            drawQuestion();
+            
+            for (const platform of gameState.platforms) {
+                drawPlatform(platform);
+            }
+            
+            drawCharacter();
+            drawInstructions();
+            drawResult();
+            
+            // Continue the game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', function(event) {
+            if (event.code === 'Space') {
+                if (gameState.gameOver) {
+                    resetGame();
+                } else {
+                    jump();
+                }
+            }
+        });
+        
+        canvas.addEventListener('touchstart', function() {
+            if (gameState.gameOver) {
+                resetGame();
+            } else {
+                jump();
+            }
+        });
+        
+        restartButton.addEventListener('click', resetGame);
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

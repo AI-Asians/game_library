@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Whack-An-Answer</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+    canvas {
+      border: 4px solid #333;
+      cursor: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // Canvas setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Check if on mobile
+    const isMobile = window.innerWidth <= 600;
+    
+    // Set canvas size based on device
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game constants
+    const COLORS = {
+      background: '#5c94fc',
+      ground: '#8b4513',
+      dirt: '#6b3300',
+      hole: '#3a1800',
+      text: '#ffffff',
+      correctText: '#44ff44',
+      incorrectText: '#ff4444',
+      timer: '#ffff44',
+      button: '#ff6622'
+    };
+    
+    // Game variables
+    let gameOver = false;
+    let gameWon = false;
+    let timer = 10;
+    let lastTime = 0;
+    let holes = [];
+    let answers = [];
+    let hammer = { x: 0, y: 0, hitting: false };
+    
+    // Question and answers
+    const question = "Which planet is known as the Red Planet?";
+    const correctAnswer = "Mars";
+    const wrongAnswers = ["Venus", "Jupiter", "Mercury"];
+    
+    // Create audio context for sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Generate sound effects
+    function playSound(type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      switch(type) {
+        case 'pop':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.3);
+          break;
+        case 'correct':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+          oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1);
+          oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.4);
+          break;
+        case 'wrong':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(196.00, audioCtx.currentTime);
+          oscillator.frequency.setValueAtTime(146.83, audioCtx.currentTime + 0.2);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.4);
+          break;
+      }
+    }
+    
+    // Setup holes
+    function setupHoles() {
+      const holeCount = isMobile ? 6 : 9;
+      const rows = isMobile ? 3 : 3;
+      const cols = isMobile ? 2 : 3;
+      const holeWidth = canvas.width / (cols + 1);
+      const holeHeight = canvas.height / (rows + 2);
+      
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          holes.push({
+            x: (col + 1) * holeWidth,
+            y: (row + 2) * holeHeight,
+            width: holeWidth * 0.7,
+            height: holeHeight * 0.4,
+            occupied: false
+          });
+        }
+      }
+    }
+    
+    // Create a pixelated circle (for the hammer)
+    function drawPixelatedCircle(x, y, radius, color) {
+      ctx.fillStyle = color;
+      for (let i = -radius; i <= radius; i++) {
+        for (let j = -radius; j <= radius; j++) {
+          if (i*i + j*j <= radius*radius) {
+            ctx.fillRect(x + i * 2, y + j * 2, 2, 2);
+          }
+        }
+      }
+    }
+    
+    // Draw hammer cursor
+    function drawHammer() {
+      ctx.save();
+      if (hammer.hitting) {
+        ctx.translate(hammer.x, hammer.y);
+        ctx.rotate(Math.PI / 4);
+        ctx.translate(-hammer.x, -hammer.y);
+      }
+      
+      // Handle
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(hammer.x - 4, hammer.y, 8, 30);
+      
+      // Hammer head
+      ctx.fillStyle = '#555';
+      ctx.fillRect(hammer.x - 12, hammer.y - 15, 24, 15);
+      
+      ctx.restore();
+    }
+    
+    // Draw pixelated hole
+    function drawHole(hole) {
+      // Draw dirt mound
+      ctx.fillStyle = COLORS.ground;
+      ctx.beginPath();
+      ctx.ellipse(hole.x, hole.y + hole.height * 0.3, hole.width * 0.6, hole.height * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw hole
+      ctx.fillStyle = COLORS.hole;
+      ctx.beginPath();
+      ctx.ellipse(hole.x, hole.y, hole.width * 0.5, hole.height * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    // Create a new answer
+    function createAnswer() {
+      if (answers.length >= 3 || gameOver) return;
+      
+      const availableHoles = holes.filter(hole => !hole.occupied);
+      if (availableHoles.length === 0) return;
+      
+      const randomHole = availableHoles[Math.floor(Math.random() * availableHoles.length)];
+      randomHole.occupied = true;
+      
+      // Determine if this should be the correct answer
+      const isCorrect = Math.random() < 0.25; // 25% chance of correct answer
+      const text = isCorrect ? correctAnswer : wrongAnswers[Math.floor(Math.random() * wrongAnswers.length)];
+      
+      answers.push({
+        x: randomHole.x,
+        y: randomHole.y,
+        width: randomHole.width,
+        height: randomHole.height,
+        text: text,
+        isCorrect: isCorrect,
+        holeIndex: holes.indexOf(randomHole),
+        state: 'rising',
+        visibleAmount: 0,
+        lifeTime: 1 + Math.random() * 2 // Random lifetime between 1-3 seconds
+      });
+      
+      playSound('pop');
+    }
+    
+    // Draw an answer option
+    function drawAnswer(answer) {
+      const hole = holes[answer.holeIndex];
+      
+      // Calculate position based on animation state
+      let y = hole.y;
+      if (answer.state === 'rising' || answer.state === 'falling') {
+        const offset = hole.height * 0.4 * answer.visibleAmount;
+        y = hole.y - offset;
+      }
+      
+      // Draw answer background
+      ctx.fillStyle = answer.isCorrect ? '#22aa22' : '#aa2222';
+      ctx.beginPath();
+      ctx.ellipse(hole.x, y, hole.width * 0.45, hole.height * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw answer text
+      ctx.fillStyle = COLORS.text;
+      ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(answer.text, hole.x, y);
+    }
+    
+    // Draw the game
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw ground
+      ctx.fillStyle = COLORS.ground;
+      ctx.fillRect(0, canvas.height * 0.8, canvas.width, canvas.height * 0.2);
+      
+      // Draw title
+      ctx.fillStyle = COLORS.text;
+      ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(question, canvas.width / 2, 40);
+      
+      // Draw timer
+      ctx.fillStyle = COLORS.timer;
+      ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+      ctx.fillText(Math.ceil(timer), canvas.width / 2, 80);
+      
+      // Draw holes
+      holes.forEach(drawHole);
+      
+      // Draw answers
+      answers.forEach(drawAnswer);
+      
+      // Draw hammer
+      drawHammer();
+      
+      // Draw game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = gameWon ? COLORS.correctText : COLORS.incorrectText;
+        ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(gameWon ? 'Correct!' : 'Wrong!', canvas.width / 2, canvas.height / 2 - 40);
+        
+        // Draw restart button
+        ctx.fillStyle = COLORS.button;
+        const buttonWidth = 120;
+        const buttonHeight = 40;
+        const buttonX = (canvas.width - buttonWidth) / 2;
+        const buttonY = canvas.height / 2 + 20;
+        
+        // Pixelated button (with border)
+        ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+        ctx.fillStyle = '#ff8844';
+        ctx.fillRect(buttonX + 4, buttonY + 4, buttonWidth - 8, buttonHeight - 8);
+        
+        ctx.fillStyle = COLORS.text;
+        ctx.font = '20px sans-serif';
+        ctx.fillText('Restart', canvas.width / 2, buttonY + buttonHeight / 2);
+      }
+    }
+    
+    // Update the game state
+    function update(time) {
+      const deltaTime = (time - lastTime) / 1000;
+      lastTime = time;
+      
+      if (!gameOver) {
+        // Update timer
+        timer -= deltaTime;
+        if (timer <= 0) {
+          gameOver = true;
+          gameWon = false;
+          return;
+        }
+        
+        // Potentially create a new answer
+        if (Math.random() < 0.03) {
+          createAnswer();
+        }
+        
+        // Update answers
+        for (let i = answers.length - 1; i >= 0; i--) {
+          const answer = answers[i];
+          
+          // Update answer based on its state
+          if (answer.state === 'rising') {
+            answer.visibleAmount += deltaTime * 2;
+            if (answer.visibleAmount >= 1) {
+              answer.visibleAmount = 1;
+              answer.state = 'visible';
+            }
+          } else if (answer.state === 'visible') {
+            answer.lifeTime -= deltaTime;
+            if (answer.lifeTime <= 0) {
+              answer.state = 'falling';
+            }
+          } else if (answer.state === 'falling') {
+            answer.visibleAmount -= deltaTime * 2;
+            if (answer.visibleAmount <= 0) {
+              // Remove answer
+              holes[answer.holeIndex].occupied = false;
+              answers.splice(i, 1);
+            }
+          }
+        }
+      }
+    }
+    
+    // Handle clicks
+    function handleClick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      if (gameOver) {
+        // Check if restart button was clicked
+        const buttonWidth = 120;
+        const buttonHeight = 40;
+        const buttonX = (canvas.width - buttonWidth) / 2;
+        const buttonY = canvas.height / 2 + 20;
+        
+        if (x >= buttonX && x <= buttonX + buttonWidth &&
+            y >= buttonY && y <= buttonY + buttonHeight) {
+          resetGame();
+        }
+        return;
+      }
+      
+      // Animation for hammer hitting
+      hammer.hitting = true;
+      setTimeout(() => { hammer.hitting = false; }, 100);
+      
+      // Check if any answer was clicked
+      for (let i = 0; i < answers.length; i++) {
+        const answer = answers[i];
+        const hole = holes[answer.holeIndex];
+        
+        // Calculate position based on animation state
+        let answerY = hole.y;
+        if (answer.state === 'rising' || answer.state === 'falling') {
+          const offset = hole.height * 0.4 * answer.visibleAmount;
+          answerY = hole.y - offset;
+        }
+        
+        // Check if click is within answer
+        const dist = Math.sqrt(Math.pow(x - hole.x, 2) + Math.pow(y - answerY, 2));
+        if (dist <= hole.width * 0.45) {
+          gameOver = true;
+          gameWon = answer.isCorrect;
+          
+          if (answer.isCorrect) {
+            playSound('correct');
+          } else {
+            playSound('wrong');
+          }
+          break;
+        }
+      }
+    }
+    
+    // Track mouse position
+    function handleMouseMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      hammer.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      hammer.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    }
+    
+    // Handle touch events for mobile
+    function handleTouch(e) {
+      e.preventDefault();
+      if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        hammer.x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+        hammer.y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+        
+        // For tap/click effect
+        handleClick(touch);
+      }
+    }
+    
+    // Reset the game
+    function resetGame() {
+      gameOver = false;
+      gameWon = false;
+      timer = 10;
+      answers = [];
+      holes.forEach(hole => hole.occupied = false);
+    }
+    
+    // Main game loop
+    function gameLoop(time) {
+      update(time);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Initialize the game
+    function init() {
+      setupHoles();
+      canvas.addEventListener('click', handleClick);
+      canvas.addEventListener('mousemove', handleMouseMove);
+      canvas.addEventListener('touchstart', handleTouch);
+      canvas.addEventListener('touchmove', handleTouch);
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game
+    init();
+  </script>
+</body>
+</html>

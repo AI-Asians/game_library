@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Binary-Jump Platformer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        .game-container {
+            position: relative;
+        }
+        #restartBtn {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            padding: 10px 20px;
+            background: #555;
+            color: white;
+            border: 4px solid #777;
+            font-family: sans-serif;
+            font-size: 18px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restartBtn">Restart</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const GRAVITY = 1;
+        const JUMP_FORCE = -18;
+        const GROUND_HEIGHT = canvas.height - 100;
+        const PLAYER_WIDTH = 40;
+        const PLAYER_HEIGHT = 60;
+        
+        // Color palette (16 colors)
+        const COLORS = {
+            sky: '#5C94FC',
+            ground: '#8F563B',
+            grassTop: '#00A800',
+            clouds: '#FFFFFF',
+            mountains: '#757575',
+            mountainDark: '#4E4E4E',
+            player: '#FF0000',
+            playerDark: '#880000',
+            obstacle: '#FF00FF',
+            obstacleDark: '#800080',
+            gap: '#0000AA',
+            text: '#FFFFFF',
+            textShadow: '#000000',
+            correct: '#00FF00',
+            incorrect: '#FF0000',
+            platform: '#8F563B'
+        };
+        
+        // Game state
+        let player = {
+            x: 100,
+            y: GROUND_HEIGHT - PLAYER_HEIGHT,
+            vx: 5,
+            vy: 0,
+            isJumping: false,
+            sprite: {
+                frame: 0,
+                maxFrames: 4,
+                frameCounter: 0,
+                frameDelay: 6
+            }
+        };
+        
+        let question = "Water boils at 100 degrees Celsius at sea level.";
+        let answer = true; // The correct answer
+        
+        let obstacles = [];
+        let gaps = [];
+        let gameRunning = true;
+        let gameResult = null; // null = ongoing, true = correct, false = incorrect
+        let parallaxLayers = [];
+        let particles = [];
+
+        // Initialize game elements
+        function initGame() {
+            player.x = 100;
+            player.y = GROUND_HEIGHT - PLAYER_HEIGHT;
+            player.vy = 0;
+            player.isJumping = false;
+            
+            // Create obstacle pattern based on the answer
+            obstacles = [];
+            gaps = [];
+            
+            // If TRUE, add a gap to jump over
+            if (answer) {
+                gaps.push({
+                    x: canvas.width / 2,
+                    width: 120
+                });
+            } 
+            // If FALSE, add an obstacle to avoid jumping into
+            else {
+                obstacles.push({
+                    x: canvas.width / 2,
+                    y: GROUND_HEIGHT - 60,
+                    width: 40,
+                    height: 60
+                });
+            }
+            
+            // Create parallax background layers
+            parallaxLayers = [
+                { x: 0, speed: 0.5, draw: drawMountains },
+                { x: 0, speed: 1, draw: drawClouds }
+            ];
+            
+            gameRunning = true;
+            gameResult = null;
+            restartBtn.style.display = 'none';
+            particles = [];
+        }
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'jump':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(110, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw functions
+        function drawGround() {
+            // Draw ground
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, GROUND_HEIGHT, canvas.width, canvas.height - GROUND_HEIGHT);
+            
+            // Draw grass top
+            ctx.fillStyle = COLORS.grassTop;
+            ctx.fillRect(0, GROUND_HEIGHT, canvas.width, 4);
+            
+            // Draw pixel dirt details
+            ctx.fillStyle = '#6B4226';
+            for(let x = 0; x < canvas.width; x += 10) {
+                for(let y = GROUND_HEIGHT + 10; y < canvas.height; y += 10) {
+                    if(Math.random() > 0.7) {
+                        ctx.fillRect(x, y, 4, 4);
+                    }
+                }
+            }
+        }
+        
+        function drawClouds(offsetX) {
+            ctx.fillStyle = COLORS.clouds;
+            
+            const cloudPositions = [
+                { x: 100 + offsetX % canvas.width, y: 70, size: 30 },
+                { x: 300 + offsetX % canvas.width, y: 40, size: 50 },
+                { x: 600 + offsetX % canvas.width, y: 90, size: 40 },
+                { x: 900 + offsetX % canvas.width, y: 60, size: 35 },
+            ];
+            
+            cloudPositions.forEach(cloud => {
+                let x = cloud.x % (canvas.width + 200) - 100;
+                
+                // Draw each cloud with pixel blocks
+                for(let dx = 0; dx < cloud.size; dx += 8) {
+                    for(let dy = 0; dy < cloud.size / 2; dy += 8) {
+                        if(Math.hypot(dx - cloud.size/2, dy - cloud.size/4) < cloud.size/2) {
+                            ctx.fillRect(x + dx, cloud.y + dy, 8, 8);
+                        }
+                    }
+                }
+            });
+        }
+        
+        function drawMountains(offsetX) {
+            const mountainPositions = [
+                { x: -100 + offsetX * 0.2, height: 150 },
+                { x: 120 + offsetX * 0.2, height: 200 },
+                { x: 350 + offsetX * 0.2, height: 160 },
+                { x: 500 + offsetX * 0.2, height: 250 },
+                { x: 700 + offsetX * 0.2, height: 180 }
+            ];
+            
+            mountainPositions.forEach(mountain => {
+                let x = mountain.x % (canvas.width + 400) - 200;
+                
+                ctx.fillStyle = COLORS.mountains;
+                ctx.beginPath();
+                ctx.moveTo(x, GROUND_HEIGHT);
+                ctx.lineTo(x + mountain.height, GROUND_HEIGHT - mountain.height);
+                ctx.lineTo(x + mountain.height * 2, GROUND_HEIGHT);
+                ctx.fill();
+                
+                // Add darker side for 3D effect
+                ctx.fillStyle = COLORS.mountainDark;
+                ctx.beginPath();
+                ctx.moveTo(x + mountain.height, GROUND_HEIGHT - mountain.height);
+                ctx.lineTo(x + mountain.height * 1.6, GROUND_HEIGHT - mountain.height * 0.3);
+                ctx.lineTo(x + mountain.height * 2, GROUND_HEIGHT);
+                ctx.fill();
+            });
+        }
+        
+        function drawPlayer() {
+            // Advance animation frame
+            if (player.sprite.frameCounter++ > player.sprite.frameDelay) {
+                player.sprite.frame = (player.sprite.frame + 1) % player.sprite.maxFrames;
+                player.sprite.frameCounter = 0;
+            }
+            
+            // Body
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(player.x, player.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+            
+            // Face details
+            ctx.fillStyle = COLORS.playerDark;
+            
+            // Feet
+            const legOffset = player.isJumping ? 0 : [0, 5, 0, -5][player.sprite.frame];
+            ctx.fillRect(player.x, player.y + PLAYER_HEIGHT - 10, 15, 10);
+            ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + PLAYER_HEIGHT - 10 + legOffset, 15, 10);
+            
+            // Eyes
+            ctx.fillStyle = 'white';
+            ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + 15, 10, 10);
+            
+            // Pupil
+            ctx.fillStyle = 'black';
+            ctx.fillRect(player.x + PLAYER_WIDTH - 10, player.y + 18, 4, 4);
+            
+            // Arms
+            ctx.fillStyle = COLORS.playerDark;
+            if (player.isJumping) {
+                ctx.fillRect(player.x + 5, player.y + 20, 10, 5); // Back arm raised
+                ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + 15, 15, 5); // Front arm raised
+            } else {
+                const armOffset = [2, 5, 2, -1][player.sprite.frame];
+                ctx.fillRect(player.x + 5, player.y + 25 + armOffset, 10, 5);
+                ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + 25 - armOffset, 15, 5);
+            }
+        }
+        
+        function drawObstacles() {
+            ctx.fillStyle = COLORS.platform;
+            
+            // Draw platforms and gaps
+            let lastX = 0;
+            
+            // Draw all solid ground except gaps
+            gaps.forEach(gap => {
+                // Draw ground before gap
+                if (gap.x - gap.width / 2 > lastX) {
+                    ctx.fillRect(lastX, GROUND_HEIGHT, gap.x - gap.width / 2 - lastX, 20);
+                }
+                lastX = gap.x + gap.width / 2;
+            });
+            
+            // Fill in remaining ground
+            if (lastX < canvas.width) {
+                ctx.fillRect(lastX, GROUND_HEIGHT, canvas.width - lastX, 20);
+            }
+            
+            // Draw gaps (visual indicator)
+            ctx.fillStyle = COLORS.gap;
+            gaps.forEach(gap => {
+                ctx.fillRect(gap.x - gap.width / 2, GROUND_HEIGHT, gap.width, 20);
+            });
+            
+            // Draw obstacles
+            ctx.fillStyle = COLORS.obstacle;
+            obstacles.forEach(obs => {
+                // Main block
+                ctx.fillRect(obs.x - obs.width / 2, obs.y, obs.width, obs.height);
+                
+                // Detail patterns for obstacles
+                ctx.fillStyle = COLORS.obstacleDark;
+                for (let y = obs.y + 10; y < obs.y + obs.height; y += 15) {
+                    ctx.fillRect(obs.x - obs.width / 2 + 5, y, obs.width - 10, 5);
+                }
+            });
+        }
+        
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8 - 2,
+                    size: Math.random() * 6 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.2;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+        }
+        
+        function displayQuestion() {
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // Add shadow for better readability
+            ctx.fillStyle = COLORS.textShadow;
+            ctx.fillText(question, canvas.width / 2 + 2, 42);
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText(question, canvas.width / 2, 40);
+            
+            // Instructions
+            ctx.font = '16px sans-serif';
+            ctx.fillStyle = COLORS.textShadow;
+            ctx.fillText('Press SPACE to jump if TRUE, do nothing if FALSE', canvas.width / 2 + 1, 71);
+            
+            ctx.fillStyle = '#FFFF00';
+            ctx.fillText('Press SPACE to jump if TRUE, do nothing if FALSE', canvas.width / 2, 70);
+        }
+        
+        function displayResult() {
+            if (gameResult === null) return;
+            
+            ctx.font = 'bold 40px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = gameResult ? COLORS.correct : COLORS.incorrect;
+            
+            // Display feedback and show restart button
+            const message = gameResult ? 'CORRECT!' : 'INCORRECT!';
+            ctx.fillText(message, canvas.width / 2, canvas.height / 2 - 40);
+            
+            restartBtn.style.display = 'block';
+        }
+        
+        // Game logic
+        function update() {
+            if (!gameRunning) return;
+            
+            // Update player position
+            player.x += player.vx;
+            player.y += player.vy;
+            
+            // Apply gravity
+            if (player.y < GROUND_HEIGHT - PLAYER_HEIGHT) {
+                player.vy += GRAVITY;
+                player.isJumping = true;
+            } else {
+                player.y = GROUND_HEIGHT - PLAYER_HEIGHT;
+                player.vy = 0;
+                player.isJumping = false;
+            }
+            
+            // Update parallax layers
+            parallaxLayers.forEach(layer => {
+                layer.x -= layer.speed * player.vx;
+            });
+            
+            // Check for gap collisions
+            gaps.forEach(gap => {
+                const gapStart = gap.x - gap.width / 2;
+                const gapEnd = gap.x + gap.width / 2;
+                
+                // Player is over the gap
+                if (player.x + PLAYER_WIDTH > gapStart && player.x < gapEnd) {
+                    // If player is not jumping and over a gap
+                    if (player.y + PLAYER_HEIGHT >= GROUND_HEIGHT && !player.isJumping) {
+                        if (answer) {
+                            // Incorrect: Should have jumped over the gap (true answer)
+                            gameRunning = false;
+                            gameResult = false;
+                            playSound('incorrect');
+                            createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT, COLORS.incorrect, 20);
+                        } else {
+                            // Correct: Avoided jumping (false answer)
+                            gameRunning = false;
+                            gameResult = true;
+                            playSound('correct');
+                            createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT/2, COLORS.correct, 20);
+                        }
+                    }
+                }
+                
+                // Player has cleared the gap
+                if (player.x > gapEnd && gameRunning) {
+                    if (answer && player.isJumping) {
+                        // Correct: Jumped over the gap (true answer)
+                        gameRunning = false;
+                        gameResult = true;
+                        playSound('correct');
+                        createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT/2, COLORS.correct, 20);
+                    }
+                }
+            });
+            
+            // Check for obstacle collisions
+            obstacles.forEach(obs => {
+                if (
+                    player.x + PLAYER_WIDTH > obs.x - obs.width/2 &&
+                    player.x < obs.x + obs.width/2 &&
+                    player.y + PLAYER_HEIGHT > obs.y &&
+                    player.y < obs.y + obs.height
+                ) {
+                    if (answer) {
+                        // Incorrect: Hit obstacle which should have been avoided by not jumping (true answer)
+                        gameRunning = false;
+                        gameResult = false;
+                        playSound('incorrect');
+                        createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT/2, COLORS.incorrect, 20);
+                    } else {
+                        // Correct: Hit obstacle by jumping (false answer)
+                        gameRunning = false;
+                        gameResult = true;
+                        playSound('correct');
+                        createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT/2, COLORS.correct, 20);
+                    }
+                }
+            });
+            
+            // Check if player has gone off screen
+            if (player.x > canvas.width && gameRunning) {
+                gameRunning = false;
+                // If we reach the end without encountering a decision point, it's incorrect
+                gameResult = false;
+                playSound('incorrect');
+            }
+            
+            updateParticles();
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background layers with parallax effect
+            parallaxLayers.forEach(layer => {
+                layer.draw(layer.x);
+            });
+            
+            // Draw ground
+            drawGround();
+            
+            // Draw obstacles and platforms
+            drawObstacles();
+            
+            // Draw player
+            drawPlayer();
+            
+            // Draw particles
+            drawParticles();
+            
+            // Display question
+            displayQuestion();
+            
+            // Display result if game is over
+            displayResult();
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle input
+        document.addEventListener('keydown', function(e) {
+            if (e.code === 'Space' && gameRunning && !player.isJumping) {
+                player.vy = JUMP_FORCE;
+                player.isJumping = true;
+                playSound('jump');
+                createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT, '#DDDDDD', 5);
+            }
+            
+            // Prevent spacebar from scrolling the page
+            if (e.code === 'Space') {
+                e.preventDefault();
+            }
+        });
+        
+        // Mobile touch support
+        canvas.addEventListener('touchstart', function(e) {
+            if (gameRunning && !player.isJumping) {
+                player.vy = JUMP_FORCE;
+                player.isJumping = true;
+                playSound('jump');
+                createParticles(player.x + PLAYER_WIDTH/2, player.y + PLAYER_HEIGHT, '#DDDDDD', 5);
+            }
+            e.preventDefault();
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            initGame();
+        });
+        
+        // Initialize and start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

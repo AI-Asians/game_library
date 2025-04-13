@@ -1,0 +1,105 @@
+I'll update the prompt as requested, replacing the items in curly braces with values from INFO_DICT and providing appropriate content for the sections in <<< >>>.
+
+Here's the updated prompt:
+
+---
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ What is the capital of France?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Word-Link:**  
+ Description of mechanic: 
+
+There should be only one correct answer if the question is MCQ or T/F.
+
+- Words or answers float around the screen that player must connect in the correct sequence
+- Player must drag from one element to another to create meaningful links/chains
+- Words should move or float slowly around the canvas area
+- Visual feedback should appear when links are correctly or incorrectly formed
+- Success is achieved by connecting the right answer to the question or connecting related answers together
+- Show a connecting line or chain as the player drags between elements
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+- Connection lines should appear pixelated and chunky
+- Correct connections should flash or pulse in a retro style
+- Floating words should have pixel-art borders or bubbles around them
+- Use contrasting colors that fit the limited color palette for different answer options
+- Add subtle pixel animation effects when words are selected or linked
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+- The words should move at a moderate pace that allows for strategic linking
+- Connection attempts should have immediate feedback (success/failure)
+- If the player makes an incorrect link, provide a quick visual indication
+- The restart should happen quickly after a game ends
+- Words should be spaced sufficiently to make the linking action feel satisfying
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

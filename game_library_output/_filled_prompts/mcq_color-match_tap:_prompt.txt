@@ -1,0 +1,103 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ What is the capital of France?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Color-Match Tap:**  
+ Description of mechanic: 
+
+* Different colored shapes or objects appear on screen, each associated with an answer option
+* Each answer choice has a distinct color or pattern that makes it visually identifiable
+* Player must tap/click on the shape that matches both the correct color AND the correct answer
+* Colors and answers may rotate or rearrange positions to add challenge
+* Success is determined by selecting the correctly colored shape that corresponds to the right answer
+* Incorrect matches result in immediate game over
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The colored shapes should have crisp, pixel-perfect edges with no anti-aliasing.
+
+Each color should be vibrant and distinct from the others in the limited palette.
+
+Include a subtle pixel "shimmer" effect on the shapes to draw attention to them.
+
+The correct color should be displayed prominently at the top of the screen.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The colored shapes should periodically swap positions to add challenge.
+
+Include a subtle timer effect that adds urgency (like shapes slowly fading or shrinking).
+
+Provide instant visual feedback when a shape is clicked (flash or highlight).
+
+Ensure the color-matching mechanism is clearly communicated through visual cues.
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

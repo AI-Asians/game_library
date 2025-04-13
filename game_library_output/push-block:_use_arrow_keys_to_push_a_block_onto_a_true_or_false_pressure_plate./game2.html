@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Push-Block True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+            touch-action: none;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            background-color: #000;
+        }
+        .game-container {
+            position: relative;
+        }
+        .restart-btn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            border: 2px solid #555;
+            padding: 5px 15px;
+            cursor: pointer;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button class="restart-btn" id="restartBtn">Restart</button>
+    </div>
+
+    <script>
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game constants
+        const TILE_SIZE = isMobile ? 30 : 40;
+        const COLORS = {
+            background: '#1a1a2e',
+            floor: '#3a3a5c',
+            floorAlt: '#2a2a4c',
+            character: '#52b788',
+            characterDark: '#368156',
+            block: '#d08c60',
+            blockShade: '#ad6e41',
+            truePlate: '#4895ef',
+            falsePlate: '#e63946',
+            text: '#ffffff'
+        };
+        
+        const QUESTION = "Water boils at 100 degrees Celsius at sea level.";
+        const CORRECT_ANSWER = true;
+        
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Game objects
+        const player = {
+            x: Math.floor(canvas.width / TILE_SIZE / 2) * TILE_SIZE,
+            y: Math.floor(canvas.height / TILE_SIZE / 2) * TILE_SIZE + 2 * TILE_SIZE,
+            size: TILE_SIZE,
+            direction: 'down',
+            moving: false,
+            pushingBlock: false,
+            animFrame: 0,
+            animTimer: 0
+        };
+        
+        const block = {
+            x: Math.floor(canvas.width / TILE_SIZE / 2) * TILE_SIZE,
+            y: Math.floor(canvas.height / TILE_SIZE / 2) * TILE_SIZE,
+            size: TILE_SIZE,
+            moving: false,
+            direction: 'none',
+            moveProgress: 0,
+            moveSpeed: 0.08
+        };
+        
+        const truePlate = {
+            x: Math.floor(canvas.width / TILE_SIZE / 4) * TILE_SIZE,
+            y: Math.floor(canvas.height / TILE_SIZE / 4) * TILE_SIZE,
+            size: TILE_SIZE,
+            text: 'TRUE'
+        };
+        
+        const falsePlate = {
+            x: Math.floor(canvas.width / TILE_SIZE * 3 / 4) * TILE_SIZE,
+            y: Math.floor(canvas.height / TILE_SIZE / 4) * TILE_SIZE,
+            size: TILE_SIZE,
+            text: 'FALSE'
+        };
+        
+        // Input handling
+        const keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false
+        };
+        
+        window.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = true;
+                e.preventDefault();
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = false;
+                e.preventDefault();
+            }
+        });
+        
+        // Touch controls for mobile
+        let touchStartX = 0;
+        let touchStartY = 0;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            e.preventDefault();
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameOver) return;
+            
+            const touchX = e.touches[0].clientX;
+            const touchY = e.touches[0].clientY;
+            const diffX = touchX - touchStartX;
+            const diffY = touchY - touchStartY;
+            
+            // Reset all keys
+            Object.keys(keys).forEach(key => keys[key] = false);
+            
+            // Set the key based on the swipe direction
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                if (diffX > 20) keys.ArrowRight = true;
+                else if (diffX < -20) keys.ArrowLeft = true;
+            } else {
+                if (diffY > 20) keys.ArrowDown = true;
+                else if (diffY < -20) keys.ArrowUp = true;
+            }
+            
+            e.preventDefault();
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', (e) => {
+            Object.keys(keys).forEach(key => keys[key] = false);
+            e.preventDefault();
+        }, { passive: false });
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'push':
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(150, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'correct':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(783.99, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Game logic
+        function update() {
+            if (gameOver) return;
+            
+            // Handle block movement if it's already moving
+            if (block.moving) {
+                block.moveProgress += block.moveSpeed;
+                
+                if (block.moveProgress >= 1) {
+                    block.moveProgress = 0;
+                    block.moving = false;
+                    
+                    // Complete the movement
+                    if (block.direction === 'up') block.y -= TILE_SIZE;
+                    else if (block.direction === 'down') block.y += TILE_SIZE;
+                    else if (block.direction === 'left') block.x -= TILE_SIZE;
+                    else if (block.direction === 'right') block.x += TILE_SIZE;
+                    
+                    // Check if block is on a plate
+                    checkPlates();
+                }
+                return;
+            }
+            
+            player.pushingBlock = false;
+            
+            // Player movement and block pushing
+            if (keys.ArrowUp) {
+                player.direction = 'up';
+                player.moving = true;
+                
+                // Check if player can push the block
+                if (player.x === block.x && player.y === block.y + TILE_SIZE) {
+                    if (canMoveBlock(block.x, block.y - TILE_SIZE)) {
+                        player.pushingBlock = true;
+                        block.moving = true;
+                        block.direction = 'up';
+                        playSound('push');
+                    }
+                } else if (canMovePlayer(player.x, player.y - TILE_SIZE)) {
+                    player.y -= TILE_SIZE;
+                }
+            } else if (keys.ArrowDown) {
+                player.direction = 'down';
+                player.moving = true;
+                
+                if (player.x === block.x && player.y === block.y - TILE_SIZE) {
+                    if (canMoveBlock(block.x, block.y + TILE_SIZE)) {
+                        player.pushingBlock = true;
+                        block.moving = true;
+                        block.direction = 'down';
+                        playSound('push');
+                    }
+                } else if (canMovePlayer(player.x, player.y + TILE_SIZE)) {
+                    player.y += TILE_SIZE;
+                }
+            } else if (keys.ArrowLeft) {
+                player.direction = 'left';
+                player.moving = true;
+                
+                if (player.y === block.y && player.x === block.x + TILE_SIZE) {
+                    if (canMoveBlock(block.x - TILE_SIZE, block.y)) {
+                        player.pushingBlock = true;
+                        block.moving = true;
+                        block.direction = 'left';
+                        playSound('push');
+                    }
+                } else if (canMovePlayer(player.x - TILE_SIZE, player.y)) {
+                    player.x -= TILE_SIZE;
+                }
+            } else if (keys.ArrowRight) {
+                player.direction = 'right';
+                player.moving = true;
+                
+                if (player.y === block.y && player.x === block.x - TILE_SIZE) {
+                    if (canMoveBlock(block.x + TILE_SIZE, block.y)) {
+                        player.pushingBlock = true;
+                        block.moving = true;
+                        block.direction = 'right';
+                        playSound('push');
+                    }
+                } else if (canMovePlayer(player.x + TILE_SIZE, player.y)) {
+                    player.x += TILE_SIZE;
+                }
+            } else {
+                player.moving = false;
+            }
+            
+            // Animation timing
+            player.animTimer++;
+            if (player.animTimer > 10) {
+                player.animTimer = 0;
+                player.animFrame = (player.animFrame + 1) % 2;
+            }
+        }
+        
+        function canMovePlayer(x, y) {
+            // Check boundaries
+            if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) {
+                return false;
+            }
+            
+            // Check collision with block
+            if (x === block.x && y === block.y) {
+                return false;
+            }
+            
+            return true;
+        }
+        
+        function canMoveBlock(x, y) {
+            // Check boundaries
+            if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) {
+                return false;
+            }
+            
+            return true;
+        }
+        
+        function checkPlates() {
+            if (block.x === truePlate.x && block.y === truePlate.y) {
+                gameOver = true;
+                gameWon = (CORRECT_ANSWER === true);
+                playSound(gameWon ? 'correct' : 'wrong');
+                showRestartButton();
+            } else if (block.x === falsePlate.x && block.y === falsePlate.y) {
+                gameOver = true;
+                gameWon = (CORRECT_ANSWER === false);
+                playSound(gameWon ? 'correct' : 'wrong');
+                showRestartButton();
+            }
+        }
+        
+        function showRestartButton() {
+            restartBtn.style.display = 'block';
+        }
+        
+        function restartGame() {
+            player.x = Math.floor(canvas.width / TILE_SIZE / 2) * TILE_SIZE;
+            player.y = Math.floor(canvas.height / TILE_SIZE / 2) * TILE_SIZE + 2 * TILE_SIZE;
+            player.direction = 'down';
+            
+            block.x = Math.floor(canvas.width / TILE_SIZE / 2) * TILE_SIZE;
+            block.y = Math.floor(canvas.height / TILE_SIZE / 2) * TILE_SIZE;
+            block.moving = false;
+            block.moveProgress = 0;
+            
+            gameOver = false;
+            gameWon = false;
+            restartBtn.style.display = 'none';
+        }
+        
+        restartBtn.addEventListener('click', restartGame);
+        
+        // Rendering functions
+        function drawFloor() {
+            for (let y = 0; y < canvas.height; y += TILE_SIZE) {
+                for (let x = 0; x < canvas.width; x += TILE_SIZE) {
+                    ctx.fillStyle = ((x / TILE_SIZE + y / TILE_SIZE) % 2 === 0) ? COLORS.floor : COLORS.floorAlt;
+                    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 14 : 20}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            // Split long questions
+            const maxWidth = canvas.width - 40;
+            const words = QUESTION.split(' ');
+            let line = '';
+            let lines = [];
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                const testWidth = metrics.width;
+                
+                if (testWidth > maxWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            const lineHeight = isMobile ? 20 : 28;
+            const startY = isMobile ? canvas.height - 80 : canvas.height - 100;
+            
+            lines.forEach((line, i) => {
+                ctx.fillText(line, canvas.width / 2, startY + i * lineHeight);
+            });
+        }
+        
+        function drawPlates() {
+            // True plate
+            ctx.fillStyle = COLORS.truePlate;
+            ctx.fillRect(truePlate.x, truePlate.y, truePlate.size, truePlate.size);
+            
+            // Add some depth
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(truePlate.x, truePlate.y + truePlate.size - 4, truePlate.size, 4);
+            
+            // Text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${Math.floor(TILE_SIZE / 3)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(truePlate.text, truePlate.x + truePlate.size / 2, truePlate.y + truePlate.size / 2);
+            
+            // False plate
+            ctx.fillStyle = COLORS.falsePlate;
+            ctx.fillRect(falsePlate.x, falsePlate.y, falsePlate.size, falsePlate.size);
+            
+            // Add some depth
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(falsePlate.x, falsePlate.y + falsePlate.size - 4, falsePlate.size, 4);
+            
+            // Text
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText(falsePlate.text, falsePlate.x + falsePlate.size / 2, falsePlate.y + falsePlate.size / 2);
+        }
+        
+        function drawPlayer() {
+            let drawX = player.x;
+            let drawY = player.y;
+            
+            // Character base
+            ctx.fillStyle = COLORS.character;
+            ctx.fillRect(drawX, drawY, player.size, player.size);
+            
+            // Simple animation
+            if (player.moving) {
+                ctx.fillStyle = COLORS.characterDark;
+                if (player.animFrame === 0) {
+                    ctx.fillRect(drawX + 2, drawY + player.size - 8, player.size / 2 - 2, 8);
+                } else {
+                    ctx.fillRect(drawX + player.size / 2, drawY + player.size - 8, player.size / 2 - 2, 8);
+                }
+            } else {
+                ctx.fillStyle = COLORS.characterDark;
+                ctx.fillRect(drawX + 2, drawY + player.size - 8, player.size - 4, 8);
+            }
+            
+            // Eyes
+            ctx.fillStyle = '#ffffff';
+            
+            const eyeSize = Math.max(3, Math.floor(TILE_SIZE / 10));
+            
+            if (player.direction === 'up') {
+                ctx.fillRect(drawX + player.size / 4, drawY + player.size / 4, eyeSize, eyeSize);
+                ctx.fillRect(drawX + player.size * 3 / 4 - eyeSize, drawY + player.size / 4, eyeSize, eyeSize);
+            } else if (player.direction === 'down') {
+                ctx.fillRect(drawX + player.size / 4, drawY + player.size / 2, eyeSize, eyeSize);
+                ctx.fillRect(drawX + player.size * 3 / 4 - eyeSize, drawY + player.size / 2, eyeSize, eyeSize);
+            } else if (player.direction === 'left') {
+                ctx.fillRect(drawX + player.size / 4, drawY + player.size / 3, eyeSize, eyeSize);
+                ctx.fillRect(drawX + player.size / 4, drawY + player.size * 2 / 3, eyeSize, eyeSize);
+            } else if (player.direction === 'right') {
+                ctx.fillRect(drawX + player.size * 3 / 4 - eyeSize, drawY + player.size / 3, eyeSize, eyeSize);
+                ctx.fillRect(drawX + player.size * 3 / 4 - eyeSize, drawY + player.size * 2 / 3, eyeSize, eyeSize);
+            }
+            
+            // Draw pushing effect
+            if (player.pushingBlock) {
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                
+                if (player.direction === 'up') {
+                    ctx.fillRect(drawX + player.size / 4, drawY, player.size / 2, 3);
+                } else if (player.direction === 'down') {
+                    ctx.fillRect(drawX + player.size / 4, drawY + player.size - 3, player.size / 2, 3);
+                } else if (player.direction === 'left') {
+                    ctx.fillRect(drawX, drawY + player.size / 4, 3, player.size / 2);
+                } else if (player.direction === 'right') {
+                    ctx.fillRect(drawX + player.size - 3, drawY + player.size / 4, 3, player.size / 2);
+                }
+            }
+        }
+        
+        function drawBlock() {
+            let drawX = block.x;
+            let drawY = block.y;
+            
+            // Apply animation if moving
+            if (block.moving) {
+                if (block.direction === 'up') drawY -= TILE_SIZE * block.moveProgress;
+                else if (block.direction === 'down') drawY += TILE_SIZE * block.moveProgress;
+                else if (block.direction === 'left') drawX -= TILE_SIZE * block.moveProgress;
+                else if (block.direction === 'right') drawX += TILE_SIZE * block.moveProgress;
+            }
+            
+            // Block body
+            ctx.fillStyle = COLORS.block;
+            ctx.fillRect(drawX, drawY, block.size, block.size);
+            
+            // Block shading
+            ctx.fillStyle = COLORS.blockShade;
+            ctx.fillRect(drawX, drawY + block.size - 8, block.size, 8);
+            ctx.fillRect(drawX + block.size - 8, drawY, 8, block.size);
+            
+            // Block highlights
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.fillRect(drawX, drawY, block.size, 4);
+            ctx.fillRect(drawX, drawY, 4, block.size);
+        }
+        
+        function drawControls() {
+            if (isMobile) {
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Swipe to move & push the block', canvas.width / 2, 20);
+            } else {
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Use arrow keys to move & push the block', canvas.width / 2, 20);
+            }
+        }
+        
+        function drawGameOverMessage() {
+            if (!gameOver) return;
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, canvas.height / 2 - 30, canvas.width, 60);
+            
+            ctx.fillStyle = gameWon ? '#52b788' : '#e63946';
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(gameWon ? 'CORRECT!' : 'INCORRECT!', canvas.width / 2, canvas.height / 2);
+        }
+        
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawFloor();
+            drawPlates();
+            drawBlock();
+            drawPlayer();
+            drawQuestion();
+            drawControls();
+            drawGameOverMessage();
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

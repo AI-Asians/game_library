@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whack-A-Mole Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            cursor: none;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-family: Arial, sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const holes = [];
+        const answers = ['Paris', 'London', 'Berlin', 'Madrid'];
+        const correctAnswer = 'Paris';
+        let gameActive = true;
+        let hammer = { x: 0, y: 0, whacking: false, whackTime: 0 };
+        
+        // Colors (limited palette)
+        const colors = {
+            sky: '#8BE0FF',
+            grass: '#58C430',
+            grassDark: '#3CA010',
+            dirt: '#905020',
+            dirtDark: '#6A3010',
+            moleBody: '#7A5230',
+            moleFace: '#D7A87E',
+            moleNose: '#55281A',
+            question: '#FFFFFF',
+            questionBg: '#333366',
+            hammerHandle: '#BA7A3F',
+            hammerHead: '#AAAAAA'
+        };
+        
+        // Audio context and sounds
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playSound(type) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'whack') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(120, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(60, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.8, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(80, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'pop') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Initialize holes
+        function initHoles() {
+            const holeSize = isMobile ? 60 : 100;
+            const rows = isMobile ? 2 : 2;
+            const cols = isMobile ? 2 : 3;
+            const totalHoles = Math.min(answers.length, rows * cols);
+            
+            const spacingX = canvas.width / (cols + 1);
+            const spacingY = canvas.height / 2 / (rows + 1);
+            const startY = canvas.height / 2;
+            
+            for (let i = 0; i < totalHoles; i++) {
+                const row = Math.floor(i / cols);
+                const col = i % cols;
+                
+                holes.push({
+                    x: (col + 1) * spacingX,
+                    y: startY + (row + 1) * spacingY,
+                    size: holeSize,
+                    active: false,
+                    answer: answers[i],
+                    moleY: 0,
+                    targetY: 0,
+                    speed: 0.1 + Math.random() * 0.1,
+                    timer: Math.random() * 3000,
+                    hitAnimation: 0
+                });
+            }
+        }
+        
+        // Draw the background
+        function drawBackground() {
+            // Sky
+            ctx.fillStyle = colors.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height / 2);
+            
+            // Grass
+            ctx.fillStyle = colors.grass;
+            ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
+            
+            // Draw some grass tufts
+            ctx.fillStyle = colors.grassDark;
+            for (let i = 0; i < 20; i++) {
+                const x = Math.random() * canvas.width;
+                const width = 8 + Math.random() * 12;
+                const height = 5 + Math.random() * 15;
+                
+                // Draw pixelated grass tuft
+                ctx.fillRect(
+                    Math.floor(x / 4) * 4, 
+                    Math.floor((canvas.height / 2) / 4) * 4, 
+                    Math.floor(width / 4) * 4, 
+                    Math.floor(height / 4) * 4
+                );
+            }
+        }
+        
+        // Draw question box
+        function drawQuestion() {
+            const padding = isMobile ? 10 : 20;
+            const fontSize = isMobile ? 18 : 24;
+            const boxWidth = canvas.width - (padding * 2);
+            const boxHeight = isMobile ? 50 : 70;
+            
+            // Question background
+            ctx.fillStyle = colors.questionBg;
+            ctx.fillRect(padding, padding, boxWidth, boxHeight);
+            
+            // Question text
+            ctx.fillStyle = colors.question;
+            ctx.font = `${fontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, padding + boxHeight / 2);
+        }
+        
+        // Draw holes and moles
+        function drawHoles() {
+            holes.forEach(hole => {
+                // Draw hole
+                const x = hole.x;
+                const y = hole.y;
+                const size = hole.size;
+                
+                // Darker dirt around hole
+                ctx.fillStyle = colors.dirtDark;
+                ctx.beginPath();
+                ctx.arc(x, y, size / 2 + 6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Hole
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Dirt mound around hole (pixelated)
+                ctx.fillStyle = colors.dirt;
+                const moundSize = size / 2 + 10;
+                for (let i = 0; i < 8; i++) {
+                    const angle = (Math.PI * 2 / 8) * i;
+                    const bumpX = x + Math.cos(angle) * moundSize;
+                    const bumpY = y + Math.sin(angle) * (moundSize - 4);
+                    const bumpSize = 5 + Math.random() * 5;
+                    
+                    ctx.fillRect(
+                        Math.floor(bumpX / 4) * 4 - bumpSize / 2, 
+                        Math.floor(bumpY / 4) * 4 - bumpSize / 2, 
+                        Math.floor(bumpSize / 4) * 4, 
+                        Math.floor(bumpSize / 4) * 4
+                    );
+                }
+                
+                // Draw mole if active
+                if (hole.active) {
+                    const moleSize = size * 0.8;
+                    const moleHeight = size * 0.9;
+                    const moleY = y - hole.moleY * moleHeight;
+                    
+                    // Mole body
+                    ctx.fillStyle = colors.moleBody;
+                    ctx.beginPath();
+                    ctx.arc(x, moleY, moleSize / 2, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Mole face
+                    ctx.fillStyle = colors.moleFace;
+                    ctx.beginPath();
+                    ctx.arc(x, moleY - moleSize * 0.1, moleSize / 2 * 0.9, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Mole eyes
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.arc(x - moleSize * 0.2, moleY - moleSize * 0.2, moleSize * 0.08, 0, Math.PI * 2);
+                    ctx.arc(x + moleSize * 0.2, moleY - moleSize * 0.2, moleSize * 0.08, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Mole nose
+                    ctx.fillStyle = colors.moleNose;
+                    ctx.beginPath();
+                    ctx.arc(x, moleY - moleSize * 0.05, moleSize * 0.12, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Answer text
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 3;
+                    ctx.font = `${moleSize * 0.4}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.strokeText(hole.answer, x, moleY - moleSize * 0.6);
+                    ctx.fillText(hole.answer, x, moleY - moleSize * 0.6);
+                    
+                    // Hit animation
+                    if (hole.hitAnimation > 0) {
+                        ctx.fillStyle = `rgba(255, ${hole.answer === correctAnswer ? '255' : '0'}, 0, ${hole.hitAnimation})`;
+                        ctx.beginPath();
+                        ctx.arc(x, moleY, moleSize / 2 + 10, 0, Math.PI * 2);
+                        ctx.fill();
+                        hole.hitAnimation -= 0.05;
+                    }
+                }
+            });
+        }
+        
+        // Draw hammer cursor
+        function drawHammer() {
+            const hammerSize = isMobile ? 40 : 60;
+            
+            // Save context for rotation
+            ctx.save();
+            
+            // Translate to hammer position
+            ctx.translate(hammer.x, hammer.y);
+            
+            // Rotate if whacking
+            if (hammer.whacking) {
+                const whackProgress = Math.min(1, (Date.now() - hammer.whackTime) / 100);
+                const angle = Math.sin(whackProgress * Math.PI) * Math.PI / 2;
+                ctx.rotate(angle);
+            }
+            
+            // Draw hammer handle
+            ctx.fillStyle = colors.hammerHandle;
+            ctx.fillRect(-5, 0, 10, hammerSize);
+            
+            // Draw hammer head
+            ctx.fillStyle = colors.hammerHead;
+            ctx.fillRect(-hammerSize / 2, -hammerSize / 3, hammerSize, hammerSize / 3);
+            
+            // Restore context
+            ctx.restore();
+        }
+        
+        // Check if coordinates are within a mole
+        function checkMoleHit(x, y) {
+            for (const hole of holes) {
+                if (!hole.active || hole.moleY < 0.5) continue;
+                
+                const moleSize = hole.size * 0.8;
+                const moleHeight = hole.size * 0.9;
+                const moleY = hole.y - hole.moleY * moleHeight;
+                
+                const distance = Math.sqrt(Math.pow(x - hole.x, 2) + Math.pow(y - moleY, 2));
+                
+                if (distance < moleSize / 2) {
+                    hammer.whacking = true;
+                    hammer.whackTime = Date.now();
+                    
+                    hole.hitAnimation = 1;
+                    playSound('whack');
+                    
+                    if (hole.answer === correctAnswer) {
+                        gameActive = false;
+                        playSound('correct');
+                        setTimeout(() => {
+                            restartBtn.style.display = 'block';
+                        }, 1000);
+                    } else {
+                        playSound('wrong');
+                    }
+                    
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Update game state
+        function updateGame(deltaTime) {
+            if (!gameActive) return;
+            
+            // Update moles
+            holes.forEach(hole => {
+                // Update mole position
+                if (hole.moleY < hole.targetY) {
+                    hole.moleY = Math.min(hole.moleY + hole.speed * deltaTime / 16, hole.targetY);
+                } else if (hole.moleY > hole.targetY) {
+                    hole.moleY = Math.max(hole.moleY - hole.speed * deltaTime / 16, hole.targetY);
+                }
+                
+                // Update mole timer
+                hole.timer -= deltaTime;
+                if (hole.timer <= 0) {
+                    if (hole.active) {
+                        // Hide mole
+                        hole.active = false;
+                        hole.targetY = 0;
+                        hole.timer = 1000 + Math.random() * 2000;
+                    } else {
+                        // Show mole
+                        hole.active = true;
+                        hole.targetY = 1;
+                        hole.timer = 1500 + Math.random() * 1500;
+                        
+                        // Randomly assign answer or ensure correct answer appears
+                        const usedAnswers = holes.filter(h => h.active && h !== hole).map(h => h.answer);
+                        
+                        if (!usedAnswers.includes(correctAnswer) && Math.random() < 0.3) {
+                            hole.answer = correctAnswer;
+                        } else {
+                            // Pick a random answer that isn't already showing
+                            const availableAnswers = answers.filter(a => !usedAnswers.includes(a));
+                            hole.answer = availableAnswers[Math.floor(Math.random() * availableAnswers.length)];
+                        }
+                        
+                        playSound('pop');
+                    }
+                }
+            });
+            
+            // Reset hammer whack animation
+            if (hammer.whacking && Date.now() - hammer.whackTime > 200) {
+                hammer.whacking = false;
+            }
+        }
+        
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            // Calculate delta time
+            const deltaTime = lastTime ? timestamp - lastTime : 0;
+            lastTime = timestamp;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBackground();
+            drawQuestion();
+            drawHoles();
+            drawHammer();
+            
+            // Update game state
+            updateGame(deltaTime);
+            
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameActive = true;
+            restartBtn.style.display = 'none';
+            hammer = { x: 0, y: 0, whacking: false, whackTime: 0 };
+            
+            // Clear holes array
+            holes.length = 0;
+            
+            // Initialize holes
+            initHoles();
+            
+            // Set up event listeners
+            canvas.addEventListener('mousemove', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                hammer.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                hammer.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            });
+            
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                hammer.x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+                hammer.y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+            });
+            
+            canvas.addEventListener('mousedown', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                checkMoleHit(x, y);
+            });
+            
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+                const y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+                checkMoleHit(x, y);
+            });
+        }
+        
+        // Start game
+        initGame();
+        gameLoop(0);
+        
+        // Restart button event
+        restartBtn.addEventListener('click', initGame);
+    </script>
+</body>
+</html>

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #555;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background-color: #442266;
+            color: #fff;
+            border: 3px solid #8844aa;
+            font-family: sans-serif;
+            font-size: 16px;
+            display: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        let correctAnswer = "Paris";
+        let answers = [
+            { text: "Paris", isCorrect: true, orbitRadius: 150, speed: 0.001, angle: 0, size: 40 },
+            { text: "London", isCorrect: false, orbitRadius: 200, speed: 0.0015, angle: Math.PI / 2, size: 45 },
+            { text: "Rome", isCorrect: false, orbitRadius: 250, speed: 0.002, angle: Math.PI, size: 45 },
+            { text: "Madrid", isCorrect: false, orbitRadius: 110, speed: 0.0025, angle: Math.PI * 1.5, size: 45 }
+        ];
+        
+        // Colors in 8-bit style palette
+        const colors = {
+            background: "#111133",
+            question: "#FFCC44",
+            correctOrbit: "#44CC88",
+            incorrectOrbit: "#6644AA",
+            correctPlanet: "#88FF66",
+            incorrectPlanet: "#FF6688",
+            text: "#FFFFFF",
+            glow: "#FFDD22"
+        };
+        
+        // Particle system for space dust
+        const particles = [];
+        for (let i = 0; i < 50; i++) {
+            particles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                speed: Math.random() * 0.5 + 0.1,
+                color: `rgba(${Math.floor(Math.random() * 100 + 155)}, 
+                          ${Math.floor(Math.random() * 100 + 155)}, 
+                          ${Math.floor(Math.random() * 100 + 200)}, 
+                          ${Math.random() * 0.5 + 0.2})`
+            });
+        }
+        
+        // Audio context and sounds
+        let audioContext;
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log("Web Audio API not supported");
+        }
+        
+        // Simple sound functions
+        function playSound(frequency, duration, type = 'sine', volume = 0.3) {
+            if (!audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(660, 0.1, 'square', 0.2);
+            setTimeout(() => playSound(880, 0.2, 'square', 0.2), 100);
+        }
+        
+        function playIncorrectSound() {
+            playSound(220, 0.2, 'sawtooth', 0.2);
+            setTimeout(() => playSound(180, 0.3, 'sawtooth', 0.2), 200);
+        }
+        
+        // Mouse/touch position tracking
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        // Handle mouse movement
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        
+        // Handle touch movement
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.touches[0].clientX - rect.left;
+            mouseY = e.touches[0].clientY - rect.top;
+        });
+        
+        // Handle click or touch
+        function handleInteraction(e) {
+            if (gameOver) return;
+            
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            let clickX, clickY;
+            
+            if (e.type === 'touchstart') {
+                clickX = e.touches[0].clientX - rect.left;
+                clickY = e.touches[0].clientY - rect.top;
+            } else {
+                clickX = e.clientX - rect.left;
+                clickY = e.clientY - rect.top;
+            }
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Check if any answer was clicked
+            for (let answer of answers) {
+                const answerX = centerX + Math.cos(answer.angle) * answer.orbitRadius;
+                const answerY = centerY + Math.sin(answer.angle) * answer.orbitRadius;
+                
+                const distance = Math.sqrt(Math.pow(answerX - clickX, 2) + Math.pow(answerY - clickY, 2));
+                
+                if (distance < answer.size) {
+                    gameOver = true;
+                    
+                    if (answer.isCorrect) {
+                        playCorrectSound();
+                        answer.correct = true;
+                    } else {
+                        playIncorrectSound();
+                        answer.incorrect = true;
+                    }
+                    
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 1000);
+                    
+                    break;
+                }
+            }
+        }
+        
+        canvas.addEventListener('mousedown', handleInteraction);
+        canvas.addEventListener('touchstart', handleInteraction);
+        
+        // Draw pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 3;
+            for (let px = -radius; px <= radius; px += pixelSize) {
+                for (let py = -radius; py <= radius; py += pixelSize) {
+                    const dist = Math.sqrt(px * px + py * py);
+                    if (dist <= radius) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(
+                            Math.floor((x + px) / pixelSize) * pixelSize, 
+                            Math.floor((y + py) / pixelSize) * pixelSize, 
+                            pixelSize, pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw dotted orbit path
+        function drawDottedOrbit(centerX, centerY, radius, color) {
+            const segments = 32;
+            const arcLength = (Math.PI * 2) / segments;
+            
+            for (let i = 0; i < segments; i++) {
+                if (i % 2 === 0) {
+                    const startAngle = i * arcLength;
+                    const endAngle = (i + 1) * arcLength;
+                    
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Update and draw particles
+            for (let p of particles) {
+                p.y += p.speed;
+                if (p.y > canvas.height) {
+                    p.y = 0;
+                    p.x = Math.random() * canvas.width;
+                }
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x / 2) * 2, 
+                    Math.floor(p.y / 2) * 2, 
+                    p.size, p.size
+                );
+            }
+            
+            // Draw orbit paths
+            for (let answer of answers) {
+                const orbitColor = answer.isCorrect ? colors.correctOrbit : colors.incorrectOrbit;
+                drawDottedOrbit(centerX, centerY, answer.orbitRadius, orbitColor);
+            }
+            
+            // Draw central question
+            drawPixelatedCircle(centerX, centerY, 70, colors.question);
+            
+            // Draw question text
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#000000';
+            ctx.fillText("What is the", centerX, centerY - 10);
+            ctx.fillText("capital of", centerX, centerY + 15);
+            ctx.fillText("France?", centerX, centerY + 40);
+            
+            // Update and draw answers
+            for (let answer of answers) {
+                if (!gameOver) {
+                    answer.angle += answer.speed;
+                    
+                    // Add wobble effect
+                    const wobble = Math.sin(Date.now() * 0.003) * 5;
+                    const actualRadius = answer.orbitRadius + wobble;
+                    
+                    answer.x = centerX + Math.cos(answer.angle) * actualRadius;
+                    answer.y = centerY + Math.sin(answer.angle) * actualRadius;
+                }
+                
+                // Determine planet color
+                let planetColor = answer.isCorrect ? colors.correctPlanet : colors.incorrectPlanet;
+                
+                if (answer.correct) planetColor = '#FFFF00';
+                if (answer.incorrect) planetColor = '#FF0000';
+                
+                // Check for hover and add gravitational pull
+                const distance = Math.sqrt(Math.pow(answer.x - mouseX, 2) + Math.pow(answer.y - mouseY, 2));
+                const hoverEffect = distance < 60;
+                
+                // Draw glow effect if hovering
+                if (hoverEffect && !gameOver) {
+                    const glowSize = answer.size + 8;
+                    drawPixelatedCircle(answer.x, answer.y, glowSize, colors.glow + '44');
+                    
+                    // Gravitational pull
+                    const pull = 5;
+                    const angle = Math.atan2(mouseY - answer.y, mouseX - answer.x);
+                    answer.x += Math.cos(angle) * pull * (1 - distance / 60);
+                    answer.y += Math.sin(angle) * pull * (1 - distance / 60);
+                }
+                
+                // Draw planet
+                drawPixelatedCircle(answer.x, answer.y, answer.size, planetColor);
+                
+                // Draw text
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = colors.text;
+                ctx.fillText(answer.text, answer.x, answer.y + 5);
+            }
+            
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Restart game
+        restartBtn.addEventListener('click', () => {
+            gameOver = false;
+            restartBtn.style.display = 'none';
+            
+            answers.forEach(answer => {
+                delete answer.correct;
+                delete answer.incorrect;
+                answer.angle = Math.random() * Math.PI * 2;
+            });
+            
+            gameLoop();
+        });
+        
+        // Initialize game on click/touch to enable audio
+        function startGame() {
+            document.body.removeEventListener('click', startGame);
+            document.body.removeEventListener('touchstart', startGame);
+            
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            gameLoop();
+        }
+        
+        document.body.addEventListener('click', startGame);
+        document.body.addEventListener('touchstart', startGame);
+        
+        // Initial game start with prompt
+        ctx.fillStyle = colors.background;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.font = '20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = colors.text;
+        ctx.fillText("Click or tap to start", canvas.width / 2, canvas.height / 2);
+    </script>
+</body>
+</html>

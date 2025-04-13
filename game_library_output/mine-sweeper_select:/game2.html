@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Minesweeper</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #game-container {
+            position: relative;
+        }
+        #restart-btn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background-color: #333;
+            color: #fff;
+            border: 2px solid #666;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <button id="restart-btn">Restart</button>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart-btn');
+        
+        // Determine if on mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game constants
+        const GRID_SIZE = isMobile ? 3 : 4;
+        const TILE_SIZE = isMobile ? 80 : 120;
+        const GRID_PADDING = isMobile ? 30 : 50;
+        const PALETTE = {
+            background: '#0A0A18',
+            grid: '#3A4466',
+            tileBack: '#5C75AD',
+            tileBackHover: '#7A90C0',
+            tileFront: '#C3D3F0',
+            textDark: '#222233',
+            textLight: '#EEEEFF',
+            correct: '#66BB66',
+            incorrect: '#DD5555',
+            border: '#27303E'
+        };
+        
+        // Game state
+        let gameState = {
+            tiles: [],
+            hoveredTile: null,
+            gameOver: false,
+            correctTileIndex: Math.floor(Math.random() * (GRID_SIZE * GRID_SIZE)),
+            revealed: new Array(GRID_SIZE * GRID_SIZE).fill(false)
+        };
+        
+        // Answers for the game
+        const answers = [
+            'Mars',
+            'Earth',
+            'Venus',
+            'Jupiter',
+            'Saturn',
+            'Mercury',
+            'Neptune',
+            'Uranus',
+            'Pluto',
+            'Moon',
+            'Sun',
+            'Saturn',
+            'Jupiter',
+            'Venus',
+            'Mercury',
+            'Neptune'
+        ];
+        
+        // Audio context and sounds
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playSound(type) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'hover') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            } else if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.15);
+            } else if (type === 'correct') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                oscillator.start();
+                
+                // Play a simple ascending melody
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                }, 100);
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                }, 200);
+                
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(130.81, audioCtx.currentTime); // C3
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                oscillator.start();
+                
+                // Play a simple descending melody
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(123.47, audioCtx.currentTime + 0.1); // B2
+                }, 100);
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(116.54, audioCtx.currentTime + 0.2); // A#2/Bb2
+                }, 200);
+                
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+        
+        // Initialize the game
+        function initGame() {
+            // Initialize tiles
+            gameState.tiles = [];
+            gameState.revealed = new Array(GRID_SIZE * GRID_SIZE).fill(false);
+            gameState.gameOver = false;
+            gameState.correctTileIndex = Math.floor(Math.random() * (GRID_SIZE * GRID_SIZE));
+            
+            // Create shuffled answers
+            let gameAnswers = answers.slice(0, GRID_SIZE * GRID_SIZE);
+            gameAnswers[gameState.correctTileIndex] = 'Mars'; // Ensure correct answer is placed
+            
+            // Place the remaining answers
+            for (let i = 0; i < gameAnswers.length; i++) {
+                if (i !== gameState.correctTileIndex) {
+                    // Pick a non-correct answer for other tiles
+                    let j = 1;
+                    while (j < answers.length && (answers[j] === 'Mars' || gameAnswers.includes(answers[j]))) {
+                        j++;
+                    }
+                    if (j < answers.length) {
+                        gameAnswers[i] = answers[j];
+                    }
+                }
+            }
+            
+            // Generate tiles
+            const startX = (canvas.width - (GRID_SIZE * TILE_SIZE)) / 2;
+            const startY = (canvas.height - (GRID_SIZE * TILE_SIZE)) / 2 + 20;
+            
+            for (let row = 0; row < GRID_SIZE; row++) {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    const index = row * GRID_SIZE + col;
+                    gameState.tiles.push({
+                        x: startX + col * TILE_SIZE,
+                        y: startY + row * TILE_SIZE,
+                        width: TILE_SIZE - 8,
+                        height: TILE_SIZE - 8,
+                        answer: gameAnswers[index],
+                        isCorrect: index === gameState.correctTileIndex
+                    });
+                }
+            }
+            
+            restartBtn.style.display = 'none';
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color, borderColor = null) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            if (borderColor) {
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, width, height);
+            }
+        }
+        
+        function drawTile(tile, index) {
+            const revealed = gameState.revealed[index];
+            const isHovered = gameState.hoveredTile === index;
+            
+            let tileColor = revealed 
+                ? (tile.isCorrect ? PALETTE.correct : PALETTE.incorrect) 
+                : (isHovered ? PALETTE.tileBackHover : PALETTE.tileBack);
+            
+            // Draw tile base
+            drawPixelRect(tile.x, tile.y, tile.width, tile.height, tileColor, PALETTE.border);
+            
+            // Draw 3D effect
+            if (!revealed) {
+                ctx.fillStyle = PALETTE.border;
+                ctx.fillRect(tile.x, tile.y, tile.width, 4);
+                ctx.fillRect(tile.x, tile.y, 4, tile.height);
+                
+                ctx.fillStyle = '#FFFFFF33';
+                ctx.fillRect(tile.x + tile.width - 4, tile.y + 4, 4, tile.height - 4);
+                ctx.fillRect(tile.x + 4, tile.y + tile.height - 4, tile.width - 8, 4);
+            }
+            
+            // Draw text if revealed
+            if (revealed) {
+                ctx.fillStyle = PALETTE.textLight;
+                ctx.font = `${Math.floor(TILE_SIZE / 5)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(tile.answer, tile.x + tile.width / 2, tile.y + tile.height / 2);
+            } else {
+                // Draw question mark or planet icon
+                ctx.fillStyle = PALETTE.border;
+                ctx.font = `bold ${Math.floor(TILE_SIZE / 3)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('?', tile.x + tile.width / 2, tile.y + tile.height / 2);
+            }
+        }
+        
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = PALETTE.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = PALETTE.textLight;
+            ctx.font = `${isMobile ? 22 : 28}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, isMobile ? 80 : 120);
+            
+            // Draw grid background
+            const gridWidth = GRID_SIZE * TILE_SIZE;
+            const gridHeight = GRID_SIZE * TILE_SIZE;
+            const gridX = (canvas.width - gridWidth) / 2;
+            const gridY = (canvas.height - gridHeight) / 2 + 20;
+            
+            drawPixelRect(gridX - GRID_PADDING/2, gridY - GRID_PADDING/2, 
+                gridWidth + GRID_PADDING, gridHeight + GRID_PADDING, 
+                PALETTE.grid);
+            
+            // Draw tiles
+            gameState.tiles.forEach((tile, index) => {
+                drawTile(tile, index);
+            });
+            
+            // Draw result if game is over
+            if (gameState.gameOver) {
+                let resultText = '';
+                for (let i = 0; i < gameState.tiles.length; i++) {
+                    if (gameState.revealed[i]) {
+                        resultText = gameState.tiles[i].isCorrect ? 
+                            'Correct! Mars is the Red Planet.' : 
+                            'Wrong! Mars is the Red Planet.';
+                        break;
+                    }
+                }
+                
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, canvas.height / 2 - 50, canvas.width, 100);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `${isMobile ? 22 : 28}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(resultText, canvas.width / 2, canvas.height / 2);
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Handle input
+        function handleMouseMove(e) {
+            if (gameState.gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            let hoveredIndex = null;
+            gameState.tiles.forEach((tile, index) => {
+                if (!gameState.revealed[index] &&
+                    mouseX >= tile.x && mouseX <= tile.x + tile.width &&
+                    mouseY >= tile.y && mouseY <= tile.y + tile.height) {
+                    hoveredIndex = index;
+                }
+            });
+            
+            if (hoveredIndex !== gameState.hoveredTile) {
+                if (hoveredIndex !== null) {
+                    playSound('hover');
+                }
+                gameState.hoveredTile = hoveredIndex;
+            }
+        }
+        
+        function handleClick(e) {
+            if (gameState.gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            gameState.tiles.forEach((tile, index) => {
+                if (!gameState.revealed[index] &&
+                    mouseX >= tile.x && mouseX <= tile.x + tile.width &&
+                    mouseY >= tile.y && mouseY <= tile.y + tile.height) {
+                    
+                    playSound('select');
+                    
+                    // Reveal the tile
+                    gameState.revealed[index] = true;
+                    
+                    // Check if correct
+                    if (tile.isCorrect) {
+                        playSound('correct');
+                    } else {
+                        playSound('incorrect');
+                    }
+                    
+                    // End game
+                    gameState.gameOver = true;
+                }
+            });
+        }
+        
+        function handleTouchStart(e) {
+            e.preventDefault();
+            if (gameState.gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            gameState.tiles.forEach((tile, index) => {
+                if (!gameState.revealed[index] &&
+                    touchX >= tile.x && touchX <= tile.x + tile.width &&
+                    touchY >= tile.y && touchY <= tile.y + tile.height) {
+                    
+                    playSound('select');
+                    
+                    // Reveal the tile
+                    gameState.revealed[index] = true;
+                    
+                    // Check if correct
+                    if (tile.isCorrect) {
+                        playSound('correct');
+                    } else {
+                        playSound('incorrect');
+                    }
+                    
+                    // End game
+                    gameState.gameOver = true;
+                }
+            });
+        }
+        
+        // Game loop
+        function gameLoop() {
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        function init() {
+            initGame();
+            
+            // Add event listeners
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('touchstart', handleTouchStart);
+            
+            restartBtn.addEventListener('click', () => {
+                initGame();
+                playSound('select');
+            });
+            
+            // Start game loop
+            gameLoop();
+        }
+        
+        // Start the game
+        window.onload = init;
+    </script>
+</body>
+</html>

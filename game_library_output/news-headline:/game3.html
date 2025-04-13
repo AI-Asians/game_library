@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Headline Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const COLORS = {
+            background: '#222222',
+            tvFrame: '#111111',
+            tvScreen: '#001122',
+            newsBar: '#CC0000',
+            newsBarText: '#FFFFFF',
+            newspaperBg: '#EEEECC',
+            newspaperText: '#111111',
+            newspaperBorder: '#555555',
+            correct: '#00CC00',
+            incorrect: '#CC0000',
+            static: '#FFFFFF'
+        };
+
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "PARIS", correct: true },
+            { text: "LONDON", correct: false },
+            { text: "BERLIN", correct: false },
+            { text: "ROME", correct: false }
+        ];
+
+        // Shuffle answers
+        for (let i = answers.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [answers[i], answers[j]] = [answers[j], answers[i]];
+        }
+
+        // Game state
+        let gameState = {
+            tickerPosition: canvas.width,
+            gameActive: true,
+            flashTimer: 0,
+            staticAmount: 0.3,
+            restartButton: {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 80,
+                width: 120,
+                height: 40,
+                visible: false
+            },
+            newspapers: [],
+            resultMessage: "",
+            resultVisible: false,
+            breakingNewsFlash: 0
+        };
+
+        // Create newspaper positions
+        const newspaperWidth = isMobile ? 150 : 300;
+        const newspaperHeight = isMobile ? 180 : 200;
+        const padding = isMobile ? 15 : 30;
+        const startY = isMobile ? 180 : 220;
+
+        // Create 2x2 grid for newspapers
+        const cols = 2;
+        const rows = 2;
+        
+        for (let i = 0; i < answers.length; i++) {
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            
+            const x = (canvas.width - ((newspaperWidth * cols) + (padding * (cols - 1)))) / 2 + col * (newspaperWidth + padding);
+            const y = startY + row * (newspaperHeight + padding);
+            
+            gameState.newspapers.push({
+                x: x,
+                y: y,
+                width: newspaperWidth,
+                height: newspaperHeight,
+                answer: answers[i]
+            });
+        }
+
+        // Sound functions
+        function playTickSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+
+        function playResultSound(correct) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            
+            if (correct) {
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0.001, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else {
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(196, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            }
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+        }
+
+        // Drawing functions
+        function drawTVFrame() {
+            // TV outer frame
+            ctx.fillStyle = COLORS.tvFrame;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // TV screen (inner area)
+            const border = 20;
+            ctx.fillStyle = COLORS.tvScreen;
+            ctx.fillRect(border, border, canvas.width - border * 2, canvas.height - border * 2);
+            
+            // TV scanlines effect
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+            for (let i = border; i < canvas.height - border; i += 4) {
+                ctx.fillRect(border, i, canvas.width - border * 2, 2);
+            }
+        }
+
+        function drawStatic() {
+            if (gameState.staticAmount > 0) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.015)';
+                for (let i = 0; i < canvas.width * canvas.height * gameState.staticAmount / 100; i++) {
+                    const x = Math.random() * canvas.width;
+                    const y = Math.random() * canvas.height;
+                    const size = Math.random() * 3 + 1;
+                    ctx.fillRect(x, y, size, size);
+                }
+            }
+        }
+
+        function drawBreakingNews() {
+            const newsBarHeight = 60;
+            const newsBarY = 90;
+            
+            // Breaking news banner background
+            ctx.fillStyle = COLORS.newsBar;
+            ctx.fillRect(40, newsBarY, canvas.width - 80, newsBarHeight);
+            
+            // Draw "BREAKING NEWS" text
+            ctx.fillStyle = COLORS.newsBarText;
+            ctx.font = isMobile ? 'bold 24px Arial' : 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Flash effect for "BREAKING NEWS"
+            gameState.breakingNewsFlash += 0.05;
+            if (Math.sin(gameState.breakingNewsFlash) > 0) {
+                ctx.fillText("BREAKING NEWS", canvas.width / 2, newsBarY + newsBarHeight / 2);
+            }
+            
+            // Draw ticker with question
+            const tickerHeight = 40;
+            const tickerY = newsBarY + newsBarHeight + 10;
+            
+            // Ticker background
+            ctx.fillStyle = '#222';
+            ctx.fillRect(40, tickerY, canvas.width - 80, tickerHeight);
+            
+            // Ticker text
+            ctx.fillStyle = '#fff';
+            ctx.font = isMobile ? '18px Arial' : '24px Arial';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, gameState.tickerPosition, tickerY + tickerHeight / 2);
+            
+            // Move ticker
+            gameState.tickerPosition -= 2;
+            if (gameState.tickerPosition < -ctx.measureText(question).width) {
+                gameState.tickerPosition = canvas.width;
+                playTickSound();
+            }
+            
+            // Live indicator
+            const liveSize = 15;
+            const liveX = canvas.width - 100;
+            const liveY = newsBarY + newsBarHeight / 2;
+            
+            gameState.flashTimer += 0.05;
+            if (Math.sin(gameState.flashTimer) > 0) {
+                ctx.fillStyle = '#f00';
+                ctx.beginPath();
+                ctx.arc(liveX, liveY, liveSize, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'left';
+                ctx.fillText('LIVE', liveX + liveSize + 5, liveY + 5);
+            }
+        }
+
+        function drawNewspapers() {
+            gameState.newspapers.forEach(paper => {
+                // Newspaper background
+                ctx.fillStyle = COLORS.newspaperBg;
+                ctx.fillRect(paper.x, paper.y, paper.width, paper.height);
+                
+                // Newspaper border
+                ctx.strokeStyle = COLORS.newspaperBorder;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(paper.x, paper.y, paper.width, paper.height);
+                
+                // Header bar for newspaper name
+                ctx.fillStyle = '#333';
+                ctx.fillRect(paper.x, paper.y, paper.width, 30);
+                
+                // Newspaper name
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('DAILY NEWS', paper.x + paper.width / 2, paper.y + 20);
+                
+                // Headline text
+                ctx.fillStyle = COLORS.newspaperText;
+                ctx.font = isMobile ? 'bold 20px Arial' : 'bold 28px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(paper.answer.text, paper.x + paper.width / 2, paper.y + paper.height / 2);
+                
+                // Add some fake subheadline
+                ctx.fillStyle = '#555';
+                ctx.font = isMobile ? '12px Arial' : '14px Arial';
+                ctx.fillText('Special Report', paper.x + paper.width / 2, paper.y + paper.height / 2 + 40);
+                
+                // Add some decorative newspaper lines (pixelated style)
+                ctx.fillStyle = '#ccc';
+                for (let i = 0; i < 4; i++) {
+                    const lineY = paper.y + paper.height / 2 + 60 + i * 15;
+                    ctx.fillRect(paper.x + 20, lineY, paper.width - 40, 6);
+                }
+            });
+        }
+
+        function drawResult() {
+            if (gameState.resultVisible) {
+                const alpha = Math.min(1, gameState.resultTimer / 10);
+                
+                // Semi-transparent overlay
+                ctx.fillStyle = `rgba(0, 0, 0, ${alpha * 0.7})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Result banner
+                const bannerWidth = canvas.width - 100;
+                const bannerHeight = 100;
+                const bannerX = (canvas.width - bannerWidth) / 2;
+                const bannerY = canvas.height / 2 - bannerHeight / 2;
+                
+                ctx.fillStyle = gameState.resultCorrect ? COLORS.correct : COLORS.incorrect;
+                ctx.fillRect(bannerX, bannerY, bannerWidth, bannerHeight);
+                
+                // Result text
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 32px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(gameState.resultMessage, canvas.width / 2, canvas.height / 2);
+                
+                // Restart button
+                if (gameState.restartButton.visible) {
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(
+                        gameState.restartButton.x, 
+                        gameState.restartButton.y, 
+                        gameState.restartButton.width, 
+                        gameState.restartButton.height
+                    );
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '18px Arial';
+                    ctx.fillText('RESTART', 
+                        gameState.restartButton.x + gameState.restartButton.width / 2, 
+                        gameState.restartButton.y + gameState.restartButton.height / 2
+                    );
+                }
+            }
+        }
+
+        function checkAnswer(answer) {
+            if (!gameState.gameActive) return;
+            
+            gameState.gameActive = false;
+            gameState.resultVisible = true;
+            gameState.resultTimer = 0;
+            gameState.resultCorrect = answer.correct;
+            
+            if (answer.correct) {
+                gameState.resultMessage = "EXCLUSIVE: CORRECT!";
+                gameState.staticAmount = 0.1;
+            } else {
+                gameState.resultMessage = "WRONG REPORT!";
+                gameState.staticAmount = 0.8;
+            }
+            
+            playResultSound(answer.correct);
+            
+            // Show restart button after delay
+            setTimeout(() => {
+                gameState.restartButton.visible = true;
+            }, 1000);
+        }
+
+        function resetGame() {
+            gameState.gameActive = true;
+            gameState.resultVisible = false;
+            gameState.restartButton.visible = false;
+            gameState.staticAmount = 0.3;
+            gameState.tickerPosition = canvas.width;
+            
+            // Shuffle answers again
+            for (let i = answers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [answers[i], answers[j]] = [answers[j], answers[i]];
+            }
+            
+            // Update newspapers with new shuffled answers
+            for (let i = 0; i < gameState.newspapers.length; i++) {
+                gameState.newspapers[i].answer = answers[i];
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw TV frame
+            drawTVFrame();
+            
+            // Draw game elements
+            drawBreakingNews();
+            drawNewspapers();
+            
+            // Draw static effect
+            drawStatic();
+            
+            // Draw result if visible
+            if (gameState.resultVisible) {
+                gameState.resultTimer++;
+                drawResult();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState.gameActive) {
+                // Check newspaper clicks
+                for (const paper of gameState.newspapers) {
+                    if (
+                        mouseX >= paper.x && 
+                        mouseX <= paper.x + paper.width &&
+                        mouseY >= paper.y && 
+                        mouseY <= paper.y + paper.height
+                    ) {
+                        checkAnswer(paper.answer);
+                        break;
+                    }
+                }
+            } else if (gameState.restartButton.visible) {
+                // Check restart button click
+                if (
+                    mouseX >= gameState.restartButton.x && 
+                    mouseX <= gameState.restartButton.x + gameState.restartButton.width &&
+                    mouseY >= gameState.restartButton.y && 
+                    mouseY <= gameState.restartButton.y + gameState.restartButton.height
+                ) {
+                    resetGame();
+                }
+            }
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

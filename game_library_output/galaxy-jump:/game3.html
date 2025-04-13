@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Galaxy-Jump MCQ Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #111;
+      overflow: hidden;
+    }
+    canvas {
+      border: 2px solid #5522aa;
+      image-rendering: pixelated;
+    }
+    #restart {
+      position: absolute;
+      bottom: 20px;
+      padding: 8px 16px;
+      background-color: #5522aa;
+      color: white;
+      border: none;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+  <script>
+    // Game setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Determine if running on mobile or web
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    // Set canvas size based on device
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const colors = {
+      background: '#0c0a20',
+      stars: ['#ffffff', '#aaaaff', '#ffaaff', '#ffffaa'],
+      platforms: ['#5522aa', '#3344cc', '#2266ff'],
+      player: '#22ff88',
+      question: '#ffffff',
+      answers: '#ffffff',
+      correct: '#44ff66',
+      incorrect: '#ff4466',
+    };
+    
+    // Create stars for background
+    const stars = [];
+    for (let i = 0; i < 100; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 2 + 1,
+        color: colors.stars[Math.floor(Math.random() * colors.stars.length)],
+        twinkle: Math.random() * 0.05
+      });
+    }
+    
+    // Create planets
+    const planets = [];
+    for (let i = 0; i < 3; i++) {
+      planets.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height * 0.5,
+        radius: Math.random() * 20 + 10,
+        color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+        rings: Math.random() > 0.6
+      });
+    }
+    
+    // Question and answers
+    const question = "What is the capital of France?";
+    const answers = [
+      { text: "London", correct: false },
+      { text: "Paris", correct: true },
+      { text: "Berlin", correct: false },
+      { text: "Rome", correct: false }
+    ];
+    
+    // Game objects
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height - 150,
+      width: 24,
+      height: 32,
+      velX: 0,
+      velY: 0,
+      jumping: false,
+      speed: 5,
+      jumpStrength: -14,
+      gravity: 0.5,
+      onPlatform: null,
+      color: colors.player
+    };
+    
+    // Shuffle answers for platform placement
+    const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+    
+    // Create platforms
+    const platforms = [];
+    const platformWidth = isMobile ? 90 : 180;
+    const platformHeight = 30;
+    
+    // Distribute platforms across the screen
+    for (let i = 0; i < shuffledAnswers.length; i++) {
+      const sectionWidth = canvas.width / 4;
+      platforms.push({
+        x: i * sectionWidth + (sectionWidth - platformWidth) / 2,
+        y: canvas.height - 300 + (i % 2) * 80, // Alternate heights
+        width: platformWidth,
+        height: platformHeight,
+        velX: (i % 2 === 0 ? 1 : -1) * (isMobile ? 0.5 : 1),
+        color: colors.platforms[i % colors.platforms.length],
+        answer: shuffledAnswers[i],
+        broken: false
+      });
+    }
+    
+    // Game state
+    let gameState = "playing";
+    let lastTime = 0;
+    let feedbackTime = 0;
+    let feedbackMessage = "";
+    
+    // Audio context for sounds
+    let audioCtx;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.log("Audio not supported");
+    }
+    
+    // Sound functions
+    function playJumpSound() {
+      if (!audioCtx) return;
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.2);
+    }
+    
+    function playCorrectSound() {
+      if (!audioCtx) return;
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+      oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+      
+      gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    function playIncorrectSound() {
+      if (!audioCtx) return;
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+      oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+      oscillator.frequency.setValueAtTime(100, audioCtx.currentTime + 0.2);
+      
+      gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    // Input handling
+    const keys = {
+      left: false,
+      right: false,
+      up: false
+    };
+    
+    window.addEventListener('keydown', (e) => {
+      if (gameState === "playing") {
+        if (e.key === 'ArrowLeft') keys.left = true;
+        if (e.key === 'ArrowRight') keys.right = true;
+        if (e.key === 'ArrowUp' && !player.jumping) {
+          keys.up = true;
+          player.jumping = true;
+          player.velY = player.jumpStrength;
+          playJumpSound();
+        }
+      }
+    });
+    
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft') keys.left = false;
+      if (e.key === 'ArrowRight') keys.right = false;
+      if (e.key === 'ArrowUp') keys.up = false;
+    });
+    
+    // Touch controls for mobile
+    let touchStartX = 0;
+    canvas.addEventListener('touchstart', (e) => {
+      if (gameState === "playing") {
+        touchStartX = e.touches[0].clientX;
+        
+        // Jump if player taps the upper half of the screen
+        if (e.touches[0].clientY < canvas.height / 2 && !player.jumping) {
+          player.jumping = true;
+          player.velY = player.jumpStrength;
+          playJumpSound();
+        }
+      }
+      e.preventDefault();
+    });
+    
+    canvas.addEventListener('touchmove', (e) => {
+      if (gameState === "playing") {
+        const touchX = e.touches[0].clientX;
+        const diff = touchX - touchStartX;
+        
+        if (diff < -20) {
+          keys.left = true;
+          keys.right = false;
+        } else if (diff > 20) {
+          keys.right = true;
+          keys.left = false;
+        }
+      }
+      e.preventDefault();
+    });
+    
+    canvas.addEventListener('touchend', () => {
+      keys.left = false;
+      keys.right = false;
+      touchStartX = 0;
+    });
+    
+    // Restart button
+    restartBtn.addEventListener('click', () => {
+      restartGame();
+    });
+    
+    function restartGame() {
+      // Reset player
+      player.x = canvas.width / 2;
+      player.y = canvas.height - 150;
+      player.velX = 0;
+      player.velY = 0;
+      player.jumping = false;
+      player.onPlatform = null;
+      
+      // Reshuffle answers
+      const newShuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+      
+      // Reset platforms
+      for (let i = 0; i < platforms.length; i++) {
+        const sectionWidth = canvas.width / 4;
+        platforms[i].x = i * sectionWidth + (sectionWidth - platformWidth) / 2;
+        platforms[i].y = canvas.height - 300 + (i % 2) * 80;
+        platforms[i].answer = newShuffledAnswers[i];
+        platforms[i].broken = false;
+      }
+      
+      // Reset game state
+      gameState = "playing";
+      feedbackTime = 0;
+      feedbackMessage = "";
+      
+      // Hide restart button
+      restartBtn.style.display = "none";
+    }
+    
+    // Main game loop
+    function gameLoop(timestamp) {
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+      
+      // Clear canvas
+      ctx.fillStyle = colors.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw stars with twinkle effect
+      for (const star of stars) {
+        ctx.fillStyle = star.color;
+        const twinkleSize = star.size * (1 + Math.sin(timestamp * star.twinkle) * 0.3);
+        ctx.fillRect(
+          Math.floor(star.x), 
+          Math.floor(star.y), 
+          Math.floor(twinkleSize), 
+          Math.floor(twinkleSize)
+        );
+      }
+      
+      // Draw planets
+      for (const planet of planets) {
+        ctx.fillStyle = planet.color;
+        ctx.beginPath();
+        ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw planet rings if applicable
+        if (planet.rings) {
+          ctx.save();
+          ctx.translate(planet.x, planet.y);
+          ctx.rotate(Math.PI / 6);
+          ctx.scale(1, 0.3);
+          ctx.strokeStyle = "#ffffff44";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, planet.radius * 1.5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+      
+      // Display question
+      ctx.fillStyle = colors.question;
+      ctx.font = `${isMobile ? '18px' : '24px'} sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, 50);
+      
+      // Update game if playing
+      if (gameState === "playing") {
+        // Player movement
+        if (keys.left) player.velX = -player.speed;
+        else if (keys.right) player.velX = player.speed;
+        else player.velX *= 0.8; // Friction
+        
+        // Apply gravity
+        player.velY += player.gravity;
+        
+        // Update player position
+        player.x += player.velX;
+        player.y += player.velY;
+        
+        // Screen boundaries
+        if (player.x < player.width / 2) {
+          player.x = player.width / 2;
+          player.velX = 0;
+        } else if (player.x > canvas.width - player.width / 2) {
+          player.x = canvas.width - player.width / 2;
+          player.velX = 0;
+        }
+        
+        // Check if player fell off screen
+        if (player.y > canvas.height + 50) {
+          gameState = "gameover";
+          feedbackMessage = "You fell off!";
+          playIncorrectSound();
+          restartBtn.style.display = "block";
+        }
+        
+        // Clear previous platform reference
+        player.onPlatform = null;
+        
+        // Platform collision and movement
+        for (const platform of platforms) {
+          // Move platforms
+          platform.x += platform.velX;
+          
+          // Bounce platforms off screen edges
+          if (platform.x <= 0 || platform.x + platform.width >= canvas.width) {
+            platform.velX = -platform.velX;
+          }
+          
+          // Skip broken platforms
+          if (platform.broken) continue;
+          
+          // Check for player landing on platform
+          if (player.velY > 0 && 
+              player.y + player.height / 2 >= platform.y && 
+              player.y + player.height / 2 <= platform.y + platform.height &&
+              player.x + player.width / 2 >= platform.x && 
+              player.x - player.width / 2 <= platform.x + platform.width &&
+              player.y + player.height / 2 <= platform.y + player.velY) {
+            
+            player.y = platform.y - player.height / 2;
+            player.velY = 0;
+            player.jumping = false;
+            player.onPlatform = platform;
+            
+            // Check if answer is correct
+            if (platform.answer.correct) {
+              gameState = "gameover";
+              feedbackMessage = "Correct! " + platform.answer.text + " is right!";
+              playCorrectSound();
+              restartBtn.style.display = "block";
+            } else {
+              platform.broken = true;
+              feedbackMessage = "Incorrect!";
+              feedbackTime = timestamp + 1000;
+              playIncorrectSound();
+            }
+          }
+        }
+      }
+      
+      // Draw platforms
+      for (const platform of platforms) {
+        if (!platform.broken) {
+          // Draw platform base
+          ctx.fillStyle = platform.color;
+          const pixelSize = 4;
+          
+          // Draw platform as pixelated blocks
+          for (let x = 0; x < platform.width; x += pixelSize) {
+            for (let y = 0; y < platform.height; y += pixelSize) {
+              if (y === 0 || y >= platform.height - pixelSize || 
+                  x === 0 || x >= platform.width - pixelSize) {
+                ctx.fillRect(
+                  Math.floor(platform.x + x),
+                  Math.floor(platform.y + y),
+                  pixelSize,
+                  pixelSize
+                );
+              }
+            }
+          }
+          
+          // Fill center with slightly darker color
+          ctx.fillStyle = platform.color + '99';
+          ctx.fillRect(
+            Math.floor(platform.x + pixelSize),
+            Math.floor(platform.y + pixelSize),
+            Math.floor(platform.width - 2 * pixelSize),
+            Math.floor(platform.height - 2 * pixelSize)
+          );
+          
+          // Draw answer text
+          ctx.fillStyle = colors.answers;
+          ctx.font = `${isMobile ? '14px' : '16px'} sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            platform.answer.text,
+            platform.x + platform.width / 2,
+            platform.y + platform.height / 2 + 5
+          );
+        } else {
+          // Draw broken platform particles
+          ctx.fillStyle = platform.color + '77';
+          for (let i = 0; i < 5; i++) {
+            ctx.fillRect(
+              platform.x + Math.random() * platform.width,
+              platform.y + Math.random() * platform.height,
+              6,
+              6
+            );
+          }
+        }
+      }
+      
+      // Draw player (astronaut)
+      ctx.fillStyle = player.color;
+      
+      // Body
+      ctx.fillRect(
+        Math.floor(player.x - player.width / 2),
+        Math.floor(player.y - player.height / 2),
+        player.width,
+        player.height
+      );
+      
+      // Helmet visor
+      ctx.fillStyle = '#6699ff';
+      ctx.fillRect(
+        Math.floor(player.x - player.width / 4),
+        Math.floor(player.y - player.height / 4),
+        player.width / 2,
+        player.height / 4
+      );
+      
+      // Backpack
+      ctx.fillStyle = '#dddddd';
+      ctx.fillRect(
+        Math.floor(player.x - player.width / 2 - 8),
+        Math.floor(player.y - player.height / 4),
+        8,
+        player.height / 2
+      );
+      
+      // Feedback message
+      if (feedbackTime > timestamp) {
+        ctx.fillStyle = colors.incorrect;
+        ctx.font = `${isMobile ? '18px' : '24px'} sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(feedbackMessage, canvas.width / 2, 100);
+      }
+      
+      // Game over message
+      if (gameState === "gameover") {
+        ctx.fillStyle = feedbackMessage.includes("Correct") ? colors.correct : colors.incorrect;
+        ctx.font = `${isMobile ? '20px' : '28px'} sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(feedbackMessage, canvas.width / 2, 100);
+      }
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>

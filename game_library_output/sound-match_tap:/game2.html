@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Sound Match Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // 8-bit color palette
+        const COLORS = {
+            black: '#111111',
+            white: '#FFFFFF',
+            lightGray: '#AAAAAA',
+            darkGray: '#555555',
+            red: '#FF3333',
+            green: '#33FF33',
+            blue: '#3333FF',
+            yellow: '#FFFF33',
+            brown: '#AA5500',
+            orange: '#FF9900',
+            purple: '#9900FF',
+            darkRed: '#990000'
+        };
+        
+        // Game states
+        const GAME_STATE = {
+            PLAYING: 0,
+            SUCCESS: 1,
+            FAILURE: 2
+        };
+        
+        // Answer options
+        const options = [
+            { text: 'Mars', correct: true, color: COLORS.red, sound: createOscillator('square', 200, 300) },
+            { text: 'Venus', correct: false, color: COLORS.yellow, sound: createOscillator('sawtooth', 300, 400) },
+            { text: 'Jupiter', correct: false, color: COLORS.orange, sound: createOscillator('triangle', 150, 250) },
+            { text: 'Mercury', correct: false, color: COLORS.purple, sound: createOscillator('sine', 400, 500) }
+        ];
+        
+        // Game variables
+        let gameState = GAME_STATE.PLAYING;
+        let currentOptionIndex = 0;
+        let lastSoundChangeTime = 0;
+        let soundDuration = 1500; // 1.5 seconds per sound
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height - 80,
+            width: 120,
+            height: 40
+        };
+        
+        // Audio context
+        let audioCtx;
+        let currentOscillator = null;
+        let isAudioInitialized = false;
+        
+        // Initialize audio on first user interaction
+        function initAudio() {
+            if (!isAudioInitialized) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                isAudioInitialized = true;
+            }
+        }
+        
+        // Function to create oscillator parameters
+        function createOscillator(type, freqStart, freqEnd) {
+            return { type, freqStart, freqEnd };
+        }
+        
+        // Play the current option's sound
+        function playCurrentSound() {
+            if (!isAudioInitialized || !audioCtx) return;
+            
+            // Stop previous sound if any
+            if (currentOscillator) {
+                currentOscillator.stop();
+                currentOscillator = null;
+            }
+            
+            const soundParams = options[currentOptionIndex].sound;
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = soundParams.type;
+            oscillator.frequency.setValueAtTime(soundParams.freqStart, audioCtx.currentTime);
+            oscillator.frequency.linearRampToValueAtTime(soundParams.freqEnd, audioCtx.currentTime + 0.8);
+            
+            gainNode.gain.setValueAtTime(0.8, audioCtx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 1);
+            
+            currentOscillator = oscillator;
+        }
+        
+        // Draw the option boxes
+        function drawOptions() {
+            const spacing = 20;
+            const boxWidth = canvas.width - 40;
+            const boxHeight = 70;
+            const startY = canvas.height / 2 - 100;
+            
+            // Draw question
+            ctx.fillStyle = COLORS.white;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, startY - 30);
+            
+            // Draw options
+            options.forEach((option, index) => {
+                const y = startY + index * (boxHeight + spacing);
+                
+                // Base box
+                ctx.fillStyle = option.color;
+                ctx.fillRect(20, y, boxWidth, boxHeight);
+                
+                // Highlight current option
+                if (index === currentOptionIndex) {
+                    ctx.strokeStyle = COLORS.white;
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(20, y, boxWidth, boxHeight);
+                    
+                    // Sound wave visualization
+                    drawSoundWave(20, y, boxWidth, boxHeight);
+                }
+                
+                // Option text
+                ctx.fillStyle = COLORS.black;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, canvas.width / 2, y + boxHeight / 2 + 8);
+            });
+        }
+        
+        // Draw simple sound wave animation
+        function drawSoundWave(x, y, width, height) {
+            const time = Date.now() % 1000 / 1000;
+            const amplitude = 10;
+            const waveWidth = width - 20;
+            
+            ctx.strokeStyle = COLORS.white;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            
+            for (let i = 0; i < waveWidth; i += 8) {
+                const normalizedI = i / waveWidth;
+                const yOffset = Math.sin((normalizedI * 10) + (time * Math.PI * 4)) * amplitude;
+                
+                if (i === 0) {
+                    ctx.moveTo(x + 10 + i, y + height / 2 + yOffset);
+                } else {
+                    ctx.lineTo(x + 10 + i, y + height / 2 + yOffset);
+                }
+            }
+            
+            ctx.stroke();
+        }
+        
+        // Draw game over message
+        function drawGameOver() {
+            const isSuccess = gameState === GAME_STATE.SUCCESS;
+            const message = isSuccess ? "Correct!" : "Incorrect!";
+            const messageColor = isSuccess ? COLORS.green : COLORS.red;
+            
+            // Background overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Message
+            ctx.fillStyle = messageColor;
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(message, canvas.width / 2, canvas.height / 2 - 40);
+            
+            // Restart button
+            ctx.fillStyle = COLORS.darkGray;
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            ctx.strokeStyle = COLORS.white;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            
+            ctx.fillStyle = COLORS.white;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Play Again', canvas.width / 2, restartButton.y + 25);
+        }
+        
+        // Draw 8-bit background
+        function drawBackground() {
+            // Star field background
+            ctx.fillStyle = COLORS.black;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixel stars
+            for (let i = 0; i < 50; i++) {
+                const x = Math.floor(Math.random() * canvas.width / 8) * 8;
+                const y = Math.floor(Math.random() * canvas.height / 8) * 8;
+                const size = Math.floor(Math.random() * 3) + 1;
+                
+                ctx.fillStyle = COLORS.white;
+                ctx.fillRect(x, y, size, size);
+            }
+            
+            // Draw pixelated border
+            ctx.strokeStyle = COLORS.darkRed;
+            ctx.lineWidth = 8;
+            ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+        }
+        
+        // Main game update
+        function update(timestamp) {
+            if (gameState === GAME_STATE.PLAYING) {
+                // Change sound every few seconds
+                if (timestamp - lastSoundChangeTime > soundDuration) {
+                    currentOptionIndex = (currentOptionIndex + 1) % options.length;
+                    playCurrentSound();
+                    lastSoundChangeTime = timestamp;
+                }
+            }
+        }
+        
+        // Main game render
+        function render() {
+            drawBackground();
+            
+            if (gameState === GAME_STATE.PLAYING) {
+                drawOptions();
+            } else {
+                drawOptions();
+                drawGameOver();
+            }
+        }
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            update(timestamp);
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/tap
+        function handleClick(e) {
+            // Initialize audio on first interaction
+            initAudio();
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState === GAME_STATE.PLAYING) {
+                // Check if an option was clicked
+                const boxWidth = canvas.width - 40;
+                const boxHeight = 70;
+                const spacing = 20;
+                const startY = canvas.height / 2 - 100;
+                
+                options.forEach((option, index) => {
+                    const optionY = startY + index * (boxHeight + spacing);
+                    
+                    if (x >= 20 && x <= 20 + boxWidth &&
+                        y >= optionY && y <= optionY + boxHeight) {
+                        // Option clicked
+                        gameState = option.correct ? GAME_STATE.SUCCESS : GAME_STATE.FAILURE;
+                        
+                        // Play success/fail sound
+                        if (audioCtx) {
+                            const oscillator = audioCtx.createOscillator();
+                            const gainNode = audioCtx.createGain();
+                            
+                            if (option.correct) {
+                                oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+                                oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+                                oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+                            } else {
+                                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime); // A3
+                                oscillator.frequency.setValueAtTime(196, audioCtx.currentTime + 0.2); // G3
+                            }
+                            
+                            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                            gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
+                            
+                            oscillator.connect(gainNode);
+                            gainNode.connect(audioCtx.destination);
+                            
+                            oscillator.start();
+                            oscillator.stop(audioCtx.currentTime + 0.5);
+                        }
+                    }
+                });
+            } else {
+                // Check if restart button was clicked
+                if (x >= restartButton.x && x <= restartButton.x + restartButton.width &&
+                    y >= restartButton.y && y <= restartButton.y + restartButton.height) {
+                    // Restart game
+                    gameState = GAME_STATE.PLAYING;
+                    currentOptionIndex = 0;
+                    lastSoundChangeTime = 0;
+                    playCurrentSound();
+                }
+            }
+        }
+        
+        // Start the game
+        function startGame() {
+            canvas.addEventListener('click', handleClick);
+            requestAnimationFrame(gameLoop);
+        }
+        
+        startGame();
+    </script>
+</body>
+</html>

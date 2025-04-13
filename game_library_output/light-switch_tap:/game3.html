@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Light Switch TF Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Determine if we're on mobile
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let switchPosition = false; // false = "False", true = "True"
+        let gameOver = false;
+        let correct = null; // null, true, or false
+        let switchMoving = false;
+        let switchAngle = 0;
+        let sparkParticles = [];
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 120,
+            width: 120,
+            height: 40,
+            visible: false
+        };
+        
+        // Colors (limited palette)
+        const colors = {
+            background1: '#0f380f',
+            background2: '#306230',
+            wood: '#8b4513',
+            woodDark: '#6b3000',
+            metal: '#d0d0d0',
+            metalShine: '#ffffff',
+            metalShadow: '#909090',
+            textLight: '#f8f8f8',
+            textDark: '#333333',
+            buttonRed: '#d04648',
+            buttonRedLight: '#ff6b6b',
+            buttonRedShadow: '#8c2022',
+            screwMetal: '#b0b0b0',
+            correct: '#8bac0f',
+            incorrect: '#e83030',
+            shadowColor: 'rgba(0,0,0,0.3)'
+        };
+        
+        // Audio context and sounds
+        let audioContext;
+        
+        function initAudio() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playClickSound() {
+            if (!audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(110, audioContext.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+        }
+        
+        function playResultSound(correct) {
+            if (!audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            if (correct) {
+                // Correct sound (ascending notes)
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(392, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(494, audioContext.currentTime + 0.2);
+            } else {
+                // Wrong sound (descending notes)
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(175, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(130, audioContext.currentTime + 0.2);
+            }
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+        }
+        
+        // Draw pixelated text
+        function drawText(text, x, y, size, color, align = 'center') {
+            ctx.font = `${size}px Arial`;
+            ctx.fillStyle = color;
+            ctx.textAlign = align;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw the light switch
+        function drawSwitch() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const switchWidth = isMobile ? 80 : 100;
+            const switchHeight = isMobile ? 140 : 180;
+            
+            // Draw switch base (wooden texture)
+            drawPixelRect(centerX - switchWidth/2, centerY - switchHeight/2, switchWidth, switchHeight, colors.wood);
+            
+            // Draw wood grain (darker rectangles for texture)
+            for (let i = 0; i < 5; i++) {
+                const grainHeight = 4;
+                const yPos = centerY - switchHeight/2 + 20 + i * 30;
+                drawPixelRect(centerX - switchWidth/2 + 10, yPos, switchWidth - 20, grainHeight, colors.woodDark);
+            }
+            
+            // Draw switch plate (metal)
+            const plateWidth = switchWidth - 20;
+            const plateHeight = switchHeight - 40;
+            drawPixelRect(centerX - plateWidth/2, centerY - plateHeight/2, plateWidth, plateHeight, colors.metal);
+            
+            // Draw switch toggle
+            const toggleWidth = plateWidth / 4;
+            const toggleHeight = plateHeight / 2;
+            const toggleX = centerX - toggleWidth / 2;
+            const toggleBaseY = centerY - toggleHeight / 2;
+            
+            // Calculate toggle position based on animation
+            let toggleY;
+            if (switchMoving) {
+                const rotationPoint = centerY;
+                toggleY = rotationPoint + Math.sin(switchAngle) * toggleHeight;
+            } else {
+                toggleY = switchPosition ? centerY - toggleHeight/3 : centerY + toggleHeight/3;
+            }
+            
+            // Draw toggle shadow
+            ctx.fillStyle = colors.shadowColor;
+            ctx.beginPath();
+            ctx.ellipse(centerX, toggleY + toggleHeight/2 + 10, toggleWidth/1.5, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw metal toggle
+            drawPixelRect(toggleX, toggleY - toggleHeight/2, toggleWidth, toggleHeight, colors.metalShadow);
+            drawPixelRect(toggleX + 2, toggleY - toggleHeight/2 + 2, toggleWidth - 4, toggleHeight - 4, colors.metal);
+            
+            // Draw highlight on metal toggle
+            drawPixelRect(toggleX + 4, toggleY - toggleHeight/2 + 4, toggleWidth - 8, 4, colors.metalShine);
+            
+            // Draw switch labels
+            drawText("TRUE", centerX, centerY - plateHeight/4, isMobile ? 14 : 18, colors.textDark);
+            drawText("FALSE", centerX, centerY + plateHeight/4, isMobile ? 14 : 18, colors.textDark);
+            
+            // Draw indicator dot
+            const dotRadius = 4;
+            const dotY = switchPosition ? centerY - plateHeight/4 : centerY + plateHeight/4;
+            ctx.fillStyle = switchPosition ? colors.correct : colors.incorrect;
+            ctx.beginPath();
+            ctx.arc(centerX + plateWidth/4, dotY, dotRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw decorative screws
+            drawScrew(centerX - plateWidth/2 + 10, centerY - plateHeight/2 + 10);
+            drawScrew(centerX + plateWidth/2 - 10, centerY - plateHeight/2 + 10);
+            drawScrew(centerX - plateWidth/2 + 10, centerY + plateHeight/2 - 10);
+            drawScrew(centerX + plateWidth/2 - 10, centerY + plateHeight/2 - 10);
+        }
+        
+        // Draw screw
+        function drawScrew(x, y) {
+            const screwSize = isMobile ? 6 : 8;
+            drawPixelRect(x - screwSize/2, y - screwSize/2, screwSize, screwSize, colors.screwMetal);
+            ctx.strokeStyle = colors.metalShadow;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x - screwSize/4, y - screwSize/4);
+            ctx.lineTo(x + screwSize/4, y + screwSize/4);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x + screwSize/4, y - screwSize/4);
+            ctx.lineTo(x - screwSize/4, y + screwSize/4);
+            ctx.stroke();
+        }
+        
+        // Draw spark particles
+        function drawSparkParticles() {
+            sparkParticles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            });
+        }
+        
+        // Update spark particles
+        function updateSparkParticles() {
+            for (let i = sparkParticles.length - 1; i >= 0; i--) {
+                const particle = sparkParticles[i];
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    sparkParticles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Create spark effect
+        function createSparkEffect(x, y) {
+            const colors = ['#ffffff', '#ffffa0', '#ffff00'];
+            for (let i = 0; i < 15; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                sparkParticles.push({
+                    x: x,
+                    y: y,
+                    size: 2 + Math.random() * 2,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    life: 10 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Draw submit button
+        function drawSubmitButton() {
+            const buttonWidth = isMobile ? 120 : 160;
+            const buttonHeight = isMobile ? 50 : 60;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + (isMobile ? 100 : 120);
+            
+            // Button shadow
+            drawPixelRect(buttonX + 4, buttonY + 4, buttonWidth, buttonHeight, colors.buttonRedShadow);
+            
+            // Button base
+            drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, colors.buttonRed);
+            
+            // Button top highlight
+            drawPixelRect(buttonX + 4, buttonY + 4, buttonWidth - 8, 8, colors.buttonRedLight);
+            
+            // Button text
+            drawText("SUBMIT", canvas.width / 2, buttonY + buttonHeight / 2, isMobile ? 18 : 24, colors.textLight);
+            
+            return {x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight};
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            if (!restartButton.visible) return;
+            
+            const buttonWidth = restartButton.width;
+            const buttonHeight = restartButton.height;
+            const buttonX = restartButton.x;
+            const buttonY = restartButton.y;
+            
+            // Button shadow
+            drawPixelRect(buttonX + 4, buttonY + 4, buttonWidth, buttonHeight, colors.buttonRedShadow);
+            
+            // Button base
+            drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, colors.buttonRed);
+            
+            // Button top highlight
+            drawPixelRect(buttonX + 4, buttonY + 4, buttonWidth - 8, 6, colors.buttonRedLight);
+            
+            // Button text
+            drawText("RESTART", canvas.width / 2, buttonY + buttonHeight / 2, isMobile ? 16 : 18, colors.textLight);
+        }
+        
+        // Draw result
+        function drawResult() {
+            if (correct === null) return;
+            
+            const resultText = correct ? "CORRECT!" : "INCORRECT!";
+            const resultColor = correct ? colors.correct : colors.incorrect;
+            
+            // Draw result text
+            drawText(resultText, canvas.width / 2, canvas.height / 2 + 70, 
+                     isMobile ? 24 : 30, resultColor);
+            
+            // Show correct answer if wrong
+            if (!correct) {
+                drawText("The correct answer is: FALSE", canvas.width / 2, 
+                         canvas.height / 2 + 100, isMobile ? 14 : 18, colors.textLight);
+            }
+        }
+        
+        // Draw background
+        function drawBackground() {
+            // Create gradient background
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, colors.background1);
+            gradient.addColorStop(1, colors.background2);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add grid pattern
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            
+            const gridSize = 20;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            drawBackground();
+            
+            // Draw question
+            const fontSize = isMobile ? 18 : 24;
+            const lineHeight = fontSize * 1.2;
+            
+            drawText("The Great Wall of China", canvas.width / 2, 80, fontSize, colors.textLight);
+            drawText("is visible from space.", canvas.width / 2, 80 + lineHeight, fontSize, colors.textLight);
+            
+            // Draw switch
+            drawSwitch();
+            
+            // Draw particles
+            drawSparkParticles();
+            
+            // Draw submit button if game is not over
+            if (!gameOver) {
+                drawSubmitButton();
+            }
+            
+            // Draw result
+            drawResult();
+            
+            // Draw restart button
+            drawRestartButton();
+            
+            // Request next frame
+            requestAnimationFrame(draw);
+        }
+        
+        // Handle click/tap
+        function handleClick(e) {
+            // Get canvas-relative coordinates
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (x >= restartButton.x && x <= restartButton.x + restartButton.width &&
+                    y >= restartButton.y && y <= restartButton.y + restartButton.height) {
+                    restartGame();
+                }
+                return;
+            }
+            
+            // Toggle switch
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const switchWidth = isMobile ? 80 : 100;
+            const switchHeight = isMobile ? 140 : 180;
+            
+            if (x >= centerX - switchWidth/2 && x <= centerX + switchWidth/2 &&
+                y >= centerY - switchHeight/2 && y <= centerY + switchHeight/2) {
+                
+                if (!switchMoving) {
+                    toggleSwitch();
+                }
+            }
+            
+            // Check submit button
+            const submitButton = drawSubmitButton();
+            if (x >= submitButton.x && x <= submitButton.x + submitButton.width &&
+                y >= submitButton.y && y <= submitButton.y + submitButton.height) {
+                
+                checkAnswer();
+            }
+        }
+        
+        // Toggle the switch
+        function toggleSwitch() {
+            if (switchMoving) return;
+            
+            switchMoving = true;
+            switchAngle = switchPosition ? 0 : Math.PI;
+            
+            // Create spark effect
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            createSparkEffect(centerX, centerY);
+            
+            // Play click sound
+            playClickSound();
+            
+            // Animate the switch
+            const animationStep = 0.2;
+            const targetAngle = switchPosition ? Math.PI : 0;
+            
+            function animateSwitch() {
+                if (Math.abs(switchAngle - targetAngle) < animationStep) {
+                    switchAngle = targetAngle;
+                    switchMoving = false;
+                    switchPosition = !switchPosition;
+                    return;
+                }
+                
+                if (switchAngle < targetAngle) {
+                    switchAngle += animationStep;
+                } else {
+                    switchAngle -= animationStep;
+                }
+                
+                requestAnimationFrame(animateSwitch);
+            }
+            
+            animateSwitch();
+        }
+        
+        // Check the answer
+        function checkAnswer() {
+            // The correct answer is FALSE
+            correct = !switchPosition;
+            gameOver = true;
+            restartButton.visible = true;
+            
+            // Play result sound
+            playResultSound(correct);
+        }
+        
+        // Restart the game
+        function restartGame() {
+            switchPosition = false;
+            gameOver = false;
+            correct = null;
+            restartButton.visible = false;
+            sparkParticles = [];
+        }
+        
+        // Initialize the game
+        function init() {
+            // Add event listeners
+            canvas.addEventListener('click', handleClick);
+            
+            // Initialize audio (needs user interaction first)
+            document.addEventListener('click', function initAudioOnFirstClick() {
+                initAudio();
+                document.removeEventListener('click', initAudioOnFirstClick);
+            }, { once: true });
+            
+            // Start the game loop
+            draw();
+        }
+        
+        // Start game
+        init();
+    </script>
+</body>
+</html>

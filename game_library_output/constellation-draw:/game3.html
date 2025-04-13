@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Constellation Draw Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            cursor: pointer;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #555;
+            color: #fff;
+            border: 3px solid #888;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Color palette
+        const colors = {
+            darkBlue: '#071640',
+            mediumBlue: '#0d2773',
+            lightBlue: '#1939b0',
+            white: '#ffffff',
+            yellow: '#ffff00',
+            orange: '#ffa500',
+            red: '#ff0000',
+            green: '#00ff00'
+        };
+
+        // Game state
+        let gameState = {
+            stars: [],
+            selectedStars: [],
+            correctOrder: [],
+            gameOver: false,
+            hintTimer: 0,
+            particles: [],
+            showHint: false
+        };
+
+        // Eiffel Tower constellation pattern (representing Paris/France)
+        const starPositions = [
+            {x: 400, y: 150},  // Top
+            {x: 370, y: 200},  // Upper left
+            {x: 430, y: 200},  // Upper right
+            {x: 350, y: 250},  // Mid left
+            {x: 450, y: 250},  // Mid right
+            {x: 330, y: 320},  // Lower left
+            {x: 470, y: 320},  // Lower right
+            {x: 300, y: 400},  // Base left
+            {x: 500, y: 400},  // Base right
+            {x: 400, y: 400}   // Base center
+        ];
+
+        // Correct connection order (forms an Eiffel Tower shape)
+        const connections = [
+            [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7], [6, 8], [7, 9], [8, 9]
+        ];
+
+        // Audio context
+        let audioCtx;
+        
+        // Initialize audio context on first user interaction
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // Play sound effect
+        function playSound(freq, duration, type = 'square') {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        // Create a star with animation properties
+        function createStar(x, y, index) {
+            return {
+                x,
+                y,
+                radius: 8,
+                originalRadius: 8,
+                color: colors.yellow,
+                twinkle: Math.random() * 6,
+                twinkleSpeed: 0.05 + Math.random() * 0.05,
+                selected: false,
+                index,
+                pulse: 0
+            };
+        }
+
+        // Create a particle
+        function createParticle(x, y) {
+            return {
+                x,
+                y,
+                size: 1 + Math.random() * 2,
+                speedX: (Math.random() - 0.5) * 0.5,
+                speedY: (Math.random() - 0.5) * 0.5,
+                life: 30 + Math.random() * 60
+            };
+        }
+
+        // Initialize the game
+        function init() {
+            gameState.stars = starPositions.map((pos, index) => createStar(pos.x, pos.y, index));
+            gameState.selectedStars = [];
+            gameState.correctOrder = connections.flat();
+            gameState.gameOver = false;
+            gameState.hintTimer = 180; // 3 seconds at 60fps
+            gameState.showHint = false;
+            
+            // Create background particles
+            gameState.particles = [];
+            for (let i = 0; i < 50; i++) {
+                gameState.particles.push(createParticle(
+                    Math.random() * canvas.width,
+                    Math.random() * canvas.height
+                ));
+            }
+            
+            restartBtn.style.display = 'none';
+        }
+
+        // Draw pixelated gradient background
+        function drawBackground() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, colors.darkBlue);
+            gradient.addColorStop(1, colors.mediumBlue);
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixel dust particles
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            gameState.particles.forEach(p => {
+                ctx.fillRect(
+                    Math.floor(p.x),
+                    Math.floor(p.y),
+                    Math.floor(p.size),
+                    Math.floor(p.size)
+                );
+            });
+        }
+
+        // Draw the stars
+        function drawStars() {
+            gameState.stars.forEach(star => {
+                // Twinkle animation
+                star.twinkle += star.twinkleSpeed;
+                const twinkleOffset = Math.sin(star.twinkle) * 2;
+                const radius = star.originalRadius + twinkleOffset;
+                
+                // Draw star (pixelated circle)
+                ctx.fillStyle = star.selected ? colors.orange : colors.yellow;
+                
+                // If hint is active, show the next star to select
+                if (gameState.showHint && gameState.selectedStars.length < gameState.correctOrder.length) {
+                    const nextStarIndex = gameState.correctOrder[gameState.selectedStars.length];
+                    if (star.index === nextStarIndex) {
+                        ctx.fillStyle = colors.green;
+                    }
+                }
+                
+                // Draw basic pixelated star shape
+                const x = Math.floor(star.x);
+                const y = Math.floor(star.y);
+                const r = Math.floor(radius);
+                
+                // Draw a pixelated star
+                for (let i = -r; i <= r; i++) {
+                    for (let j = -r; j <= r; j++) {
+                        const dist = Math.sqrt(i*i + j*j);
+                        if (dist <= r) {
+                            ctx.fillRect(x + i, y + j, 1, 1);
+                        }
+                    }
+                }
+                
+                // If star is pulsing after selection
+                if (star.pulse > 0) {
+                    ctx.globalAlpha = star.pulse / 10;
+                    ctx.fillStyle = colors.white;
+                    for (let i = -r-5; i <= r+5; i++) {
+                        for (let j = -r-5; j <= r+5; j++) {
+                            const dist = Math.sqrt(i*i + j*j);
+                            if (dist <= r+5 && dist >= r+2) {
+                                ctx.fillRect(x + i, y + j, 1, 1);
+                            }
+                        }
+                    }
+                    ctx.globalAlpha = 1;
+                    star.pulse -= 0.2;
+                }
+            });
+        }
+
+        // Draw connections between selected stars
+        function drawConnections() {
+            ctx.strokeStyle = colors.lightBlue;
+            ctx.lineWidth = 3;
+            
+            // Draw lines between connected stars
+            for (let i = 0; i < gameState.selectedStars.length - 1; i += 2) {
+                const star1 = gameState.stars[gameState.selectedStars[i]];
+                const star2 = gameState.stars[gameState.selectedStars[i+1]];
+                
+                // Pixelated line with glowing effect
+                drawPixelLine(
+                    Math.floor(star1.x),
+                    Math.floor(star1.y),
+                    Math.floor(star2.x),
+                    Math.floor(star2.y)
+                );
+            }
+        }
+        
+        // Draw pixelated line
+        function drawPixelLine(x0, y0, x1, y1) {
+            const dx = Math.abs(x1 - x0);
+            const dy = Math.abs(y1 - y0);
+            const sx = (x0 < x1) ? 1 : -1;
+            const sy = (y0 < y1) ? 1 : -1;
+            let err = dx - dy;
+            
+            ctx.fillStyle = colors.lightBlue;
+            
+            while (true) {
+                // Draw a 3x3 pixel for each point
+                for (let i = -1; i <= 1; i++) {
+                    for (let j = -1; j <= 1; j++) {
+                        ctx.fillRect(x0 + i, y0 + j, 1, 1);
+                    }
+                }
+                
+                if (x0 === x1 && y0 === y1) break;
+                
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x0 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y0 += sy;
+                }
+            }
+        }
+
+        // Draw the question
+        function drawQuestion() {
+            const question = "What is the capital of France?";
+            
+            ctx.fillStyle = colors.white;
+            ctx.font = "20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 80);
+            
+            // Draw instruction
+            if (!gameState.gameOver) {
+                ctx.font = "16px sans-serif";
+                ctx.fillText("Connect the stars to form the answer", canvas.width / 2, 110);
+            }
+        }
+
+        // Draw success or failure message
+        function drawResult() {
+            if (gameState.gameOver) {
+                ctx.font = "24px sans-serif";
+                ctx.textAlign = "center";
+                
+                if (gameState.selectedStars.length === gameState.correctOrder.length) {
+                    ctx.fillStyle = colors.green;
+                    ctx.fillText("Correct! Paris is the capital of France", canvas.width / 2, 500);
+                } else {
+                    ctx.fillStyle = colors.red;
+                    ctx.fillText("Try again!", canvas.width / 2, 500);
+                }
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+
+        // Handle star selection
+        function selectStar(starIndex) {
+            if (gameState.gameOver) return;
+            
+            const expectedIndex = gameState.correctOrder[gameState.selectedStars.length];
+            
+            if (starIndex === expectedIndex) {
+                // Correct selection
+                gameState.stars[starIndex].selected = true;
+                gameState.stars[starIndex].pulse = 10;
+                gameState.selectedStars.push(starIndex);
+                
+                playSound(300 + gameState.selectedStars.length * 50, 0.1);
+                
+                // Check if sequence is complete
+                if (gameState.selectedStars.length === gameState.correctOrder.length) {
+                    gameState.gameOver = true;
+                    playSound(800, 0.3, 'sine');
+                    setTimeout(() => playSound(1000, 0.5, 'sine'), 200);
+                }
+            } else {
+                // Incorrect selection
+                gameState.gameOver = true;
+                playSound(200, 0.3, 'sawtooth');
+            }
+        }
+
+        // Update particles
+        function updateParticles() {
+            for (let i = 0; i < gameState.particles.length; i++) {
+                const p = gameState.particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                // Reset particles that have died or moved off-screen
+                if (p.life <= 0 || p.x < 0 || p.x > canvas.width || p.y < 0 || p.y > canvas.height) {
+                    gameState.particles[i] = createParticle(
+                        Math.random() * canvas.width,
+                        Math.random() * canvas.height
+                    );
+                }
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            // Update
+            updateParticles();
+            
+            // Show hint if player is taking too long
+            if (!gameState.gameOver && gameState.selectedStars.length === 0) {
+                gameState.hintTimer--;
+                if (gameState.hintTimer <= 0) {
+                    gameState.showHint = true;
+                }
+            }
+            
+            // Draw
+            drawBackground();
+            drawConnections();
+            drawStars();
+            drawQuestion();
+            drawResult();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle mouse/touch events
+        canvas.addEventListener('mousedown', handleClick);
+        canvas.addEventListener('touchstart', handleTouch);
+        
+        function handleClick(e) {
+            initAudio();
+            checkStarClick(e.offsetX, e.offsetY);
+        }
+        
+        function handleTouch(e) {
+            e.preventDefault();
+            initAudio();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            checkStarClick(x, y);
+        }
+        
+        function checkStarClick(x, y) {
+            if (gameState.gameOver) return;
+            
+            const clickX = x * (canvas.width / canvas.clientWidth);
+            const clickY = y * (canvas.height / canvas.clientHeight);
+            
+            for (let i = 0; i < gameState.stars.length; i++) {
+                const star = gameState.stars[i];
+                const distance = Math.sqrt(
+                    Math.pow(clickX - star.x, 2) + 
+                    Math.pow(clickY - star.y, 2)
+                );
+                
+                if (distance < star.radius * 2) {
+                    selectStar(i);
+                    return;
+                }
+            }
+        }
+        
+        // Restart button
+        restartBtn.addEventListener('click', () => {
+            init();
+            playSound(440, 0.1);
+        });
+        
+        // Start game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

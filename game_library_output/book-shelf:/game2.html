@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Book Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Setup canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Detect device and set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameActive = true;
+        let gameResult = null; // null, 'correct', 'incorrect'
+        
+        // Colors (limited palette)
+        const colors = {
+            background: '#352879',
+            shelf: '#8a4e38',
+            shelfHighlight: '#b36d45',
+            bookRed: '#d13b27',
+            bookBlue: '#1a75ff',
+            bookGreen: '#1ebc73',
+            bookYellow: '#e6d23c',
+            bookPurple: '#9966cc',
+            text: '#ffffff',
+            correctText: '#5edc1f',
+            incorrectText: '#ff3333'
+        };
+        
+        // Sound effects generator
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'hover') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            } else if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.2);
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.4);
+                        oscillator.stop(audioContext.currentTime + 0.6);
+                    }, 200);
+                }, 200);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(392, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(261.63, audioContext.currentTime + 0.2);
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                }, 200);
+            }
+        }
+        
+        // Book class
+        class Book {
+            constructor(x, y, width, height, color, title, isCorrect) {
+                this.x = x;
+                this.y = y;
+                this.baseY = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+                this.title = title;
+                this.isCorrect = isCorrect;
+                this.hovered = false;
+                this.selected = false;
+                this.animationTime = 0;
+                this.wobbleAmplitude = 0;
+            }
+            
+            update(dt) {
+                // Update wobble effect
+                if (this.hovered && !this.selected) {
+                    this.wobbleAmplitude = Math.min(this.wobbleAmplitude + dt * 10, 3);
+                    this.y = this.baseY + Math.sin(Date.now() / 200) * this.wobbleAmplitude;
+                } else if (!this.selected) {
+                    this.wobbleAmplitude = Math.max(this.wobbleAmplitude - dt * 10, 0);
+                    this.y = this.baseY + Math.sin(Date.now() / 200) * this.wobbleAmplitude;
+                }
+                
+                // Update selection animation
+                if (this.selected) {
+                    this.animationTime += dt;
+                    if (this.animationTime < 0.5) {
+                        // Pull book out animation
+                        this.y = this.baseY - this.animationTime * 40;
+                    }
+                }
+            }
+            
+            draw() {
+                // Draw book shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.fillRect(this.x + 2, this.baseY + 2, this.width, this.height);
+                
+                // Draw book
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // Draw book details (spine line)
+                ctx.fillStyle = this.adjustColor(this.color, -30);
+                ctx.fillRect(this.x + 5, this.y + 5, this.width - 10, 4);
+                ctx.fillRect(this.x + 5, this.y + this.height - 12, this.width - 10, 4);
+                
+                // Draw title
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                
+                // Rotate text for book spine
+                ctx.save();
+                ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+                ctx.rotate(-Math.PI / 2);
+                ctx.fillText(this.title, 0, 4);
+                ctx.restore();
+            }
+            
+            adjustColor(color, amount) {
+                // Simple color adjuster for shadows/highlights
+                return color;
+            }
+            
+            contains(mouseX, mouseY) {
+                return mouseX >= this.x && mouseX <= this.x + this.width &&
+                       mouseY >= this.y && mouseY <= this.y + this.height;
+            }
+        }
+        
+        // Restart button
+        const restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height - 80,
+            width: 120,
+            height: 40,
+            draw() {
+                ctx.fillStyle = '#444';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                ctx.fillStyle = '#222';
+                ctx.fillRect(this.x + 4, this.y + 4, this.width - 8, this.height - 8);
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Restart', this.x + this.width / 2, this.y + this.height / 2);
+            },
+            contains(mouseX, mouseY) {
+                return mouseX >= this.x && mouseX <= this.x + this.width &&
+                       mouseY >= this.y && mouseY <= this.y + this.height;
+            }
+        };
+        
+        // Books setup
+        const bookWidth = 40;
+        const bookHeight = 120;
+        const shelfWidth = canvas.width - 100;
+        const shelfX = (canvas.width - shelfWidth) / 2;
+        const shelfY = canvas.height / 2 - 20;
+        
+        const bookOptions = [
+            { title: "Mars", color: colors.bookRed, isCorrect: true },
+            { title: "Venus", color: colors.bookYellow, isCorrect: false },
+            { title: "Earth", color: colors.bookBlue, isCorrect: false },
+            { title: "Jupiter", color: colors.bookGreen, isCorrect: false },
+            { title: "Saturn", color: colors.bookPurple, isCorrect: false }
+        ];
+        
+        // Shuffle book options
+        for (let i = bookOptions.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [bookOptions[i], bookOptions[j]] = [bookOptions[j], bookOptions[i]];
+        }
+        
+        // Create books with spacing
+        const books = [];
+        const spacing = (shelfWidth - (bookOptions.length * bookWidth)) / (bookOptions.length + 1);
+        
+        for (let i = 0; i < bookOptions.length; i++) {
+            const option = bookOptions[i];
+            const x = shelfX + spacing * (i + 1) + bookWidth * i;
+            books.push(new Book(
+                x, 
+                shelfY - bookHeight + 10, 
+                bookWidth, 
+                bookHeight, 
+                option.color, 
+                option.title, 
+                option.isCorrect
+            ));
+        }
+        
+        // Track mouse position
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            if (!gameActive && restartButton.contains(clickX, clickY)) {
+                restartGame();
+                return;
+            }
+            
+            if (gameActive) {
+                for (const book of books) {
+                    if (book.contains(clickX, clickY) && !book.selected) {
+                        selectBook(book);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        function selectBook(book) {
+            playSound('select');
+            book.selected = true;
+            
+            setTimeout(() => {
+                gameActive = false;
+                if (book.isCorrect) {
+                    gameResult = 'correct';
+                    playSound('correct');
+                } else {
+                    gameResult = 'incorrect';
+                    playSound('incorrect');
+                }
+            }, 500);
+        }
+        
+        function restartGame() {
+            gameActive = true;
+            gameResult = null;
+            
+            // Reset books
+            for (const book of books) {
+                book.selected = false;
+                book.animationTime = 0;
+            }
+            
+            // Shuffle book positions
+            for (let i = books.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const tempX = books[i].x;
+                books[i].x = books[j].x;
+                books[j].x = tempX;
+            }
+        }
+        
+        // Draw shelf
+        function drawShelf() {
+            // Draw shelf shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(shelfX + 5, shelfY + 5, shelfWidth, 30);
+            
+            // Draw main shelf
+            ctx.fillStyle = colors.shelf;
+            ctx.fillRect(shelfX, shelfY, shelfWidth, 30);
+            
+            // Draw shelf highlight
+            ctx.fillStyle = colors.shelfHighlight;
+            ctx.fillRect(shelfX, shelfY, shelfWidth, 10);
+            
+            // Draw shelf supports
+            ctx.fillStyle = colors.shelf;
+            ctx.fillRect(shelfX, shelfY, 20, 100);
+            ctx.fillRect(shelfX + shelfWidth - 20, shelfY, 20, 100);
+            
+            // Draw wood grain details (pixel style)
+            ctx.fillStyle = colors.shelfHighlight;
+            for (let i = 0; i < 10; i++) {
+                const grainX = shelfX + Math.random() * shelfWidth;
+                const grainY = shelfY + Math.random() * 30;
+                const grainWidth = 5 + Math.random() * 15;
+                const grainHeight = 2;
+                ctx.fillRect(grainX, grainY, grainWidth, grainHeight);
+            }
+            
+            // Draw dust particles on shelf
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            for (let i = 0; i < 15; i++) {
+                const dustX = shelfX + Math.random() * shelfWidth;
+                const dustY = shelfY - Math.random() * 3;
+                const dustSize = 1 + Math.random() * 2;
+                ctx.fillRect(dustX, dustY, dustSize, dustSize);
+            }
+        }
+        
+        // Main game loop
+        let lastTime = 0;
+        
+        function gameLoop(timestamp) {
+            const dt = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 60);
+            
+            // Draw shelf
+            drawShelf();
+            
+            // Update hover state
+            for (const book of books) {
+                const wasHovered = book.hovered;
+                book.hovered = book.contains(mouseX, mouseY) && gameActive && !book.selected;
+                
+                // Play hover sound when first hovering
+                if (!wasHovered && book.hovered) {
+                    playSound('hover');
+                }
+                
+                book.update(dt);
+                book.draw();
+            }
+            
+            // Draw result
+            if (gameResult) {
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                
+                if (gameResult === 'correct') {
+                    ctx.fillStyle = colors.correctText;
+                    ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2 + 100);
+                } else {
+                    ctx.fillStyle = colors.incorrectText;
+                    ctx.fillText('Incorrect!', canvas.width / 2, canvas.height / 2 + 100);
+                }
+                
+                restartButton.draw();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop(0);
+    </script>
+</body>
+</html>

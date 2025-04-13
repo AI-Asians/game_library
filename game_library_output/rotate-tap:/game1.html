@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capital Quiz Wheel</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #0f0f1b;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      display: block;
+      border: 4px solid #444;
+      image-rendering: pixelated;
+    }
+    #restartButton {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      padding: 8px 16px;
+      background-color: #8a2be2;
+      color: white;
+      border: 3px solid #fff;
+      font-family: sans-serif;
+      cursor: pointer;
+      display: none;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <button id="restartButton">Restart</button>
+  
+  <script>
+    // Game initialization
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartButton = document.getElementById('restartButton');
+    
+    // Check if on mobile and adjust canvas size
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      canvas.width = 360;
+      canvas.height = 640;
+    }
+    
+    // Game variables
+    const colors = ['#ff5555', '#55ff55', '#5555ff', '#ffff55']; // Retro color palette
+    const options = ['Paris', 'London', 'Berlin', 'Rome']; // Answer options
+    const correctAnswer = 'Paris';
+    
+    let wheelRotation = 0; // Current rotation angle
+    let wheelVelocity = 0; // Rotation speed
+    let isDragging = false;
+    let lastMousePosition = { x: 0, y: 0 };
+    let gameEnded = false;
+    let wheelFriction = 0.95; // Friction to slow wheel
+    let selectedOption = null;
+    
+    // Wheel properties
+    const wheelRadius = canvas.width * 0.35;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2 + 40;
+    const segmentAngle = Math.PI * 2 / options.length;
+    const markerY = centerY - wheelRadius - 30;
+    
+    // Particles array for effects
+    let particles = [];
+    
+    // Simple audio context for retro sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Generate a beep sound
+    function playBeep(freq, duration, type = 'square') {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      gainNode.gain.value = 0.3;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      
+      setTimeout(() => {
+        oscillator.stop();
+      }, duration);
+      
+      return oscillator;
+    }
+    
+    // Play sound when wheel is clicked
+    function playClickSound() {
+      playBeep(400, 60);
+    }
+    
+    // Play sound for correct answer
+    function playCorrectSound() {
+      playBeep(523.25, 100, 'sine'); // C5
+      setTimeout(() => playBeep(659.25, 150, 'sine'), 100); // E5
+      setTimeout(() => playBeep(783.99, 200, 'sine'), 250); // G5
+    }
+    
+    // Play sound for incorrect answer
+    function playIncorrectSound() {
+      playBeep(311.13, 200, 'sawtooth'); // E♭4
+      setTimeout(() => playBeep(233.08, 300, 'sawtooth'), 200); // B♭3
+    }
+    
+    // Create pixel particle effect
+    function createParticles(x, y, color, count) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          size: Math.random() * 4 + 2,
+          speedX: (Math.random() - 0.5) * 5,
+          speedY: (Math.random() - 0.5) * 5,
+          color,
+          life: Math.random() * 30 + 10
+        });
+      }
+    }
+    
+    // Update and draw particles
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.speedX;
+        p.y += p.speedY;
+        p.life--;
+        
+        // Draw pixel particle
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+        
+        if (p.life <= 0) {
+          particles.splice(i, 1);
+        }
+      }
+    }
+    
+    // Draw the wheel with options
+    function drawWheel() {
+      // Draw wheel base
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(wheelRotation);
+      
+      // Draw segments
+      for (let i = 0; i < options.length; i++) {
+        const startAngle = i * segmentAngle;
+        const endAngle = startAngle + segmentAngle;
+        
+        // Draw segment
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, wheelRadius, startAngle, endAngle);
+        ctx.closePath();
+        ctx.fillStyle = colors[i];
+        ctx.fill();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        
+        // Add pixelated texture to segments
+        ctx.save();
+        ctx.clip();
+        for (let j = 0; j < 50; j++) {
+          const r = Math.random() * wheelRadius;
+          const a = startAngle + Math.random() * segmentAngle;
+          const pixelSize = 4;
+          const px = r * Math.cos(a);
+          const py = r * Math.sin(a);
+          ctx.fillStyle = `rgba(0,0,0,0.1)`;
+          ctx.fillRect(
+            Math.floor(px / pixelSize) * pixelSize, 
+            Math.floor(py / pixelSize) * pixelSize, 
+            pixelSize, pixelSize
+          );
+        }
+        ctx.restore();
+        
+        // Add option text
+        ctx.save();
+        ctx.rotate(startAngle + segmentAngle / 2);
+        ctx.translate(wheelRadius / 1.5, 0);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillStyle = '#fff';
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(options[i], 0, 0);
+        ctx.restore();
+      }
+      
+      // Add center decoration
+      ctx.beginPath();
+      ctx.arc(0, 0, wheelRadius / 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#333';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      
+      ctx.restore();
+    }
+    
+    // Draw the selection marker
+    function drawMarker() {
+      ctx.save();
+      
+      // Draw arrow marker
+      ctx.fillStyle = '#ffcc00';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 3;
+      
+      // Arrow body
+      ctx.beginPath();
+      ctx.moveTo(centerX, markerY);
+      ctx.lineTo(centerX + 20, markerY - 20);
+      ctx.lineTo(centerX + 10, markerY - 20);
+      ctx.lineTo(centerX + 10, markerY - 40);
+      ctx.lineTo(centerX - 10, markerY - 40);
+      ctx.lineTo(centerX - 10, markerY - 20);
+      ctx.lineTo(centerX - 20, markerY - 20);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Selection zone indicator
+      const currentAngle = -wheelRotation % (Math.PI * 2);
+      const optionIndex = Math.floor(((currentAngle + Math.PI * 2) % (Math.PI * 2)) / segmentAngle) % options.length;
+      const selectedOptionText = options[(optionIndex + options.length) % options.length];
+      
+      // Highlight selection zone
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.fillRect(centerX - 40, markerY, 80, 10);
+      
+      // Check if wheel is almost stopped and option is aligned
+      if (Math.abs(wheelVelocity) < 0.01) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.fillRect(centerX - 40, markerY, 80, 10);
+        selectedOption = selectedOptionText;
+      } else {
+        selectedOption = null;
+      }
+      
+      ctx.restore();
+    }
+    
+    // Draw the question
+    function drawQuestion() {
+      ctx.fillStyle = '#fff';
+      ctx.font = '30px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('What is the capital of France?', centerX, 80);
+      
+      // Instructions
+      ctx.font = '18px sans-serif';
+      ctx.fillText('Drag to spin the wheel and click to select', centerX, 120);
+    }
+    
+    // Check the answer and end the game
+    function checkAnswer() {
+      if (!selectedOption || gameEnded) return;
+      
+      if (selectedOption === correctAnswer) {
+        endGame(true);
+      } else {
+        endGame(false);
+      }
+    }
+    
+    // End the game
+    function endGame(isCorrect) {
+      gameEnded = true;
+      
+      // Create particles for feedback
+      const particleColor = isCorrect ? '#55ff55' : '#ff5555';
+      createParticles(centerX, centerY, particleColor, 50);
+      
+      // Play sound
+      if (isCorrect) {
+        playCorrectSound();
+      } else {
+        playIncorrectSound();
+      }
+      
+      // Show result and restart button
+      setTimeout(() => {
+        restartButton.style.display = 'block';
+      }, 1000);
+    }
+    
+    // Main game update function
+    function update() {
+      // Clear canvas
+      ctx.fillStyle = '#0f0f1b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Apply wheel physics
+      if (!isDragging) {
+        wheelVelocity *= wheelFriction;
+        if (Math.abs(wheelVelocity) < 0.001) {
+          wheelVelocity = 0;
+        }
+      }
+      
+      wheelRotation += wheelVelocity;
+      
+      // Draw game elements
+      drawWheel();
+      drawMarker();
+      drawQuestion();
+      updateParticles();
+      
+      // Add pixel grid effect over the whole canvas
+      if (!gameEnded) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+        const gridSize = 4;
+        for (let x = 0; x < canvas.width; x += gridSize * 2) {
+          for (let y = 0; y < canvas.height; y += gridSize * 2) {
+            ctx.fillRect(x, y, gridSize, gridSize);
+          }
+        }
+      }
+      
+      // Show result text
+      if (gameEnded) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.font = '36px sans-serif';
+        ctx.fillStyle = selectedOption === correctAnswer ? '#55ff55' : '#ff5555';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          selectedOption === correctAnswer ? 'Correct!' : 'Incorrect!',
+          centerX,
+          centerY - 50
+        );
+        
+        ctx.font = '24px sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(
+          `The correct answer is ${correctAnswer}`,
+          centerX,
+          centerY
+        );
+      }
+      
+      requestAnimationFrame(update);
+    }
+    
+    // Event handlers
+    canvas.addEventListener('mousedown', (e) => {
+      if (gameEnded) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      const dx = x - centerX;
+      const dy = y - centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < wheelRadius) {
+        isDragging = true;
+        lastMousePosition = { x, y };
+        playClickSound();
+      } else if (Math.abs(wheelVelocity) < 0.01 && selectedOption) {
+        // Check if clicking to confirm selection
+        checkAnswer();
+      }
+    });
+    
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isDragging || gameEnded) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Calculate angle change
+      const lastAngle = Math.atan2(lastMousePosition.y - centerY, lastMousePosition.x - centerX);
+      const newAngle = Math.atan2(y - centerY, x - centerX);
+      let deltaAngle = newAngle - lastAngle;
+      
+      // Handle angle wrapping
+      if (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+      if (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+      
+      wheelRotation += deltaAngle;
+      wheelVelocity = deltaAngle * 0.5; // Apply momentum based on drag speed
+      
+      lastMousePosition = { x, y };
+      
+      // Create particles while dragging
+      if (Math.random() > 0.7) {
+        const particleX = centerX + Math.cos(newAngle) * wheelRadius;
+        const particleY = centerY + Math.sin(newAngle) * wheelRadius;
+        createParticles(particleX, particleY, colors[Math.floor(Math.random() * colors.length)], 2);
+      }
+    });
+    
+    canvas.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+    
+    canvas.addEventListener('mouseleave', () => {
+      isDragging = false;
+    });
+    
+    // Touch events for mobile
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (gameEnded) return;
+      
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+      
+      const dx = x - centerX;
+      const dy = y - centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < wheelRadius) {
+        isDragging = true;
+        lastMousePosition = { x, y };
+        playClickSound();
+      } else if (Math.abs(wheelVelocity) < 0.01 && selectedOption) {
+        checkAnswer();
+      }
+    });
+    
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (!isDragging || gameEnded) return;
+      
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+      
+      const lastAngle = Math.atan2(lastMousePosition.y - centerY, lastMousePosition.x - centerX);
+      const newAngle = Math.atan2(y - centerY, x - centerX);
+      let deltaAngle = newAngle - lastAngle;
+      
+      if (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+      if (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+      
+      wheelRotation += deltaAngle;
+      wheelVelocity = deltaAngle * 0.5;
+      
+      lastMousePosition = { x, y };
+      
+      if (Math.random() > 0.7) {
+        const particleX = centerX + Math.cos(newAngle) * wheelRadius;
+        const particleY = centerY + Math.sin(newAngle) * wheelRadius;
+        createParticles(particleX, particleY, colors[Math.floor(Math.random() * colors.length)], 2);
+      }
+    });
+    
+    canvas.addEventListener('touchend', () => {
+      isDragging = false;
+    });
+    
+    canvas.addEventListener('touchcancel', () => {
+      isDragging = false;
+    });
+    
+    // Click handler for the wheel when it stops
+    canvas.addEventListener('click', () => {
+      if (gameEnded) return;
+      
+      if (Math.abs(wheelVelocity) < 0.01 && selectedOption) {
+        checkAnswer();
+      }
+    });
+    
+    // Restart button click handler
+    restartButton.addEventListener('click', () => {
+      gameEnded = false;
+      wheelRotation = 0;
+      wheelVelocity = 0;
+      selectedOption = null;
+      particles = [];
+      restartButton.style.display = 'none';
+    });
+    
+    // Start the game loop
+    update();
+  </script>
+</body>
+</html>

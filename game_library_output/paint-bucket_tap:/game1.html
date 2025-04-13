@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz - Paint Bucket Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: #fff;
+            border: 3px solid #888;
+            display: none;
+            font-family: sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas dimensions based on device
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited 8-bit palette)
+        const COLORS = {
+            background: '#0f380f',  // Dark green background
+            question: '#9bbc0f',    // Light green
+            text: '#0f380f',        // Dark green text
+            bucketOutline: '#306230', // Medium green
+            bucketHandle: '#8bac0f', // Yellowish green
+            fillCorrect: '#e03c28',  // Red
+            fillIncorrect: '#0000ff', // Blue
+            spillColor: '#0000ff'   // Blue for spill
+        };
+        
+        // Audio context for retro sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Game state
+        let gameOver = false;
+        let buckets = [];
+        let fillAnimations = [];
+        let spillAnimations = [];
+        
+        // Create simple retro sound
+        function playSound(freq, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        // Sound effects
+        function playCorrectSound() {
+            playSound(440, 'square', 100);
+            setTimeout(() => playSound(660, 'square', 150), 100);
+            setTimeout(() => playSound(880, 'square', 200), 250);
+        }
+        
+        function playIncorrectSound() {
+            playSound(200, 'square', 300);
+            setTimeout(() => playSound(150, 'square', 300), 300);
+        }
+        
+        function playClickSound() {
+            playSound(330, 'square', 50);
+        }
+        
+        // Define bucket class
+        class Bucket {
+            constructor(x, y, width, height, answer, isCorrect) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.answer = answer;
+                this.isCorrect = isCorrect;
+                this.fillLevel = 0;
+                this.fillSpeed = 0;
+                this.selected = false;
+                this.fillColor = isCorrect ? COLORS.fillCorrect : COLORS.fillIncorrect;
+            }
+            
+            draw() {
+                // Draw bucket outline
+                ctx.fillStyle = COLORS.bucketOutline;
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                
+                // Bucket body (slightly tapered)
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(this.x + this.width, this.y);
+                ctx.lineTo(this.x + this.width - 5, this.y + this.height);
+                ctx.lineTo(this.x + 5, this.y + this.height);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                // Bucket handle
+                ctx.strokeStyle = COLORS.bucketHandle;
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.bezierCurveTo(
+                    this.x - 10, this.y - 20,
+                    this.x + this.width + 10, this.y - 20,
+                    this.x + this.width, this.y
+                );
+                ctx.stroke();
+                
+                // Draw the fill
+                if (this.fillLevel > 0) {
+                    ctx.fillStyle = this.fillColor;
+                    
+                    // Calculate the fill height
+                    const fillHeight = this.height * this.fillLevel;
+                    const yPos = this.y + this.height - fillHeight;
+                    
+                    // Draw pixelated fill with steps (8-bit style)
+                    const stepSize = 4; // Pixels per step
+                    let currentY = this.y + this.height - stepSize;
+                    
+                    while (currentY >= yPos) {
+                        // Calculate width at this level (for tapered bucket)
+                        const levelRatio = (this.y + this.height - currentY) / this.height;
+                        const edgeOffset = 5 * levelRatio;
+                        const levelWidth = this.width - (edgeOffset * 2);
+                        
+                        ctx.fillRect(
+                            this.x + edgeOffset, 
+                            currentY, 
+                            levelWidth, 
+                            stepSize
+                        );
+                        currentY -= stepSize;
+                    }
+                }
+                
+                // Draw answer text
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.answer, this.x + this.width / 2, this.y + this.height + 20);
+            }
+            
+            contains(x, y) {
+                return (
+                    x >= this.x && 
+                    x <= this.x + this.width && 
+                    y >= this.y && 
+                    y <= this.y + this.height
+                );
+            }
+            
+            fill() {
+                this.selected = true;
+                this.fillSpeed = 0.05; // Fill speed (completes in about 20 frames)
+                playClickSound();
+                
+                if (this.isCorrect) {
+                    setTimeout(playCorrectSound, 300);
+                } else {
+                    setTimeout(playIncorrectSound, 200);
+                    
+                    // Create spill animation for incorrect answer
+                    for (let i = 0; i < 20; i++) {
+                        spillAnimations.push({
+                            x: this.x + this.width / 2,
+                            y: this.y,
+                            vx: (Math.random() - 0.5) * 5,
+                            vy: -Math.random() * 3 - 2,
+                            size: Math.floor(Math.random() * 4) + 2,
+                            life: 30 + Math.random() * 30
+                        });
+                    }
+                }
+                
+                setTimeout(() => {
+                    gameOver = true;
+                    document.getElementById('restartBtn').style.display = 'block';
+                }, 1500);
+            }
+            
+            update() {
+                if (this.selected && this.fillLevel < 1) {
+                    this.fillLevel += this.fillSpeed;
+                    if (this.fillLevel > 1) this.fillLevel = 1;
+                }
+            }
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameOver = false;
+            fillAnimations = [];
+            spillAnimations = [];
+            document.getElementById('restartBtn').style.display = 'none';
+            
+            // Create buckets with answer options
+            const bucketWidth = 80;
+            const bucketHeight = 100;
+            const answers = ['Paris', 'London', 'Berlin', 'Madrid'];
+            const correctIndex = 0; // Paris is correct
+            
+            buckets = [];
+            
+            // Calculate horizontal spacing
+            const totalWidth = bucketWidth * answers.length + 30 * (answers.length - 1);
+            const startX = (canvas.width - totalWidth) / 2;
+            
+            for (let i = 0; i < answers.length; i++) {
+                const x = startX + i * (bucketWidth + 30);
+                const y = canvas.height / 2 - 20;
+                buckets.push(new Bucket(
+                    x, y, bucketWidth, bucketHeight, 
+                    answers[i], i === correctIndex
+                ));
+            }
+        }
+        
+        // Handle click/tap
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Check if any bucket was clicked
+            for (const bucket of buckets) {
+                if (bucket.contains(x, y) && !bucket.selected) {
+                    bucket.fill();
+                    break;
+                }
+            }
+        }
+        
+        // Update game state
+        function update() {
+            // Update buckets
+            for (const bucket of buckets) {
+                bucket.update();
+            }
+            
+            // Update spill animations
+            for (let i = spillAnimations.length - 1; i >= 0; i--) {
+                const spill = spillAnimations[i];
+                spill.x += spill.vx;
+                spill.y += spill.vy;
+                spill.vy += 0.2; // Gravity
+                spill.life--;
+                
+                if (spill.life <= 0) {
+                    spillAnimations.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw everything
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question background
+            ctx.fillStyle = COLORS.question;
+            ctx.fillRect(0, 30, canvas.width, 60);
+            
+            // Draw question text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 70);
+            
+            // Draw buckets
+            for (const bucket of buckets) {
+                bucket.draw();
+            }
+            
+            // Draw spill animations
+            ctx.fillStyle = COLORS.spillColor;
+            for (const spill of spillAnimations) {
+                ctx.fillRect(
+                    Math.floor(spill.x), 
+                    Math.floor(spill.y), 
+                    spill.size, 
+                    spill.size
+                );
+            }
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        document.getElementById('restartBtn').addEventListener('click', initGame);
+        
+        // Start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Balance-Tap: Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Game states
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Colors - limited 8-bit palette
+        const COLORS = {
+            bg: '#0A0A2A',
+            beam: '#8B4513',
+            beam_shadow: '#6B3502',
+            correct: '#2ECC40',
+            incorrect: '#FF4136',
+            text: '#FFFFFF',
+            platform: '#B8860B',
+            highlight: '#FFDC00',
+            danger: '#FF851B'
+        };
+        
+        // Question and answers
+        const question = "Which planet is known as the Red Planet?";
+        const answers = [
+            { text: "Venus", correct: false, width: 120, x: 0 },
+            { text: "Mars", correct: true, width: 100, x: 0 },
+            { text: "Jupiter", correct: false, width: 140, x: 0 },
+            { text: "Mercury", correct: false, width: 160, x: 0 }
+        ];
+        
+        // Game physics
+        let beamAngle = 0;
+        let beamRotation = 0;
+        let beamRotationSpeed = 0;
+        let beamTilt = 0;
+        let beamStability = 100; // 100 = perfectly stable, 0 = game over
+        const stabilityDecayRate = 0.2; // Stability decreases over time
+        
+        // Position answers on the beam
+        function positionAnswers() {
+            const beamWidth = canvas.width * 0.7;
+            const spacing = beamWidth / (answers.length + 1);
+            
+            for (let i = 0; i < answers.length; i++) {
+                answers[i].x = spacing * (i + 1) - beamWidth / 2;
+            }
+        }
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            gameWon = false;
+            beamAngle = 0;
+            beamRotation = 0;
+            beamRotationSpeed = 0;
+            beamTilt = 0;
+            beamStability = 100;
+            shuffleAnswers();
+            positionAnswers();
+        }
+        
+        // Fisher-Yates shuffle for answers
+        function shuffleAnswers() {
+            for (let i = answers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [answers[i], answers[j]] = [answers[j], answers[i]];
+            }
+        }
+        
+        // Handle click/tap
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) {
+                init();
+                return;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Check if any answer was clicked
+            const beamY = canvas.height * 0.6;
+            const beamHeight = 40;
+            
+            // Transform coordinates to account for beam rotation
+            const beamCenterX = canvas.width / 2;
+            const relativeX = x - beamCenterX;
+            const rotatedX = relativeX * Math.cos(-beamRotation) - (y - beamY) * Math.sin(-beamRotation);
+            const rotatedY = relativeX * Math.sin(-beamRotation) + (y - beamY) * Math.cos(-beamRotation);
+            
+            // Add tilt based on where beam was clicked
+            beamTilt += rotatedX * 0.0002;
+            
+            for (let i = 0; i < answers.length; i++) {
+                const answer = answers[i];
+                const answerX = beamCenterX + answer.x * Math.cos(beamRotation);
+                const answerY = beamY - answer.x * Math.sin(beamRotation);
+                
+                const boxWidth = answer.width;
+                const boxHeight = 60;
+                
+                if (x > answerX - boxWidth/2 && x < answerX + boxWidth/2 &&
+                    y > answerY - boxHeight/2 && y < answerY + boxHeight/2) {
+                    
+                    // Click effect - add more tilt based on position
+                    beamTilt += answer.x * 0.0003;
+                    
+                    if (answer.correct) {
+                        gameWon = true;
+                        gameOver = true;
+                        playSound(440, 0.2); // Correct sound
+                        setTimeout(() => playSound(660, 0.2), 200);
+                    } else {
+                        gameOver = true;
+                        playSound(200, 0.3); // Wrong sound
+                    }
+                }
+            }
+        });
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw star background (pixelated)
+            drawStarBackground();
+            
+            // Draw question
+            drawPixelatedText(question, canvas.width/2, 80, 24, COLORS.text, true);
+            
+            // Draw beam support
+            const supportWidth = 40;
+            const supportHeight = 120;
+            ctx.fillStyle = COLORS.beam_shadow;
+            ctx.fillRect(canvas.width/2 - supportWidth/2, canvas.height * 0.6, supportWidth, supportHeight);
+            
+            // Draw stability meter
+            drawStabilityMeter();
+            
+            // Save context for rotation
+            ctx.save();
+            ctx.translate(canvas.width/2, canvas.height * 0.6);
+            ctx.rotate(beamRotation);
+            
+            // Draw beam
+            const beamWidth = canvas.width * 0.7;
+            const beamHeight = 20;
+            
+            // Beam shadow (3D effect)
+            ctx.fillStyle = COLORS.beam_shadow;
+            ctx.fillRect(-beamWidth/2, 0, beamWidth, beamHeight);
+            
+            // Beam top
+            ctx.fillStyle = COLORS.beam;
+            ctx.fillRect(-beamWidth/2, -beamHeight/2, beamWidth, beamHeight);
+            
+            // Draw answers on beam
+            for (let i = 0; i < answers.length; i++) {
+                const answer = answers[i];
+                const boxWidth = answer.width;
+                const boxHeight = 50;
+                
+                // Draw box
+                ctx.fillStyle = answer.correct && gameOver ? COLORS.correct : 
+                               (!answer.correct && gameOver ? COLORS.incorrect : COLORS.platform);
+                               
+                // Pixelated box with 3D effect
+                drawPixelatedBox(answer.x - boxWidth/2, -boxHeight - beamHeight/2 - 5, 
+                                boxWidth, boxHeight, answer.correct && gameOver);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(answer.text, answer.x, -beamHeight/2 - 30);
+            }
+            
+            ctx.restore();
+            
+            // Draw game over message
+            if (gameOver) {
+                const message = gameWon ? "Correct!" : "Wrong Answer!";
+                const subMessage = "Click anywhere to restart";
+                
+                drawPixelatedText(message, canvas.width/2, canvas.height/2, 32, 
+                                 gameWon ? COLORS.correct : COLORS.incorrect, true);
+                                 
+                drawPixelatedText(subMessage, canvas.width/2, canvas.height/2 + 50, 16, COLORS.text, true);
+            }
+        }
+        
+        // Draw pixelated text for 8-bit feel
+        function drawPixelatedText(text, x, y, size, color, centered = false) {
+            ctx.fillStyle = color;
+            ctx.font = size + 'px sans-serif';
+            ctx.textAlign = centered ? 'center' : 'left';
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw pixelated box for 8-bit feel
+        function drawPixelatedBox(x, y, width, height, isHighlighted) {
+            // Main box
+            ctx.fillStyle = isHighlighted ? COLORS.highlight : COLORS.platform;
+            ctx.fillRect(x, y, width, height);
+            
+            // 3D effect (top lighter, bottom darker)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fillRect(x, y, width, 6);
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillRect(x, y + height - 6, width, 6);
+        }
+        
+        // Draw star background
+        function drawStarBackground() {
+            ctx.fillStyle = '#FFF';
+            for (let i = 0; i < 50; i++) {
+                const size = Math.floor(Math.random() * 3) + 1;
+                const x = Math.floor(Math.random() * canvas.width / size) * size;
+                const y = Math.floor(Math.random() * canvas.height / size) * size;
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        // Draw stability meter
+        function drawStabilityMeter() {
+            const meterWidth = 30;
+            const meterHeight = 120;
+            const x = 40;
+            const y = canvas.height - meterHeight - 40;
+            
+            // Background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(x, y, meterWidth, meterHeight);
+            
+            // Fill based on stability
+            const fillHeight = (beamStability / 100) * meterHeight;
+            
+            // Color depends on stability level
+            let fillColor = COLORS.correct;
+            if (beamStability < 30) fillColor = COLORS.danger;
+            else if (beamStability < 60) fillColor = COLORS.highlight;
+            
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(x, y + meterHeight - fillHeight, meterWidth, fillHeight);
+            
+            // Border
+            ctx.strokeStyle = '#FFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, meterWidth, meterHeight);
+            
+            // Label
+            drawPixelatedText("STABILITY", x, y - 10, 14, '#FFF');
+        }
+        
+        // Generate retro sound effect
+        function playSound(frequency, duration) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = 'square'; // 8-bit like square wave
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = 0.2;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                
+                // Set envelope for beep sound
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                    oscillator.disconnect();
+                }, duration * 1000);
+            } catch (e) {
+                console.log("Sound couldn't play:", e);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameOver) {
+                // Apply tilt forces
+                beamRotationSpeed += beamTilt;
+                beamRotation += beamRotationSpeed;
+                
+                // Damping effect for more natural movement
+                beamRotationSpeed *= 0.95;
+                beamTilt *= 0.9;
+                
+                // Stability decreases over time
+                beamStability -= stabilityDecayRate;
+                
+                // Beam angle affects stability
+                beamStability -= Math.abs(beamRotation) * 5;
+                
+                // Clamp stability
+                beamStability = Math.max(0, Math.min(100, beamStability));
+                
+                // Check for game over condition
+                if (Math.abs(beamRotation) > 0.5 || beamStability <= 0) {
+                    gameOver = true;
+                    playSound(150, 0.5); // Game over sound
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bouncer-Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            box-shadow: 0 0 10px #000;
+        }
+        #restartBtn {
+            position: absolute;
+            display: none;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #222;
+            color: #fff;
+            border: 4px solid #444;
+            font-family: sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Detect if on mobile
+        const isMobile = window.innerWidth <= 480;
+        
+        // Set canvas dimensions
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#5fcde4',
+            question: '#222034',
+            ball: '#d95763',
+            platforms: ['#29366f', '#3b5dc9', '#41a6f6', '#76428a'],
+            correct: '#6abe30',
+            incorrect: '#d77bba',
+            textShadow: '#222034',
+            particles: ['#d95763', '#d9a066', '#eec39a', '#fbf236']
+        };
+        
+        // Scaling for retro pixelated style
+        const pixelSize = 3;
+        
+        // Ball properties
+        const ball = {
+            x: canvas.width / 2,
+            y: canvas.height / 4,
+            radius: 10,
+            speedX: isMobile ? 3 : 4,
+            speedY: isMobile ? 3 : 4,
+            active: true
+        };
+        
+        // Answer options
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle answers
+        answers.sort(() => Math.random() - 0.5);
+        
+        // Platform properties
+        const platformHeight = 40;
+        const platformGap = isMobile ? 20 : 40;
+        const platforms = [];
+        
+        // Set up platforms
+        for (let i = 0; i < answers.length; i++) {
+            platforms.push({
+                x: 0,
+                y: (canvas.height / 2) + (i * (platformHeight + platformGap)),
+                width: canvas.width,
+                height: platformHeight,
+                answer: answers[i],
+                color: colors.platforms[i]
+            });
+        }
+        
+        // Particles array
+        const particles = [];
+        
+        // Game state
+        let gameOver = false;
+        let result = null;
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playSound(frequency, type, duration) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playBounceSound() {
+            playSound(150, 'square', 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 'square', 0.1);
+            setTimeout(() => playSound(660, 'square', 0.2), 100);
+        }
+        
+        function playIncorrectSound() {
+            playSound(200, 'sawtooth', 0.3);
+        }
+        
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 5 + 2,
+                    speedX: (Math.random() - 0.5) * 5,
+                    speedY: (Math.random() - 0.5) * 5,
+                    color: color || colors.particles[Math.floor(Math.random() * colors.particles.length)],
+                    life: 30
+                });
+            }
+        }
+        
+        function drawPixelatedCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            
+            // Draw a pixelated circle using rectangles
+            for (let i = -radius; i < radius; i += pixelSize) {
+                for (let j = -radius; j < radius; j += pixelSize) {
+                    if (i*i + j*j < radius*radius) {
+                        ctx.fillRect(
+                            Math.floor(x + i), 
+                            Math.floor(y + j), 
+                            pixelSize, pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Update ball position
+                ball.x += ball.speedX;
+                ball.y += ball.speedY;
+                
+                // Bounce off left and right walls
+                if (ball.x - ball.radius < 0 || ball.x + ball.radius > canvas.width) {
+                    ball.speedX = -ball.speedX;
+                    if (ball.active) playBounceSound();
+                    createParticles(ball.x, ball.y);
+                }
+                
+                // Bounce off top wall
+                if (ball.y - ball.radius < 0) {
+                    ball.speedY = -ball.speedY;
+                    if (ball.active) playBounceSound();
+                    createParticles(ball.x, ball.y);
+                }
+                
+                // Bottom boundary
+                if (ball.y + ball.radius > canvas.height) {
+                    ball.speedY = -ball.speedY;
+                    if (ball.active) playBounceSound();
+                    createParticles(ball.x, ball.y);
+                }
+                
+                // Check for platform collisions
+                platforms.forEach(platform => {
+                    if (ball.active && 
+                        ball.x > platform.x && 
+                        ball.x < platform.x + platform.width &&
+                        ball.y + ball.radius > platform.y && 
+                        ball.y - ball.radius < platform.y + platform.height) {
+                        
+                        // Stop the ball
+                        ball.active = false;
+                        ball.speedX = 0;
+                        ball.speedY = 0;
+                        
+                        // Set game over and result
+                        gameOver = true;
+                        result = platform.answer.correct;
+                        
+                        // Create particles
+                        createParticles(
+                            ball.x, 
+                            ball.y, 
+                            result ? colors.correct : colors.incorrect
+                        );
+                        
+                        // Play sound
+                        if (result) {
+                            playCorrectSound();
+                        } else {
+                            playIncorrectSound();
+                        }
+                        
+                        // Show restart button
+                        restartBtn.style.display = 'block';
+                    }
+                });
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].speedX;
+                particles[i].y += particles[i].speedY;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.question;
+            ctx.font = isMobile ? '18px sans-serif' : '22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Add text shadow effect (8-bit style)
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 50);
+            
+            // Draw platforms
+            platforms.forEach(platform => {
+                ctx.fillStyle = platform.color;
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                
+                // Draw answer text
+                ctx.fillStyle = '#ffffff';
+                ctx.font = isMobile ? '16px sans-serif' : '20px sans-serif';
+                ctx.fillText(platform.answer.text, platform.x + platform.width / 2, platform.y + platform.height / 2);
+            });
+            
+            // Draw ball
+            drawPixelatedCircle(ball.x, ball.y, ball.radius, colors.ball);
+            
+            // Draw particles
+            particles.forEach(particle => {
+                drawPixelatedCircle(
+                    particle.x, 
+                    particle.y, 
+                    particle.size * (particle.life / 30), 
+                    particle.color
+                );
+            });
+            
+            // Draw result if game over
+            if (gameOver) {
+                ctx.fillStyle = result ? colors.correct : colors.incorrect;
+                ctx.font = isMobile ? '22px sans-serif' : '28px sans-serif';
+                ctx.fillText(
+                    result ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    canvas.height / 4
+                );
+            }
+        }
+        
+        // Handle click/tap
+        canvas.addEventListener('click', function(e) {
+            if (!gameOver) {
+                // Get click position relative to canvas
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+                
+                // Change ball direction based on click position
+                ball.speedX = (clickX - ball.x) / 30;
+                ball.speedY = (clickY - ball.y) / 30;
+                
+                // Normalize speed to maintain consistent velocity
+                const speed = Math.sqrt(ball.speedX * ball.speedX + ball.speedY * ball.speedY);
+                if (speed > 0) {
+                    const targetSpeed = isMobile ? 6 : 8;
+                    ball.speedX = ball.speedX / speed * targetSpeed;
+                    ball.speedY = ball.speedY / speed * targetSpeed;
+                }
+                
+                // Create particles at click position
+                createParticles(clickX, clickY);
+                
+                // Play sound
+                playSound(300, 'sine', 0.1);
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            // Reset game
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height / 4;
+            ball.speedX = isMobile ? 3 : 4;
+            ball.speedY = isMobile ? 3 : 4;
+            ball.active = true;
+            
+            // Clear particles
+            particles.length = 0;
+            
+            // Reset game state
+            gameOver = false;
+            result = null;
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+        });
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

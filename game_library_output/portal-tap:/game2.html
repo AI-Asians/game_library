@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Portal-Tap: Red Planet Question</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            background-color: #000;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit palette
+        const COLORS = {
+            background: '#0A0A2A',
+            stars: ['#FFFFFF', '#AAAAFF', '#5555FF'],
+            question: '#FFFFFF',
+            portalBorder1: '#FF3300',
+            portalBorder2: '#00AAFF',
+            portalBorder3: '#55FF55',
+            portalBorder4: '#FFAA00',
+            portalInner: '#220055',
+            correct: '#55FF55',
+            incorrect: '#FF5555',
+            restartBtn: '#AAAAAA',
+            restartBtnHover: '#FFFFFF'
+        };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log('Web Audio API not supported.');
+        }
+        
+        // Game state
+        let gameState = 'playing'; // playing, correct, incorrect
+        let animationTime = 0;
+        let stars = [];
+        
+        // Generate stars for background
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)],
+                twinkle: Math.random() * 0.05
+            });
+        }
+        
+        // Portal options
+        const options = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+        
+        // Shuffle options
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+        
+        const shuffledOptions = shuffleArray([...options]);
+        
+        // Create portals
+        const portals = [];
+        const portalRadius = isMobile ? 50 : 70;
+        const portalColors = [COLORS.portalBorder1, COLORS.portalBorder2, COLORS.portalBorder3, COLORS.portalBorder4];
+        
+        // Position portals based on screen size
+        if (isMobile) {
+            // 2x2 grid for mobile
+            const positions = [
+                { x: canvas.width * 0.25, y: canvas.height * 0.35 },
+                { x: canvas.width * 0.75, y: canvas.height * 0.35 },
+                { x: canvas.width * 0.25, y: canvas.height * 0.55 },
+                { x: canvas.width * 0.75, y: canvas.height * 0.55 }
+            ];
+            
+            for (let i = 0; i < 4; i++) {
+                portals.push({
+                    x: positions[i].x,
+                    y: positions[i].y,
+                    radius: portalRadius,
+                    color: portalColors[i],
+                    option: shuffledOptions[i],
+                    pulse: 0,
+                    spinAngle: 0
+                });
+            }
+        } else {
+            // Horizontal row for web
+            for (let i = 0; i < 4; i++) {
+                portals.push({
+                    x: (canvas.width / 5) * (i + 1),
+                    y: canvas.height * 0.6,
+                    radius: portalRadius,
+                    color: portalColors[i],
+                    option: shuffledOptions[i],
+                    pulse: 0,
+                    spinAngle: 0
+                });
+            }
+        }
+        
+        // Generate a beep sound
+        function playSound(frequency, duration, type = 'square') {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Draw a pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 4;
+            for (let pX = -radius; pX <= radius; pX += pixelSize) {
+                for (let pY = -radius; pY <= radius; pY += pixelSize) {
+                    const distance = Math.sqrt(pX * pX + pY * pY);
+                    if (distance <= radius) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(Math.floor(x + pX), Math.floor(y + pY), pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        // Draw a portal
+        function drawPortal(portal, time) {
+            const pulseAmount = Math.sin(time * 3 + portal.pulse) * 5;
+            const currentRadius = portal.radius + pulseAmount;
+            
+            // Draw outer ring
+            drawPixelatedCircle(portal.x, portal.y, currentRadius, portal.color);
+            
+            // Draw inner portal
+            drawPixelatedCircle(portal.x, portal.y, currentRadius * 0.85, COLORS.portalInner);
+            
+            // Draw swirl
+            ctx.save();
+            ctx.translate(portal.x, portal.y);
+            ctx.rotate(portal.spinAngle);
+            
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                const innerRadius = currentRadius * 0.4;
+                const outerRadius = currentRadius * 0.7;
+                
+                ctx.beginPath();
+                ctx.moveTo(innerRadius * Math.cos(angle), innerRadius * Math.sin(angle));
+                ctx.lineTo(outerRadius * Math.cos(angle), outerRadius * Math.sin(angle));
+                ctx.strokeStyle = portal.color;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+            
+            // Update spin angle
+            portal.spinAngle += 0.01;
+            
+            // Draw option text
+            ctx.font = `${isMobile ? 16 : 20}px Arial`;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(portal.option.text, portal.x, portal.y);
+            
+            // Subtle hint for correct answer
+            if (portal.option.correct && Math.random() > 0.7) {
+                drawPixelatedCircle(
+                    portal.x + (Math.random() * 30 - 15), 
+                    portal.y + (Math.random() * 30 - 15), 
+                    2, 
+                    '#FFFFFF'
+                );
+            }
+        }
+        
+        // Draw the restart button
+        function drawRestartButton() {
+            const btnX = canvas.width / 2;
+            const btnY = canvas.height * 0.75;
+            const btnWidth = 120;
+            const btnHeight = 40;
+            
+            // Check if mouse is over button
+            let isHovering = false;
+            if (mouseX >= btnX - btnWidth/2 && mouseX <= btnX + btnWidth/2 &&
+                mouseY >= btnY - btnHeight/2 && mouseY <= btnY + btnHeight/2) {
+                isHovering = true;
+            }
+            
+            // Draw button
+            ctx.fillStyle = isHovering ? COLORS.restartBtnHover : COLORS.restartBtn;
+            ctx.fillRect(btnX - btnWidth/2, btnY - btnHeight/2, btnWidth, btnHeight);
+            
+            // Draw button border (pixelated)
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(btnX - btnWidth/2, btnY - btnHeight/2, btnWidth, btnHeight);
+            
+            // Draw text
+            ctx.font = '18px Arial';
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Play Again', btnX, btnY);
+        }
+        
+        // Handle portal click
+        function handlePortalClick(x, y) {
+            if (gameState !== 'playing') return;
+            
+            for (let i = 0; i < portals.length; i++) {
+                const portal = portals[i];
+                const distance = Math.sqrt(
+                    Math.pow(x - portal.x, 2) + Math.pow(y - portal.y, 2)
+                );
+                
+                if (distance <= portal.radius) {
+                    if (portal.option.correct) {
+                        gameState = 'correct';
+                        playSound(523.25, 0.2, 'sine'); // C5
+                        playSound(659.25, 0.3, 'sine'); // E5
+                        playSound(783.99, 0.4, 'sine'); // G5
+                        setTimeout(() => {
+                            playSound(1046.50, 0.5, 'sine'); // C6
+                        }, 200);
+                    } else {
+                        gameState = 'incorrect';
+                        playSound(311.13, 0.3, 'square'); // Eb4
+                        playSound(277.18, 0.5, 'square'); // C#4
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Handle restart button click
+        function handleRestartClick(x, y) {
+            if (gameState === 'playing') return;
+            
+            const btnX = canvas.width / 2;
+            const btnY = canvas.height * 0.75;
+            const btnWidth = 120;
+            const btnHeight = 40;
+            
+            if (x >= btnX - btnWidth/2 && x <= btnX + btnWidth/2 &&
+                y >= btnY - btnHeight/2 && y <= btnY + btnHeight/2) {
+                gameState = 'playing';
+                // Reshuffle options
+                const shuffledOptions = shuffleArray([...options]);
+                for (let i = 0; i < portals.length; i++) {
+                    portals[i].option = shuffledOptions[i];
+                    portals[i].pulse = Math.random() * Math.PI * 2;
+                }
+                playSound(440, 0.1, 'square'); // A4
+            }
+        }
+        
+        // Track mouse position
+        let mouseX = 0;
+        let mouseY = 0;
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        
+        // Handle mouse clicks
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (gameState === 'playing') {
+                handlePortalClick(x, y);
+            } else {
+                handleRestartClick(x, y);
+            }
+        });
+        
+        // Handle touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const x = e.touches[0].clientX - rect.left;
+            const y = e.touches[0].clientY - rect.top;
+            
+            if (gameState === 'playing') {
+                handlePortalClick(x, y);
+            } else {
+                handleRestartClick(x, y);
+            }
+        }, false);
+        
+        // Game loop
+        function gameLoop(timestamp) {
+            if (!lastTimestamp) {
+                lastTimestamp = timestamp;
+            }
+            const deltaTime = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+            
+            animationTime += deltaTime;
+            
+            // Draw background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            for (let i = 0; i < stars.length; i++) {
+                const star = stars[i];
+                ctx.fillStyle = star.color;
+                const twinkleSize = star.size + Math.sin(animationTime * 2 + i) * star.twinkle;
+                
+                // Pixelated stars
+                ctx.fillRect(
+                    Math.floor(star.x), 
+                    Math.floor(star.y), 
+                    Math.floor(twinkleSize), 
+                    Math.floor(twinkleSize)
+                );
+            }
+            
+            // Draw question
+            ctx.font = `${isMobile ? 18 : 24}px Arial`;
+            ctx.fillStyle = COLORS.question;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, isMobile ? canvas.height * 0.2 : canvas.height * 0.25);
+            
+            // Draw portals
+            for (let i = 0; i < portals.length; i++) {
+                drawPortal(portals[i], animationTime);
+            }
+            
+            // Show result
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                // Draw result text
+                ctx.font = `${isMobile ? 24 : 32}px Arial`;
+                ctx.fillStyle = gameState === 'correct' ? COLORS.correct : COLORS.incorrect;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    gameState === 'correct' ? 'Correct!' : 'Incorrect!', 
+                    canvas.width / 2, 
+                    isMobile ? canvas.height * 0.4 : canvas.height * 0.4
+                );
+                
+                // Show the correct answer if incorrect
+                if (gameState === 'incorrect') {
+                    ctx.font = `${isMobile ? 18 : 22}px Arial`;
+                    ctx.fillText(
+                        'The correct answer is Mars', 
+                        canvas.width / 2, 
+                        isMobile ? canvas.height * 0.45 : canvas.height * 0.45
+                    );
+                }
+                
+                // Draw restart button
+                drawRestartButton();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        let lastTimestamp = null;
+        requestAnimationFrame(gameLoop);
+        
+        // Initialize portal pulses
+        portals.forEach(portal => {
+            portal.pulse = Math.random() * Math.PI * 2;
+        });
+        
+        // Play startup sound when first interacting
+        canvas.addEventListener('click', function initAudio() {
+            if (audioCtx) {
+                // Play startup sequence
+                playSound(440, 0.1, 'square'); // A4
+                setTimeout(() => playSound(523.25, 0.1, 'square'), 100); // C5
+                setTimeout(() => playSound(659.25, 0.1, 'square'), 200); // E5
+            }
+            canvas.removeEventListener('click', initAudio);
+        });
+    </script>
+</body>
+</html>

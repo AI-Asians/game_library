@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Switch-Track Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #222;
+        }
+        #gameCanvas {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (limited palette)
+        const COLORS = {
+            SKY: '#5C94FC',
+            GRASS: '#00A800',
+            TRACK: '#8F563B',
+            TRACK_TIE: '#3B2714',
+            TRAIN_RED: '#D80000',
+            TRAIN_BLUE: '#0000D8',
+            TRAIN_GREEN: '#00A800',
+            TRAIN_YELLOW: '#FCFC00',
+            TEXT: '#FFFFFF',
+            SWITCH: '#B8B8B8',
+            SWITCH_HANDLE: '#FC0000',
+            STATION: '#383838',
+            STATION_ROOF: '#FC9838'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let gameResult = null; // 'correct', 'incorrect'
+        let switchPosition = 0; // 0 = upper track, 1 = lower track
+        
+        // Answers and correct answer
+        const answers = ['Paris', 'London', 'Berlin', 'Rome'];
+        const correctAnswer = 'Paris';
+        
+        // Train properties
+        const trainWidth = isMobile ? 60 : 100;
+        const trainHeight = isMobile ? 30 : 40;
+        const trainSpeed = isMobile ? 2 : 3.5;
+        
+        // Trains (each has position, track, and text)
+        const trains = [
+            { x: -trainWidth, y: canvas.height * 0.3, text: answers[0], color: COLORS.TRAIN_RED },
+            { x: -trainWidth * 3, y: canvas.height * 0.3, text: answers[1], color: COLORS.TRAIN_BLUE },
+            { x: -trainWidth * 5, y: canvas.height * 0.3, text: answers[2], color: COLORS.TRAIN_GREEN },
+            { x: -trainWidth * 7, y: canvas.height * 0.3, text: answers[3], color: COLORS.TRAIN_YELLOW }
+        ];
+        
+        // Track switch position (junction)
+        const switchX = canvas.width * 0.7;
+        const trackY1 = canvas.height * 0.3;
+        const trackY2 = canvas.height * 0.5;
+        const stationY = canvas.height * 0.5;
+        
+        // Audio context for sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'switch') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(150, audioContext.currentTime + 0.15);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.15);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(392, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(494, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(196, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            }
+        }
+        
+        // Draw pixelated tracks
+        function drawTracks() {
+            // Upper track (straight)
+            ctx.fillStyle = COLORS.TRACK;
+            ctx.fillRect(0, trackY1 + trainHeight * 0.8, switchX, 10);
+            
+            // Lower track (destination)
+            ctx.fillRect(0, trackY2 + trainHeight * 0.8, canvas.width, 10);
+            
+            // Track after switch
+            if (switchPosition === 0) {
+                // Upper path continues straight
+                ctx.fillRect(switchX, trackY1 + trainHeight * 0.8, canvas.width - switchX, 10);
+                
+                // Diagonal track to lower path
+                ctx.beginPath();
+                ctx.moveTo(switchX, trackY1 + trainHeight * 0.8 + 5);
+                ctx.lineTo(switchX + 100, trackY2 + trainHeight * 0.8 + 5);
+                ctx.lineTo(switchX + 100, trackY2 + trainHeight * 0.8 + 10);
+                ctx.lineTo(switchX, trackY1 + trainHeight * 0.8 + 10);
+                ctx.closePath();
+                ctx.fill();
+            } else {
+                // Upper path diverts down
+                ctx.beginPath();
+                ctx.moveTo(switchX, trackY1 + trainHeight * 0.8 + 5);
+                ctx.lineTo(switchX + 100, trackY2 + trainHeight * 0.8 + 5);
+                ctx.lineTo(switchX + 100, trackY2 + trainHeight * 0.8 + 10);
+                ctx.lineTo(switchX, trackY1 + trainHeight * 0.8 + 10);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Lower track continues
+                ctx.fillRect(switchX, trackY1 + trainHeight * 0.8, canvas.width - switchX, 10);
+            }
+            
+            // Track ties
+            ctx.fillStyle = COLORS.TRACK_TIE;
+            for (let x = 0; x < canvas.width; x += 30) {
+                // Upper track ties
+                ctx.fillRect(x, trackY1 + trainHeight * 0.8 - 5, 15, 20);
+                // Lower track ties
+                ctx.fillRect(x, trackY2 + trainHeight * 0.8 - 5, 15, 20);
+            }
+        }
+        
+        // Draw train station
+        function drawStation() {
+            const stationWidth = isMobile ? 80 : 120;
+            const stationHeight = isMobile ? 50 : 70;
+            const stationX = canvas.width - stationWidth - 20;
+            
+            // Station building
+            ctx.fillStyle = COLORS.STATION;
+            ctx.fillRect(stationX, stationY - stationHeight + 20, stationWidth, stationHeight);
+            
+            // Station roof
+            ctx.fillStyle = COLORS.STATION_ROOF;
+            ctx.beginPath();
+            ctx.moveTo(stationX - 10, stationY - stationHeight + 20);
+            ctx.lineTo(stationX + stationWidth + 10, stationY - stationHeight + 20);
+            ctx.lineTo(stationX + stationWidth / 2, stationY - stationHeight - 10);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Station sign
+            ctx.fillStyle = COLORS.TRAIN_YELLOW;
+            ctx.fillRect(stationX + 20, stationY - stationHeight - 5, stationWidth - 40, 15);
+            ctx.fillStyle = '#000000';
+            ctx.font = isMobile ? '10px sans-serif' : '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('DESTINATION', stationX + stationWidth / 2, stationY - stationHeight + 5);
+        }
+        
+        // Draw track switch
+        function drawSwitch() {
+            const switchSize = isMobile ? 25 : 30;
+            
+            // Switch base
+            ctx.fillStyle = COLORS.SWITCH;
+            ctx.fillRect(switchX - switchSize / 2, trackY1 + trainHeight * 0.8 + 15, switchSize, switchSize);
+            
+            // Switch handle
+            ctx.fillStyle = COLORS.SWITCH_HANDLE;
+            if (switchPosition === 0) {
+                ctx.fillRect(switchX - switchSize / 3, trackY1 + trainHeight * 0.8 + 20, switchSize / 1.5, 8);
+            } else {
+                ctx.fillRect(switchX - switchSize / 3, trackY1 + trainHeight * 0.8 + 27, switchSize / 1.5, 8);
+            }
+        }
+        
+        // Draw trains
+        function drawTrains() {
+            trains.forEach(train => {
+                // Train body
+                ctx.fillStyle = train.color;
+                ctx.fillRect(train.x, train.y, trainWidth, trainHeight);
+                
+                // Wheels
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(train.x + 10, train.y + trainHeight - 5, 10, 10);
+                ctx.fillRect(train.x + trainWidth - 20, train.y + trainHeight - 5, 10, 10);
+                
+                // Window
+                ctx.fillStyle = '#AADDFF';
+                ctx.fillRect(train.x + 10, train.y + 8, 20, trainHeight - 16);
+                
+                // Answer text
+                ctx.fillStyle = '#000000';
+                ctx.font = isMobile ? '14px sans-serif' : '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(train.text, train.x + trainWidth / 2, train.y + trainHeight / 2 + 5);
+            });
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, canvas.height * 0.15);
+        }
+        
+        // Draw restart button when game is over
+        function drawRestartButton() {
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height * 0.7;
+            
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+            
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Play Again', canvas.width / 2, buttonY + 25);
+            
+            return { x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight };
+        }
+        
+        // Draw game result
+        function drawResult() {
+            if (gameResult === 'correct') {
+                ctx.fillStyle = COLORS.TRAIN_GREEN;
+                ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Correct!', canvas.width / 2, canvas.height * 0.6);
+            } else if (gameResult === 'incorrect') {
+                ctx.fillStyle = COLORS.TRAIN_RED;
+                ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Incorrect!', canvas.width / 2, canvas.height * 0.6);
+            }
+        }
+        
+        // Update train positions
+        function updateTrains() {
+            trains.forEach(train => {
+                train.x += trainSpeed;
+                
+                // Check if train hits switch
+                if (train.x > switchX && train.x < switchX + 10) {
+                    if (switchPosition === 1) {
+                        train.y = trackY2; // Move to lower track
+                    }
+                }
+                
+                // Check if train reached station
+                if (train.x > canvas.width - trainWidth - 60 && train.y === trackY2) {
+                    if (!gameOver) {
+                        gameOver = true;
+                        if (train.text === correctAnswer) {
+                            gameResult = 'correct';
+                            playSound('correct');
+                        } else {
+                            gameResult = 'incorrect';
+                            playSound('incorrect');
+                        }
+                    }
+                }
+                
+                // If train goes off screen, remove it
+                if (train.x > canvas.width) {
+                    train.x = -trainWidth;
+                }
+            });
+        }
+        
+        // Reset game
+        function resetGame() {
+            gameOver = false;
+            gameResult = null;
+            switchPosition = 0;
+            
+            // Reset train positions
+            trains[0].x = -trainWidth;
+            trains[0].y = trackY1;
+            trains[1].x = -trainWidth * 3;
+            trains[1].y = trackY1;
+            trains[2].x = -trainWidth * 5;
+            trains[2].y = trackY1;
+            trains[3].x = -trainWidth * 7;
+            trains[3].y = trackY1;
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.SKY;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grass
+            ctx.fillStyle = COLORS.GRASS;
+            ctx.fillRect(0, canvas.height * 0.6, canvas.width, canvas.height * 0.4);
+            
+            // Draw game elements
+            drawTracks();
+            drawStation();
+            drawSwitch();
+            drawTrains();
+            drawQuestion();
+            
+            // Update game if not over
+            if (!gameOver) {
+                updateTrains();
+            } else {
+                drawResult();
+                const restartBtn = drawRestartButton();
+                
+                // Handle click for restart button
+                canvas.onclick = function(event) {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    
+                    if (x >= restartBtn.x && x <= restartBtn.x + restartBtn.width &&
+                        y >= restartBtn.y && y <= restartBtn.y + restartBtn.height) {
+                        resetGame();
+                    }
+                };
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle switch click
+        canvas.addEventListener('click', function(event) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            const switchSize = 30;
+            if (x >= switchX - switchSize/2 && x <= switchX + switchSize/2 &&
+                y >= trackY1 + trainHeight * 0.8 + 15 && y <= trackY1 + trainHeight * 0.8 + 15 + switchSize) {
+                switchPosition = 1 - switchPosition; // Toggle switch position
+                playSound('switch');
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

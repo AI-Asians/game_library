@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shape-Sort Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        .restart-btn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #333;
+            color: #fff;
+            border: 2px solid #555;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button class="restart-btn" id="restartBtn">Restart</button>
+    <script>
+        // Game setup
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = ['#FF6B6B', '#4ECDC4', '#FFD166', '#06D6A0'];
+        let gameOver = false;
+        let gameResult = null;
+
+        // Define shapes
+        const shapeTypes = ['circle', 'square', 'triangle', 'diamond'];
+        const answers = ['Paris', 'London', 'Berlin', 'Madrid'];
+        const correctAnswer = 'Paris';
+        
+        // Create shape objects
+        let shapes = [];
+        
+        function createShapes() {
+            shapes = [];
+            const correctIndex = answers.indexOf(correctAnswer);
+            
+            for (let i = 0; i < 4; i++) {
+                const margin = 50;
+                const size = isMobile ? 50 : 70;
+                
+                shapes.push({
+                    x: margin + Math.random() * (canvas.width - size - margin * 2),
+                    y: margin + Math.random() * (canvas.height - size - margin * 2),
+                    size: size,
+                    type: shapeTypes[i],
+                    answer: answers[i],
+                    color: colors[i],
+                    correct: answers[i] === correctAnswer,
+                    dx: (Math.random() - 0.5) * 2,
+                    dy: (Math.random() - 0.5) * 2,
+                    particles: [],
+                    highlight: 0
+                });
+            }
+        }
+        
+        // Draw functions
+        function drawPixelatedShape(shape) {
+            ctx.fillStyle = shape.color;
+            
+            const pixelSize = 4;
+            const halfSize = shape.size / 2;
+            const centerX = Math.floor(shape.x / pixelSize) * pixelSize;
+            const centerY = Math.floor(shape.y / pixelSize) * pixelSize;
+            
+            // Draw highlight glow if needed
+            if (shape.highlight > 0) {
+                ctx.save();
+                ctx.globalAlpha = shape.highlight;
+                ctx.fillStyle = shape.correct ? '#FFFF00' : '#FF0000';
+                
+                if (shape.type === 'circle') {
+                    fillPixelatedCircle(centerX, centerY, halfSize + 8, pixelSize);
+                } else if (shape.type === 'square') {
+                    fillPixelatedSquare(centerX - halfSize - 8, centerY - halfSize - 8, shape.size + 16, pixelSize);
+                } else if (shape.type === 'triangle') {
+                    fillPixelatedTriangle(centerX, centerY - halfSize - 8, shape.size + 16, pixelSize);
+                } else if (shape.type === 'diamond') {
+                    fillPixelatedDiamond(centerX, centerY, halfSize + 8, pixelSize);
+                }
+                ctx.restore();
+                
+                shape.highlight -= 0.05;
+            }
+            
+            // Draw actual shape
+            ctx.fillStyle = shape.color;
+            
+            if (shape.type === 'circle') {
+                fillPixelatedCircle(centerX, centerY, halfSize, pixelSize);
+            } else if (shape.type === 'square') {
+                fillPixelatedSquare(centerX - halfSize, centerY - halfSize, shape.size, pixelSize);
+            } else if (shape.type === 'triangle') {
+                fillPixelatedTriangle(centerX, centerY - halfSize / 2, shape.size, pixelSize);
+            } else if (shape.type === 'diamond') {
+                fillPixelatedDiamond(centerX, centerY, halfSize, pixelSize);
+            }
+            
+            // Draw shape text
+            ctx.fillStyle = '#000';
+            ctx.font = `${isMobile ? 14 : 16}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(shape.answer, shape.x, shape.y);
+            
+            // Draw particles
+            for (let i = 0; i < shape.particles.length; i++) {
+                const p = shape.particles[i];
+                const pSize = Math.max(1, p.size);
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x / pixelSize) * pixelSize, 
+                    Math.floor(p.y / pixelSize) * pixelSize, 
+                    pSize, pSize
+                );
+                
+                // Update particle
+                p.x += p.dx;
+                p.y += p.dy;
+                p.size -= 0.2;
+                p.life -= 1;
+            }
+            
+            // Remove dead particles
+            shape.particles = shape.particles.filter(p => p.life > 0 && p.size > 0);
+        }
+        
+        function fillPixelatedCircle(centerX, centerY, radius, pixelSize) {
+            for (let y = centerY - radius; y <= centerY + radius; y += pixelSize) {
+                for (let x = centerX - radius; x <= centerX + radius; x += pixelSize) {
+                    const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
+                    if (distance <= radius) {
+                        ctx.fillRect(x, y, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        function fillPixelatedSquare(x, y, size, pixelSize) {
+            for (let py = y; py < y + size; py += pixelSize) {
+                for (let px = x; px < x + size; px += pixelSize) {
+                    ctx.fillRect(px, py, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        function fillPixelatedTriangle(centerX, centerY, size, pixelSize) {
+            const halfSize = size / 2;
+            
+            for (let y = centerY; y < centerY + size; y += pixelSize) {
+                const rowWidth = (y - centerY) / size * size;
+                const startX = centerX - rowWidth / 2;
+                const endX = centerX + rowWidth / 2;
+                
+                for (let x = startX; x <= endX; x += pixelSize) {
+                    ctx.fillRect(x, y, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        function fillPixelatedDiamond(centerX, centerY, radius, pixelSize) {
+            for (let y = centerY - radius; y <= centerY + radius; y += pixelSize) {
+                const distY = Math.abs(y - centerY);
+                const width = radius - distY;
+                
+                for (let x = centerX - width; x <= centerX + width; x += pixelSize) {
+                    ctx.fillRect(x, y, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        function createParticles(shape, count) {
+            for (let i = 0; i < count; i++) {
+                shape.particles.push({
+                    x: shape.x,
+                    y: shape.y,
+                    dx: (Math.random() - 0.5) * 8,
+                    dy: (Math.random() - 0.5) * 8,
+                    size: 4 + Math.random() * 4,
+                    color: shape.correct ? '#FFFF00' : '#FF0000',
+                    life: 20 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Draw game
+        function drawGame() {
+            // Clear canvas with pixelated background
+            ctx.fillStyle = '#222034';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid pattern
+            ctx.strokeStyle = '#1A1A29';
+            ctx.lineWidth = 1;
+            const gridSize = 20;
+            
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 40);
+            
+            // Draw border around text
+            const textWidth = ctx.measureText('What is the capital of France?').width;
+            const padding = 20;
+            const borderX = (canvas.width - textWidth) / 2 - padding;
+            const borderY = 40 - 18;
+            const borderWidth = textWidth + padding * 2;
+            const borderHeight = 36;
+            
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3;
+            const pixelSize = 4;
+            
+            // Top line
+            for (let x = borderX; x < borderX + borderWidth; x += pixelSize) {
+                ctx.fillRect(x, borderY, pixelSize, pixelSize);
+            }
+            
+            // Bottom line
+            for (let x = borderX; x < borderX + borderWidth; x += pixelSize) {
+                ctx.fillRect(x, borderY + borderHeight, pixelSize, pixelSize);
+            }
+            
+            // Left line
+            for (let y = borderY; y < borderY + borderHeight; y += pixelSize) {
+                ctx.fillRect(borderX, y, pixelSize, pixelSize);
+            }
+            
+            // Right line
+            for (let y = borderY; y < borderY + borderHeight; y += pixelSize) {
+                ctx.fillRect(borderX + borderWidth, y, pixelSize, pixelSize);
+            }
+            
+            // Draw shapes
+            for (const shape of shapes) {
+                drawPixelatedShape(shape);
+            }
+            
+            // Draw game over message if needed
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameResult ? '#00FF00' : '#FF0000';
+                ctx.font = `${isMobile ? 28 : 32}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(gameResult ? 'Correct!' : 'Wrong!', canvas.width / 2, canvas.height / 2);
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Update game
+        function updateGame() {
+            if (gameOver) return;
+            
+            for (const shape of shapes) {
+                // Move shape
+                shape.x += shape.dx;
+                shape.y += shape.dy;
+                
+                // Bounce off edges
+                if (shape.x < shape.size/2 || shape.x > canvas.width - shape.size/2) {
+                    shape.dx *= -1;
+                    shape.x = Math.max(shape.size/2, Math.min(canvas.width - shape.size/2, shape.x));
+                }
+                
+                if (shape.y < shape.size/2 || shape.y > canvas.height - shape.size/2) {
+                    shape.dy *= -1;
+                    shape.y = Math.max(shape.size/2, Math.min(canvas.height - shape.size/2, shape.y));
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            updateGame();
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse/touch input
+        function handleClick(event) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let x, y;
+            
+            if (event.type === 'click') {
+                x = (event.clientX - rect.left) * scaleX;
+                y = (event.clientY - rect.top) * scaleY;
+            } else { // touch
+                x = (event.touches[0].clientX - rect.left) * scaleX;
+                y = (event.touches[0].clientY - rect.top) * scaleY;
+                event.preventDefault();
+            }
+            
+            for (const shape of shapes) {
+                const dx = x - shape.x;
+                const dy = y - shape.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                let isHit = false;
+                
+                if (shape.type === 'circle') {
+                    isHit = distance < shape.size / 2;
+                } else if (shape.type === 'square') {
+                    isHit = Math.abs(dx) < shape.size / 2 && Math.abs(dy) < shape.size / 2;
+                } else if (shape.type === 'triangle') {
+                    // Simplified triangle hit detection
+                    const halfSize = shape.size / 2;
+                    isHit = y >= shape.y - halfSize / 2 && 
+                           y <= shape.y + shape.size - halfSize / 2 &&
+                           Math.abs(dx) < (y - (shape.y - halfSize / 2)) / shape.size * shape.size;
+                } else if (shape.type === 'diamond') {
+                    // Diamond hit detection
+                    isHit = Math.abs(dx) + Math.abs(dy) < shape.size / 2;
+                }
+                
+                if (isHit) {
+                    // Play sound
+                    const isCorrect = shape.answer === correctAnswer;
+                    playSound(isCorrect);
+                    
+                    // Show visual feedback
+                    shape.highlight = 1;
+                    createParticles(shape, 30);
+                    
+                    // End game
+                    gameOver = true;
+                    gameResult = isCorrect;
+                    
+                    break;
+                }
+            }
+        }
+        
+        // Sound functions
+        function playSound(correct) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                if (correct) {
+                    // Correct sound - ascending blips
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                } else {
+                    // Wrong sound - descending note
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.4);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                }
+            } catch (e) {
+                console.log('Audio error:', e);
+            }
+        }
+        
+        // Initialize and start game
+        function initGame() {
+            gameOver = false;
+            gameResult = null;
+            createShapes();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', handleClick);
+        restartBtn.addEventListener('click', initGame);
+        
+        // Start game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

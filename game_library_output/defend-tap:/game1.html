@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Defense</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: #fff;
+            border: 3px solid #888;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">RESTART</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Check if on mobile and resize if needed
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game variables
+        let gameOver = false;
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Randomize order of answers
+        answers.sort(() => Math.random() - 0.5);
+        
+        // Game objects
+        let base = {
+            x: canvas.width / 2,
+            y: canvas.height - 60,
+            width: 120,
+            height: 70,
+            health: 3,
+            damaged: false,
+            damageTimer: 0
+        };
+        
+        let enemies = [];
+        const colors = ['#FF004D', '#FFA300', '#00E756', '#29ADFF', '#83769C'];
+        
+        // Create enemy objects for each answer
+        answers.forEach((answer, index) => {
+            enemies.push({
+                x: 100 + (index * (canvas.width - 200) / answers.length),
+                y: -50 - (index * 60),
+                width: 60,
+                height: 48,
+                speed: 1 + Math.random() * 1.5,
+                text: answer.text,
+                correct: answer.correct,
+                color: colors[index % colors.length],
+                destroyed: false,
+                exploding: false,
+                explosionFrame: 0
+            });
+        });
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'explosion') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(40, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'damage') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            }
+        }
+        
+        // Drawing functions
+        function drawBase() {
+            // Draw the base (8-bit space fortress)
+            ctx.fillStyle = base.damaged ? '#FF0000' : '#00B4FF';
+            
+            // Main body
+            ctx.fillRect(base.x - base.width/2, base.y - base.height/2, base.width, base.height);
+            
+            // Top turret
+            ctx.fillStyle = '#83769C';
+            ctx.fillRect(base.x - 20, base.y - base.height/2 - 15, 40, 15);
+            
+            // Health indicators
+            for (let i = 0; i < 3; i++) {
+                ctx.fillStyle = i < base.health ? '#00E756' : '#444';
+                ctx.fillRect(base.x - 40 + (i * 30), base.y + 20, 20, 10);
+            }
+        }
+        
+        function drawEnemy(enemy) {
+            if (enemy.destroyed) return;
+            
+            if (enemy.exploding) {
+                // Draw explosion animation
+                ctx.fillStyle = ['#FFA300', '#FF004D', '#FFFF00'][enemy.explosionFrame % 3];
+                const size = 30 + enemy.explosionFrame * 5;
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, size, 0, Math.PI * 2);
+                ctx.fill();
+                enemy.explosionFrame++;
+                
+                if (enemy.explosionFrame > 8) {
+                    enemy.destroyed = true;
+                }
+                return;
+            }
+            
+            // Draw enemy ship (8-bit invader style)
+            ctx.fillStyle = enemy.color;
+            
+            // Main body
+            ctx.fillRect(enemy.x - enemy.width/2, enemy.y - enemy.height/2, enemy.width, enemy.height);
+            
+            // Wings
+            ctx.fillRect(enemy.x - enemy.width/2 - 10, enemy.y, 10, 20);
+            ctx.fillRect(enemy.x + enemy.width/2, enemy.y, 10, 20);
+            
+            // Cockpit
+            ctx.fillStyle = '#000';
+            ctx.fillRect(enemy.x - 10, enemy.y - 15, 20, 15);
+            ctx.fillStyle = '#FFFF00';
+            ctx.fillRect(enemy.x - 6, enemy.y - 12, 12, 9);
+            
+            // Draw text
+            ctx.fillStyle = '#FFF';
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(enemy.text, enemy.x, enemy.y + 5);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = '#FFF';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 40);
+        }
+        
+        // Game loop
+        function update() {
+            if (gameOver) return;
+            
+            // Update enemies
+            enemies.forEach(enemy => {
+                if (!enemy.destroyed && !enemy.exploding) {
+                    enemy.y += enemy.speed;
+                    
+                    // Check collision with base
+                    if (enemy.y + enemy.height/2 > base.y - base.height/2) {
+                        if (enemy.correct) {
+                            // Game over - missed correct answer
+                            gameOver = true;
+                            restartButton.style.display = 'block';
+                        } else {
+                            // Take damage from wrong answer
+                            enemy.destroyed = true;
+                            base.health--;
+                            base.damaged = true;
+                            base.damageTimer = 20;
+                            playSound('damage');
+                            
+                            if (base.health <= 0) {
+                                gameOver = true;
+                                restartButton.style.display = 'block';
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Update base damage animation
+            if (base.damaged) {
+                base.damageTimer--;
+                if (base.damageTimer <= 0) {
+                    base.damaged = false;
+                }
+            }
+            
+            // Check if all enemies are destroyed or game is over
+            if (enemies.every(e => e.destroyed) || gameOver) {
+                restartButton.style.display = 'block';
+            }
+        }
+        
+        function render() {
+            // Clear the canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background grid (8-bit style)
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, canvas.height);
+                ctx.stroke();
+            }
+            for (let i = 0; i < canvas.height; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(canvas.width, i);
+                ctx.stroke();
+            }
+            
+            // Draw game elements
+            drawQuestion();
+            drawBase();
+            enemies.forEach(drawEnemy);
+            
+            // Draw game over text if needed
+            if (gameOver) {
+                ctx.fillStyle = '#FF004D';
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                
+                const correctEnemy = enemies.find(e => e.correct);
+                const isCorrectDestroyed = correctEnemy && correctEnemy.destroyed;
+                
+                ctx.fillText(isCorrectDestroyed ? "CORRECT!" : "GAME OVER", 
+                             canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event handlers
+        canvas.addEventListener('click', function(event) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Scale coordinates if canvas is displayed at a different size
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const scaledX = clickX * scaleX;
+            const scaledY = clickY * scaleY;
+            
+            // Check for clicks on enemies
+            enemies.forEach(enemy => {
+                if (!enemy.destroyed && !enemy.exploding &&
+                    scaledX > enemy.x - enemy.width/2 && 
+                    scaledX < enemy.x + enemy.width/2 &&
+                    scaledY > enemy.y - enemy.height/2 && 
+                    scaledY < enemy.y + enemy.height/2) {
+                    
+                    enemy.exploding = true;
+                    
+                    if (enemy.correct) {
+                        // Correct answer!
+                        playSound('correct');
+                        gameOver = true;
+                        setTimeout(() => {
+                            restartButton.style.display = 'block';
+                        }, 1000);
+                    } else {
+                        // Wrong answer
+                        playSound('explosion');
+                    }
+                }
+            });
+        });
+        
+        restartButton.addEventListener('click', function() {
+            // Reset game
+            gameOver = false;
+            base.health = 3;
+            base.damaged = false;
+            
+            // Reset enemies
+            answers.sort(() => Math.random() - 0.5);
+            enemies = [];
+            
+            answers.forEach((answer, index) => {
+                enemies.push({
+                    x: 100 + (index * (canvas.width - 200) / answers.length),
+                    y: -50 - (index * 60),
+                    width: 60,
+                    height: 48,
+                    speed: 1 + Math.random() * 1.5,
+                    text: answer.text,
+                    correct: answer.correct,
+                    color: colors[index % colors.length],
+                    destroyed: false,
+                    exploding: false,
+                    explosionFrame: 0
+                });
+            });
+            
+            restartButton.style.display = 'none';
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

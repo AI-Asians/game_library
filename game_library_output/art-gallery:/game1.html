@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Art Gallery Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 1px solid #333;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #mobileControls {
+            position: absolute;
+            bottom: 10px;
+            display: none;
+            width: 100%;
+            justify-content: center;
+            gap: 20px;
+        }
+        .control-btn {
+            width: 60px;
+            height: 60px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            color: white;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="mobileControls">
+        <div class="control-btn" id="leftBtn">←</div>
+        <div class="control-btn" id="upBtn">↑</div>
+        <div class="control-btn" id="rightBtn">→</div>
+        <div class="control-btn" id="downBtn">↓</div>
+    </div>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Show mobile controls if on mobile
+        if (isMobile) {
+            document.getElementById('mobileControls').style.display = 'flex';
+        }
+        
+        // Game colors - limited palette
+        const COLORS = {
+            floor: '#8B7355',
+            floorDark: '#6B5335',
+            wall: '#A9A9A9',
+            wallDark: '#696969',
+            frame: '#DAA520',
+            text: '#FFFFFF',
+            player: '#FF0000',
+            correct: '#00FF00',
+            incorrect: '#FF0000',
+            spotlight: 'rgba(255, 255, 200, 0.2)'
+        };
+        
+        // Game state
+        let gameState = {
+            player: {
+                x: canvas.width / 2,
+                y: canvas.height - 100,
+                width: 20,
+                height: 20,
+                speed: 3,
+                moving: false,
+                direction: { up: false, down: false, left: false, right: false }
+            },
+            paintings: [
+                { x: canvas.width * 0.2, y: 100, width: 120, height: 90, text: "Berlin", correct: false },
+                { x: canvas.width * 0.5, y: 100, width: 120, height: 90, text: "Paris", correct: true },
+                { x: canvas.width * 0.8, y: 100, width: 120, height: 90, text: "Rome", correct: false },
+            ],
+            gameOver: false,
+            result: null,
+            footstepTimer: 0,
+            restartButton: {
+                x: canvas.width / 2 - 50,
+                y: canvas.height / 2 + 50,
+                width: 100,
+                height: 40
+            }
+        };
+        
+        // Simple Audio Context for sound effects
+        let audioCtx;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log('Web Audio API not supported');
+        }
+        
+        // Sound functions
+        function playFootstep() {
+            if (!audioCtx) return;
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+        
+        function playSelectSound(correct) {
+            if (!audioCtx) return;
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = correct ? 'sine' : 'sawtooth';
+            oscillator.frequency.setValueAtTime(correct ? 523.25 : 220, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+            
+            if (correct) {
+                setTimeout(() => {
+                    const osc = audioCtx.createOscillator();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(784, audioCtx.currentTime);
+                    osc.connect(gainNode);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.3);
+                }, 300);
+            }
+        }
+        
+        // Draw functions
+        function drawFloor() {
+            const tileSize = 40;
+            for (let x = 0; x < canvas.width; x += tileSize) {
+                for (let y = 0; y < canvas.height; y += tileSize) {
+                    const isEven = (Math.floor(x / tileSize) + Math.floor(y / tileSize)) % 2 === 0;
+                    ctx.fillStyle = isEven ? COLORS.floor : COLORS.floorDark;
+                    ctx.fillRect(x, y, tileSize, tileSize);
+                }
+            }
+        }
+        
+        function drawWalls() {
+            // Top wall
+            ctx.fillStyle = COLORS.wall;
+            ctx.fillRect(0, 0, canvas.width, 50);
+            
+            // Wall details
+            ctx.fillStyle = COLORS.wallDark;
+            for (let x = 0; x < canvas.width; x += 80) {
+                ctx.fillRect(x, 35, 40, 15);
+            }
+        }
+        
+        function drawPaintings() {
+            gameState.paintings.forEach(painting => {
+                // Draw spotlight
+                ctx.beginPath();
+                const gradient = ctx.createRadialGradient(
+                    painting.x + painting.width/2, painting.y + painting.height/2, 10,
+                    painting.x + painting.width/2, painting.y + painting.height/2, 150
+                );
+                gradient.addColorStop(0, COLORS.spotlight);
+                gradient.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = gradient;
+                ctx.arc(painting.x + painting.width/2, painting.y + painting.height/2, 150, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw frame
+                ctx.fillStyle = COLORS.frame;
+                ctx.fillRect(painting.x - 10, painting.y - 10, painting.width + 20, painting.height + 20);
+                
+                // Draw painting
+                let paintingColor = '#3366CC';
+                if (gameState.gameOver) {
+                    paintingColor = painting.correct ? COLORS.correct : COLORS.incorrect;
+                }
+                ctx.fillStyle = paintingColor;
+                ctx.fillRect(painting.x, painting.y, painting.width, painting.height);
+                
+                // Draw city representation (simple pixelated icons)
+                ctx.fillStyle = '#FFFFFF';
+                if (painting.text === "Paris") {
+                    // Simple Eiffel Tower
+                    const centerX = painting.x + painting.width/2;
+                    const baseY = painting.y + painting.height - 20;
+                    
+                    // Tower base
+                    ctx.fillRect(centerX - 20, baseY, 40, 10);
+                    
+                    // Tower structure
+                    ctx.fillRect(centerX - 15, baseY - 10, 30, 10);
+                    ctx.fillRect(centerX - 10, baseY - 30, 20, 20);
+                    ctx.fillRect(centerX - 5, baseY - 50, 10, 20);
+                    ctx.fillRect(centerX - 2, baseY - 60, 4, 10);
+                } else if (painting.text === "Berlin") {
+                    // Simple Brandenburg Gate
+                    const baseY = painting.y + painting.height - 20;
+                    const width = 80;
+                    ctx.fillRect(painting.x + (painting.width - width)/2, baseY - 40, width, 10);
+                    
+                    for (let i = 0; i < 5; i++) {
+                        ctx.fillRect(painting.x + (painting.width - width)/2 + 5 + i*16, baseY - 30, 10, 30);
+                    }
+                } else if (painting.text === "Rome") {
+                    // Simple Colosseum
+                    const centerX = painting.x + painting.width/2;
+                    const centerY = painting.y + painting.height/2;
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, 30, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, 35, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Arches
+                    for (let i = 0; i < 8; i++) {
+                        const angle = i * Math.PI / 4;
+                        const x = centerX + Math.cos(angle) * 30;
+                        const y = centerY + Math.sin(angle) * 30;
+                        ctx.fillRect(x - 3, y - 3, 6, 6);
+                    }
+                }
+                
+                // Draw text below painting
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(painting.text, painting.x + painting.width / 2, painting.y + painting.height + 20);
+            });
+        }
+        
+        function drawPlayer() {
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(gameState.player.x, gameState.player.y, gameState.player.width, gameState.player.height);
+            
+            // Simple face details
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(gameState.player.x + 5, gameState.player.y + 5, 4, 4);
+            ctx.fillRect(gameState.player.x + 12, gameState.player.y + 5, 4, 4);
+            
+            // Direction indicator (simple hat or hair)
+            ctx.fillStyle = '#0000FF';
+            if (gameState.player.direction.up) {
+                ctx.fillRect(gameState.player.x + 5, gameState.player.y - 5, 10, 5);
+            } else if (gameState.player.direction.down) {
+                ctx.fillRect(gameState.player.x + 5, gameState.player.y + gameState.player.height, 10, 5);
+            } else if (gameState.player.direction.left) {
+                ctx.fillRect(gameState.player.x - 5, gameState.player.y + 5, 5, 10);
+            } else if (gameState.player.direction.right) {
+                ctx.fillRect(gameState.player.x + gameState.player.width, gameState.player.y + 5, 5, 10);
+            }
+        }
+        
+        function drawUI() {
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, canvas.height - 40);
+            
+            // Draw instruction
+            ctx.font = '16px sans-serif';
+            ctx.fillText("Walk to the correct painting and click it!", canvas.width / 2, canvas.height - 15);
+            
+            // If game is over, show result and restart button
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.result ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '24px sans-serif';
+                ctx.fillText(gameState.result ? "Correct!" : "Incorrect!", canvas.width / 2, canvas.height / 2);
+                
+                // Draw restart button
+                ctx.fillStyle = '#333';
+                ctx.fillRect(
+                    gameState.restartButton.x,
+                    gameState.restartButton.y,
+                    gameState.restartButton.width,
+                    gameState.restartButton.height
+                );
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.fillText("Restart", canvas.width / 2, gameState.restartButton.y + 25);
+            }
+        }
+        
+        function update() {
+            if (!gameState.gameOver) {
+                // Update player position based on direction
+                if (gameState.player.direction.up) {
+                    gameState.player.y -= gameState.player.speed;
+                    gameState.player.moving = true;
+                }
+                if (gameState.player.direction.down) {
+                    gameState.player.y += gameState.player.speed;
+                    gameState.player.moving = true;
+                }
+                if (gameState.player.direction.left) {
+                    gameState.player.x -= gameState.player.speed;
+                    gameState.player.moving = true;
+                }
+                if (gameState.player.direction.right) {
+                    gameState.player.x += gameState.player.speed;
+                    gameState.player.moving = true;
+                }
+                
+                // Keep player within bounds
+                gameState.player.x = Math.max(0, Math.min(canvas.width - gameState.player.width, gameState.player.x));
+                gameState.player.y = Math.max(50, Math.min(canvas.height - gameState.player.height, gameState.player.y));
+                
+                // Footstep sounds
+                if (gameState.player.moving) {
+                    gameState.footstepTimer++;
+                    if (gameState.footstepTimer > 15) {
+                        playFootstep();
+                        gameState.footstepTimer = 0;
+                    }
+                } else {
+                    gameState.footstepTimer = 0;
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawFloor();
+            drawWalls();
+            drawPaintings();
+            drawPlayer();
+            drawUI();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Player interaction with paintings
+        function checkPaintingInteraction(x, y) {
+            if (gameState.gameOver) {
+                // Check if restart button was clicked
+                if (
+                    x >= gameState.restartButton.x &&
+                    x <= gameState.restartButton.x + gameState.restartButton.width &&
+                    y >= gameState.restartButton.y &&
+                    y <= gameState.restartButton.y + gameState.restartButton.height
+                ) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Check if any painting was clicked and player is near it
+            for (const painting of gameState.paintings) {
+                if (
+                    x >= painting.x &&
+                    x <= painting.x + painting.width &&
+                    y >= painting.y &&
+                    y <= painting.y + painting.height
+                ) {
+                    // Check if player is close enough to the painting
+                    const playerCenterX = gameState.player.x + gameState.player.width / 2;
+                    const playerCenterY = gameState.player.y + gameState.player.height / 2;
+                    const paintingCenterX = painting.x + painting.width / 2;
+                    const paintingCenterY = painting.y + painting.height / 2;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(playerCenterX - paintingCenterX, 2) +
+                        Math.pow(playerCenterY - paintingCenterY, 2)
+                    );
+                    
+                    if (distance < 100) {
+                        gameState.gameOver = true;
+                        gameState.result = painting.correct;
+                        playSelectSound(painting.correct);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        function resetGame() {
+            gameState = {
+                player: {
+                    x: canvas.width / 2,
+                    y: canvas.height - 100,
+                    width: 20,
+                    height: 20,
+                    speed: 3,
+                    moving: false,
+                    direction: { up: false, down: false, left: false, right: false }
+                },
+                paintings: [
+                    { x: canvas.width * 0.2, y: 100, width: 120, height: 90, text: "Berlin", correct: false },
+                    { x: canvas.width * 0.5, y: 100, width: 120, height: 90, text: "Paris", correct: true },
+                    { x: canvas.width * 0.8, y: 100, width: 120, height: 90, text: "Rome", correct: false },
+                ],
+                gameOver: false,
+                result: null,
+                footstepTimer: 0,
+                restartButton: {
+                    x: canvas.width / 2 - 50,
+                    y: canvas.height / 2 + 50,
+                    width: 100,
+                    height: 40
+                }
+            };
+        }
+        
+        // Event listeners
+        window.addEventListener('keydown', (e) => {
+            if (gameState.gameOver) return;
+            
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                    gameState.player.direction.up = true;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    gameState.player.direction.down = true;
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    gameState.player.direction.left = true;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    gameState.player.direction.right = true;
+                    break;
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                    gameState.player.direction.up = false;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    gameState.player.direction.down = false;
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    gameState.player.direction.left = false;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    gameState.player.direction.right = false;
+                    break;
+            }
+            
+            // Reset moving flag if no direction is active
+            if (!Object.values(gameState.player.direction).some(dir => dir)) {
+                gameState.player.moving = false;
+            }
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            checkPaintingInteraction(x, y);
+        });
+        
+        // Mobile controls
+        if (isMobile) {
+            const leftBtn = document.getElementById('leftBtn');
+            const rightBtn = document.getElementById('rightBtn');
+            const upBtn = document.getElementById('upBtn');
+            const downBtn = document.getElementById('downBtn');
+            
+            // Touch events for direction buttons
+            leftBtn.addEventListener('touchstart', () => { gameState.player.direction.left = true; });
+            leftBtn.addEventListener('touchend', () => { gameState.player.direction.left = false; gameState.player.moving = false; });
+            
+            rightBtn.addEventListener('touchstart', () => { gameState.player.direction.right = true; });
+            rightBtn.addEventListener('touchend', () => { gameState.player.direction.right = false; gameState.player.moving = false; });
+            
+            upBtn.addEventListener('touchstart', () => { gameState.player.direction.up = true; });
+            upBtn.addEventListener('touchend', () => { gameState.player.direction.up = false; gameState.player.moving = false; });
+            
+            downBtn.addEventListener('touchstart', () => { gameState.player.direction.down = true; });
+            downBtn.addEventListener('touchend', () => { gameState.player.direction.down = false; gameState.player.moving = false; });
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Fling</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #333;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #333;
+            color: #fff;
+            border: 4px solid #555;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Determine if we're on mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited retro palette
+        const COLORS = {
+            bg: '#0f380f',         // Dark green background
+            question: '#8bac0f',   // Light green text
+            target: '#306230',     // Medium green target
+            targetPulse: '#9bbc0f', // Light green pulse
+            correct: '#0f8b8f',    // Teal
+            incorrect: '#ac3232',   // Red
+            border: '#306230',     // Medium green border
+            text: '#e0f8d0',       // Light text
+            shadow: '#0f1f0f'      // Dark shadow
+        };
+
+        // Game variables
+        let answers = [
+            { text: 'Paris', correct: true, x: 0, y: 0, vx: 0, vy: 0, width: 0, height: 0 },
+            { text: 'London', correct: false, x: 0, y: 0, vx: 0, vy: 0, width: 0, height: 0 },
+            { text: 'Berlin', correct: false, x: 0, y: 0, vx: 0, vy: 0, width: 0, height: 0 },
+            { text: 'Rome', correct: false, x: 0, y: 0, vx: 0, vy: 0, width: 0, height: 0 }
+        ];
+        
+        // Target zone
+        const target = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height * 0.2,
+            width: 120,
+            height: 120,
+            pulseState: 0,
+            pulseDir: 1
+        };
+        
+        // Game state
+        let gameState = 'playing'; // playing, correct, incorrect
+        let draggedAnswer = null;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let lastDirection = { x: 0, y: 0 };
+        let particles = [];
+        let restartBtn = document.getElementById('restartBtn');
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize game
+        function initGame() {
+            // Shuffle answers
+            answers = shuffleArray([...answers]);
+            
+            // Position answers in a grid at the bottom
+            const margin = 20;
+            const boxWidth = (canvas.width - margin * 2) / 2 - 10;
+            const boxHeight = 80;
+            
+            const startY = canvas.height - 220;
+            
+            answers[0].x = margin;
+            answers[0].y = startY;
+            answers[0].width = boxWidth;
+            answers[0].height = boxHeight;
+            
+            answers[1].x = margin + boxWidth + 20;
+            answers[1].y = startY;
+            answers[1].width = boxWidth;
+            answers[1].height = boxHeight;
+            
+            answers[2].x = margin;
+            answers[2].y = startY + boxHeight + 20;
+            answers[2].width = boxWidth;
+            answers[2].height = boxHeight;
+            
+            answers[3].x = margin + boxWidth + 20;
+            answers[3].y = startY + boxHeight + 20;
+            answers[3].width = boxWidth;
+            answers[3].height = boxHeight;
+            
+            // Reset velocities
+            answers.forEach(a => {
+                a.vx = 0;
+                a.vy = 0;
+            });
+            
+            gameState = 'playing';
+            particles = [];
+            restartBtn.style.display = 'none';
+        }
+        
+        // Fisher-Yates shuffle
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+        
+        // Create sound effects
+        function initAudio() {
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.log('Web Audio API not supported');
+            }
+        }
+        
+        function playSound(type) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'pickup':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(660, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                    
+                case 'fling':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                    
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+                    
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                    
+                case 'bounce':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(100, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Draw pixel art blocks
+        function drawPixelBlock(x, y, width, height, color, borderColor) {
+            // Main block
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Pixel art border
+            ctx.fillStyle = borderColor || COLORS.border;
+            
+            // Top and left - lighter
+            ctx.fillRect(x, y, width, 4);
+            ctx.fillRect(x, y, 4, height);
+            
+            // Bottom and right - darker
+            ctx.fillStyle = COLORS.shadow;
+            ctx.fillRect(x, y + height - 4, width, 4);
+            ctx.fillRect(x + width - 4, y, 4, height);
+        }
+        
+        // Target zone with pulse animation
+        function drawTarget() {
+            // Update pulse
+            target.pulseState += 0.05 * target.pulseDir;
+            if (target.pulseState >= 1) target.pulseDir = -1;
+            if (target.pulseState <= 0) target.pulseDir = 1;
+            
+            const pulseSize = Math.floor(target.pulseState * 8);
+            
+            // Draw target zone
+            drawPixelBlock(
+                target.x - pulseSize, 
+                target.y - pulseSize, 
+                target.width + pulseSize * 2, 
+                target.height + pulseSize * 2, 
+                COLORS.target
+            );
+            
+            // Inner pulsing part
+            if (pulseSize > 0) {
+                ctx.fillStyle = COLORS.targetPulse;
+                ctx.fillRect(
+                    target.x - pulseSize + 8, 
+                    target.y - pulseSize + 8, 
+                    target.width + pulseSize * 2 - 16, 
+                    target.height + pulseSize * 2 - 16
+                );
+            }
+            
+            // Target dashed border
+            ctx.strokeStyle = COLORS.targetPulse;
+            ctx.setLineDash([8, 8]);
+            ctx.lineWidth = 4;
+            ctx.strokeRect(target.x + 8, target.y + 8, target.width - 16, target.height - 16);
+            ctx.setLineDash([]);
+        }
+        
+        // Draw answers
+        function drawAnswers() {
+            answers.forEach(answer => {
+                const color = answer.correct ? 
+                    (gameState === 'correct' ? COLORS.correct : COLORS.target) : 
+                    (gameState === 'incorrect' && draggedAnswer === answer ? COLORS.incorrect : COLORS.target);
+                
+                drawPixelBlock(answer.x, answer.y, answer.width, answer.height, color);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(answer.text, answer.x + answer.width/2, answer.y + answer.height/2);
+            });
+        }
+        
+        // Draw direction arrow
+        function drawDirectionArrow() {
+            if (Math.abs(lastDirection.x) < 0.1 && Math.abs(lastDirection.y) < 0.1) return;
+            
+            const arrowLength = 60;
+            const startX = canvas.width - 80;
+            const startY = canvas.height - 80;
+            const endX = startX + lastDirection.x * arrowLength;
+            const endY = startY + lastDirection.y * arrowLength;
+            
+            // Arrow line
+            ctx.strokeStyle = COLORS.text;
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+            
+            // Arrow head
+            const headLen = 20;
+            const angle = Math.atan2(lastDirection.y, lastDirection.x);
+            
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(
+                endX - headLen * Math.cos(angle - Math.PI/6),
+                endY - headLen * Math.sin(angle - Math.PI/6)
+            );
+            ctx.lineTo(
+                endX - headLen * Math.cos(angle + Math.PI/6),
+                endY - headLen * Math.sin(angle + Math.PI/6)
+            );
+            ctx.closePath();
+            ctx.fillStyle = COLORS.text;
+            ctx.fill();
+        }
+        
+        // Create particle effect
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 4 + Math.floor(Math.random() * 4) * 2, // Pixelated size
+                    color: color,
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Update and draw particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                // Draw particle (pixelated)
+                if (p.life > 0) {
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(
+                        Math.floor(p.x / 2) * 2, 
+                        Math.floor(p.y / 2) * 2, 
+                        p.size, 
+                        p.size
+                    );
+                } else {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw target
+            drawTarget();
+            
+            // Draw answers
+            drawAnswers();
+            
+            // Draw particles
+            updateParticles();
+            
+            // Draw direction arrow
+            drawDirectionArrow();
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 50);
+            
+            // Draw instructions
+            if (gameState === 'playing') {
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '18px sans-serif';
+                ctx.fillText("Fling the correct answer to the target!", canvas.width / 2, 90);
+            }
+            
+            // Draw game over messages
+            if (gameState === 'correct') {
+                ctx.fillStyle = COLORS.correct;
+                ctx.font = '32px sans-serif';
+                ctx.fillText("CORRECT!", canvas.width / 2, canvas.height / 2);
+            } else if (gameState === 'incorrect') {
+                ctx.fillStyle = COLORS.incorrect;
+                ctx.font = '32px sans-serif';
+                ctx.fillText("WRONG!", canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        // Physics update
+        function update() {
+            if (gameState !== 'playing') return;
+            
+            // Update answers with physics
+            answers.forEach(answer => {
+                // Apply velocity
+                answer.x += answer.vx;
+                answer.y += answer.vy;
+                
+                // Apply friction
+                answer.vx *= 0.95;
+                answer.vy *= 0.95;
+                
+                // Boundary collision
+                if (answer.x < 0) {
+                    answer.x = 0;
+                    answer.vx *= -0.7; // Bounce with energy loss
+                    playSound('bounce');
+                    createParticles(answer.x, answer.y + answer.height/2, COLORS.text, 5);
+                }
+                
+                if (answer.x + answer.width > canvas.width) {
+                    answer.x = canvas.width - answer.width;
+                    answer.vx *= -0.7; // Bounce with energy loss
+                    playSound('bounce');
+                    createParticles(answer.x + answer.width, answer.y + answer.height/2, COLORS.text, 5);
+                }
+                
+                if (answer.y < 0) {
+                    answer.y = 0;
+                    answer.vy *= -0.7; // Bounce with energy loss
+                    playSound('bounce');
+                    createParticles(answer.x + answer.width/2, answer.y, COLORS.text, 5);
+                }
+                
+                if (answer.y + answer.height > canvas.height) {
+                    answer.y = canvas.height - answer.height;
+                    answer.vy *= -0.7; // Bounce with energy loss
+                    playSound('bounce');
+                    createParticles(answer.x + answer.width/2, answer.y + answer.height, COLORS.text, 5);
+                }
+                
+                // Check if in target
+                if (Math.abs(answer.vx) < 0.5 && Math.abs(answer.vy) < 0.5) {
+                    const inTarget = (
+                        answer.x + answer.width/2 > target.x &&
+                        answer.x + answer.width/2 < target.x + target.width &&
+                        answer.y + answer.height/2 > target.y &&
+                        answer.y + answer.height/2 < target.y + target.height
+                    );
+                    
+                    if (inTarget) {
+                        if (answer.correct) {
+                            gameState = 'correct';
+                            playSound('correct');
+                            createParticles(
+                                target.x + target.width/2, 
+                                target.y + target.height/2, 
+                                COLORS.correct, 
+                                30
+                            );
+                            showRestartButton();
+                        } else {
+                            gameState = 'incorrect';
+                            playSound('incorrect');
+                            createParticles(
+                                target.x + target.width/2, 
+                                target.y + target.height/2, 
+                                COLORS.incorrect, 
+                                30
+                            );
+                            showRestartButton();
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Show restart button
+        function showRestartButton() {
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+            }, 1000);
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event handlers
+        function handleMouseDown(e) {
+            if (gameState !== 'playing') return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            answers.forEach(answer => {
+                if (
+                    mouseX > answer.x &&
+                    mouseX < answer.x + answer.width &&
+                    mouseY > answer.y &&
+                    mouseY < answer.y + answer.height
+                ) {
+                    draggedAnswer = answer;
+                    dragStartX = mouseX;
+                    dragStartY = mouseY;
+                    playSound('pickup');
+                    
+                    // Stop any current motion
+                    answer.vx = 0;
+                    answer.vy = 0;
+                }
+            });
+        }
+        
+        function handleMouseMove(e) {
+            if (gameState !== 'playing' || !draggedAnswer) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Update position while dragging
+            draggedAnswer.x += mouseX - dragStartX;
+            draggedAnswer.y += mouseY - dragStartY;
+            
+            dragStartX = mouseX;
+            dragStartY = mouseY;
+        }
+        
+        function handleMouseUp(e) {
+            if (gameState !== 'playing' || !draggedAnswer) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Calculate velocity based on drag distance
+            const dx = mouseX - dragStartX;
+            const dy = mouseY - dragStartY;
+            
+            // Apply velocity for flinging
+            draggedAnswer.vx = (mouseX - dragStartX) * 0.8;
+            draggedAnswer.vy = (mouseY - dragStartY) * 0.8;
+            
+            // Store last direction for arrow
+            const magnitude = Math.sqrt(draggedAnswer.vx * draggedAnswer.vx + draggedAnswer.vy * draggedAnswer.vy);
+            if (magnitude > 0) {
+                lastDirection = {
+                    x: draggedAnswer.vx / magnitude,
+                    y: draggedAnswer.vy / magnitude
+                };
+            }
+            
+            // Release
+            playSound('fling');
+            createParticles(draggedAnswer.x + draggedAnswer.width/2, draggedAnswer.y + draggedAnswer.height/2, COLORS.text, 10);
+            draggedAnswer = null;
+        }
+        
+        // Touch events
+        function handleTouchStart(e) {
+            e.preventDefault();
+            if (gameState !== 'playing') return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const touchY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            answers.forEach(answer => {
+                if (
+                    touchX > answer.x &&
+                    touchX < answer.x + answer.width &&
+                    touchY > answer.y &&
+                    touchY < answer.y + answer.height
+                ) {
+                    draggedAnswer = answer;
+                    dragStartX = touchX;
+                    dragStartY = touchY;
+                    playSound('pickup');
+                    
+                    // Stop any current motion
+                    answer.vx = 0;
+                    answer.vy = 0;
+                }
+            });
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            if (gameState !== 'playing' || !draggedAnswer) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const touchY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Update position while dragging
+            draggedAnswer.x += touchX - dragStartX;
+            draggedAnswer.y += touchY - dragStartY;
+            
+            dragStartX = touchX;
+            dragStartY = touchY;
+        }
+        
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            if (gameState !== 'playing' || !draggedAnswer) return;
+            
+            // Calculate velocity based on last known position
+            draggedAnswer.vx = draggedAnswer.vx * 2; // Amplify existing velocity
+            draggedAnswer.vy = draggedAnswer.vy * 2;
+            
+            // Store last direction for arrow
+            const magnitude = Math.sqrt(draggedAnswer.vx * draggedAnswer.vx + draggedAnswer.vy * draggedAnswer.vy);
+            if (magnitude > 0) {
+                lastDirection = {
+                    x: draggedAnswer.vx / magnitude,
+                    y: draggedAnswer.vy / magnitude
+                };
+            }
+            
+            // Release
+            playSound('fling');
+            createParticles(draggedAnswer.x + draggedAnswer.width/2, draggedAnswer.y + draggedAnswer.height/2, COLORS.text, 10);
+            draggedAnswer = null;
+        }
+        
+        // Initialize the game
+        function init() {
+            initGame();
+            initAudio();
+            
+            // Event listeners
+            canvas.addEventListener('mousedown', handleMouseDown);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+            
+            // Touch events
+            canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+            canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+            canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+            
+            // Restart button
+            restartBtn.addEventListener('click', initGame);
+            
+            // Start game loop
+            gameLoop();
+            
+            // Handle window resize for mobile
+            window.addEventListener('resize', function() {
+                const isMobile = window.innerWidth <= 600;
+                canvas.width = isMobile ? 360 : 800;
+                canvas.height = isMobile ? 640 : 600;
+                initGame();
+            });
+        }
+        
+        // Initialize on load
+        window.onload = init;
+    </script>
+</body>
+</html>

@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Racing Lanes Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            display: flex;
+            gap: 20px;
+        }
+        #controls button {
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            background: #444;
+            color: white;
+            border: 3px solid #888;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="controls">
+        <button id="leftBtn">←</button>
+        <button id="rightBtn">→</button>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Adjust canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const COLORS = {
+            bg: '#0f0f2d',
+            road: '#222222',
+            lane: '#ffff00',
+            player: '#ff4444',
+            playerHighlight: '#ff8888',
+            correct: '#44ff44',
+            incorrect: '#ff4444',
+            text: '#ffffff'
+        };
+        
+        const LANE_COUNT = 4;
+        const LANE_WIDTH = canvas.width / LANE_COUNT;
+        const PLAYER_SIZE = LANE_WIDTH * 0.6;
+        const PLAYER_Y = canvas.height - PLAYER_SIZE - 20;
+        
+        let currentLane = 1;
+        let gameActive = true;
+        let gameResult = null;
+        let laneSpeed = 3;
+        let gameTimer = 0;
+        const MAX_GAME_TIME = 600; // Approximately 10 seconds
+        
+        // Sound functions
+        function playMoveSound() {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(500, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.2);
+        }
+        
+        function playResultSound(correct) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            if (correct) {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(660, audioCtx.currentTime + 0.1);
+                oscillator.frequency.exponentialRampToValueAtTime(990, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            }
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+        }
+        
+        // Answer options
+        const options = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle options
+        for (let i = options.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [options[i], options[j]] = [options[j], options[i]];
+        }
+        
+        // Find which lane has the correct answer
+        const correctLane = options.findIndex(option => option.correct);
+        
+        // Obstacles in each lane
+        const obstacles = options.map((option, index) => ({
+            y: -150,
+            lane: index,
+            option: option
+        }));
+        
+        // Sparkle effects for the correct lane
+        const sparkles = [];
+        for (let i = 0; i < 15; i++) {
+            sparkles.push({
+                x: correctLane * LANE_WIDTH + Math.random() * LANE_WIDTH,
+                y: Math.random() * canvas.height,
+                size: 2 + Math.random() * 3,
+                speed: 1 + Math.random() * 2,
+                blinkRate: 0.05 + Math.random() * 0.1,
+                blinkCounter: Math.random() * 10
+            });
+        }
+        
+        // Player animation
+        let playerFrame = 0;
+        let frameCounter = 0;
+        let playerMoving = false;
+        let targetLane = currentLane;
+        let playerX = currentLane * LANE_WIDTH + (LANE_WIDTH - PLAYER_SIZE) / 2;
+        
+        // Game loop
+        function update() {
+            if (gameActive) {
+                gameTimer++;
+                
+                // Increase speed over time
+                if (gameTimer % 60 === 0) {
+                    laneSpeed += 0.2;
+                }
+                
+                // End game if time runs out
+                if (gameTimer >= MAX_GAME_TIME) {
+                    gameActive = false;
+                    gameResult = false;
+                    playResultSound(false);
+                }
+                
+                // Update player position with smooth movement
+                const targetX = targetLane * LANE_WIDTH + (LANE_WIDTH - PLAYER_SIZE) / 2;
+                const moveSpeed = 10;
+                
+                if (Math.abs(playerX - targetX) > 1) {
+                    playerX += (targetX - playerX) * 0.2;
+                    playerMoving = true;
+                } else {
+                    playerMoving = false;
+                    currentLane = targetLane;
+                }
+                
+                // Update player animation
+                frameCounter++;
+                if (frameCounter >= 6) {
+                    frameCounter = 0;
+                    playerFrame = (playerFrame + 1) % 4;
+                }
+                
+                // Update obstacles
+                obstacles.forEach(obstacle => {
+                    obstacle.y += laneSpeed;
+                    
+                    // Check collision with player
+                    if (obstacle.y + 80 > PLAYER_Y && obstacle.y < PLAYER_Y + PLAYER_SIZE && obstacle.lane === currentLane) {
+                        gameActive = false;
+                        gameResult = obstacle.option.correct;
+                        playResultSound(obstacle.option.correct);
+                    }
+                    
+                    // Reset obstacle if it goes off screen
+                    if (obstacle.y > canvas.height) {
+                        obstacle.y = -300;
+                    }
+                });
+                
+                // Update sparkles
+                sparkles.forEach(sparkle => {
+                    sparkle.y += sparkle.speed;
+                    sparkle.blinkCounter += sparkle.blinkRate;
+                    
+                    if (sparkle.y > canvas.height) {
+                        sparkle.y = -10;
+                        sparkle.x = correctLane * LANE_WIDTH + Math.random() * LANE_WIDTH;
+                    }
+                });
+            }
+            
+            // Draw everything
+            draw();
+            
+            requestAnimationFrame(update);
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw lanes
+            for (let i = 0; i < LANE_COUNT; i++) {
+                // Draw lane background
+                ctx.fillStyle = COLORS.road;
+                ctx.fillRect(i * LANE_WIDTH, 0, LANE_WIDTH, canvas.height);
+                
+                // Draw lane markings
+                if (i < LANE_COUNT - 1) {
+                    for (let j = 0; j < canvas.height; j += 40) {
+                        ctx.fillStyle = COLORS.lane;
+                        ctx.fillRect((i + 1) * LANE_WIDTH - 4, j, 8, 20);
+                    }
+                }
+            }
+            
+            // Draw sparkles in correct lane
+            if (gameActive) {
+                sparkles.forEach(sparkle => {
+                    if (Math.sin(sparkle.blinkCounter) > 0) {
+                        ctx.fillStyle = '#ffff88';
+                        ctx.fillRect(
+                            Math.floor(sparkle.x), 
+                            Math.floor(sparkle.y), 
+                            Math.floor(sparkle.size), 
+                            Math.floor(sparkle.size)
+                        );
+                    }
+                });
+            }
+            
+            // Draw obstacles with answer options
+            obstacles.forEach(obstacle => {
+                // Sign base
+                const signWidth = LANE_WIDTH * 0.9;
+                const signHeight = 80;
+                const signX = obstacle.lane * LANE_WIDTH + (LANE_WIDTH - signWidth) / 2;
+                const signY = obstacle.y;
+                
+                ctx.fillStyle = obstacle.option.correct ? '#006600' : '#660000';
+                ctx.fillRect(signX, signY, signWidth, signHeight);
+                
+                // Sign border
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(signX, signY, signWidth, signHeight);
+                
+                // Sign text
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    obstacle.option.text,
+                    obstacle.lane * LANE_WIDTH + LANE_WIDTH / 2,
+                    obstacle.y + signHeight / 2
+                );
+            });
+            
+            // Draw player
+            ctx.fillStyle = playerMoving ? COLORS.playerHighlight : COLORS.player;
+            
+            // Simple car shape
+            const carX = Math.floor(playerX);
+            const carY = Math.floor(PLAYER_Y);
+            const carWidth = Math.floor(PLAYER_SIZE);
+            const carHeight = Math.floor(PLAYER_SIZE * 0.6);
+            
+            // Car body
+            ctx.fillRect(carX, carY + 10, carWidth, carHeight);
+            
+            // Car top
+            ctx.fillRect(
+                carX + carWidth * 0.2, 
+                carY, 
+                carWidth * 0.6, 
+                carHeight * 0.5
+            );
+            
+            // Wheels - animate based on movement
+            const wheelOffset = playerFrame * 2;
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(
+                carX - 3, 
+                carY + carHeight + wheelOffset, 
+                carWidth * 0.3, 
+                8
+            );
+            ctx.fillRect(
+                carX + carWidth * 0.7 + 3, 
+                carY + carHeight + wheelOffset, 
+                carWidth * 0.3, 
+                8
+            );
+            
+            // Draw game over message and restart button
+            if (!gameActive) {
+                // Translucent overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameResult ? COLORS.correct : COLORS.incorrect;
+                ctx.font = `${isMobile ? 24 : 36}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameResult ? "Correct!" : "Incorrect!",
+                    canvas.width / 2,
+                    canvas.height / 2 - 40
+                );
+                
+                // Restart button
+                const btnWidth = 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2 + 20;
+                
+                ctx.fillStyle = '#444444';
+                ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+                
+                ctx.strokeStyle = '#888888';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(btnX, btnY, btnWidth, btnHeight);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '24px sans-serif';
+                ctx.fillText(
+                    "Restart",
+                    canvas.width / 2,
+                    btnY + btnHeight / 2 + 8
+                );
+                
+                // Add click handler for restart button
+                canvas.onclick = function(e) {
+                    const rect = canvas.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+                    
+                    if (mouseX >= btnX && mouseX <= btnX + btnWidth &&
+                        mouseY >= btnY && mouseY <= btnY + btnHeight) {
+                        resetGame();
+                    }
+                };
+            } else {
+                // Draw question
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    "What is the capital of France?",
+                    canvas.width / 2,
+                    30
+                );
+                
+                // Draw time indicator
+                const timeBarWidth = canvas.width * 0.8;
+                const timeLeft = 1 - (gameTimer / MAX_GAME_TIME);
+                
+                ctx.fillStyle = '#555555';
+                ctx.fillRect(
+                    (canvas.width - timeBarWidth) / 2,
+                    60,
+                    timeBarWidth,
+                    10
+                );
+                
+                ctx.fillStyle = timeLeft > 0.3 ? '#44ff44' : '#ff4444';
+                ctx.fillRect(
+                    (canvas.width - timeBarWidth) / 2,
+                    60,
+                    timeBarWidth * timeLeft,
+                    10
+                );
+            }
+        }
+        
+        function resetGame() {
+            gameActive = true;
+            gameResult = null;
+            gameTimer = 0;
+            laneSpeed = 3;
+            currentLane = 1;
+            targetLane = 1;
+            playerX = currentLane * LANE_WIDTH + (LANE_WIDTH - PLAYER_SIZE) / 2;
+            
+            // Reset obstacles
+            obstacles.forEach((obstacle, index) => {
+                obstacle.y = -150 - (index * 100);
+            });
+            
+            // Remove click handler
+            canvas.onclick = null;
+        }
+        
+        // Controls
+        document.addEventListener('keydown', function(e) {
+            if (!gameActive) return;
+            
+            if (e.key === 'ArrowLeft' && targetLane > 0) {
+                targetLane--;
+                playMoveSound();
+            } else if (e.key === 'ArrowRight' && targetLane < LANE_COUNT - 1) {
+                targetLane++;
+                playMoveSound();
+            }
+        });
+        
+        // Touch controls
+        const leftBtn = document.getElementById('leftBtn');
+        const rightBtn = document.getElementById('rightBtn');
+        
+        leftBtn.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if (gameActive && targetLane > 0) {
+                targetLane--;
+                playMoveSound();
+            }
+        });
+        
+        rightBtn.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if (gameActive && targetLane < LANE_COUNT - 1) {
+                targetLane++;
+                playMoveSound();
+            }
+        });
+        
+        // Mouse controls for buttons
+        leftBtn.addEventListener('click', function() {
+            if (gameActive && targetLane > 0) {
+                targetLane--;
+                playMoveSound();
+            }
+        });
+        
+        rightBtn.addEventListener('click', function() {
+            if (gameActive && targetLane < LANE_COUNT - 1) {
+                targetLane++;
+                playMoveSound();
+            }
+        });
+        
+        // Swipe controls
+        let touchStartX = 0;
+        
+        canvas.addEventListener('touchstart', function(e) {
+            touchStartX = e.touches[0].clientX;
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            if (!gameActive) {
+                // Check if touch is on restart button
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.changedTouches[0].clientX - rect.left;
+                const touchY = e.changedTouches[0].clientY - rect.top;
+                
+                const btnWidth = 150;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2 + 20;
+                
+                if (touchX >= btnX && touchX <= btnX + btnWidth &&
+                    touchY >= btnY && touchY <= btnY + btnHeight) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            const touchEndX = e.changedTouches[0].clientX;
+            const diff = touchEndX - touchStartX;
+            
+            // Detect swipe
+            if (Math.abs(diff) > 50) {
+                if (diff > 0 && targetLane < LANE_COUNT - 1) {
+                    targetLane++;
+                    playMoveSound();
+                } else if (diff < 0 && targetLane > 0) {
+                    targetLane--;
+                    playMoveSound();
+                }
+            }
+        });
+        
+        // Start game
+        update();
+    </script>
+</body>
+</html>

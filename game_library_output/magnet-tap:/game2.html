@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Magnet-Tap Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            border: 2px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Game variables
+        let gameOver = false;
+        let correct = null;
+        let restartBtn = {x: canvas.width/2 - 60, y: canvas.height/2 + 60, width: 120, height: 40};
+        
+        // 8-bit color palette
+        const COLORS = {
+            background: '#0f380f',
+            text: '#8bac0f',
+            trueOption: '#9bbc0f',
+            falseOption: '#306230',
+            trueHover: '#e0f8cf',
+            falseHover: '#7bc47f',
+            trueSelected: '#ffac0f',
+            falseSelected: '#ff4f4f',
+            outline: '#0f0f0f',
+            particles: '#8bac0f'
+        };
+        
+        // Options setup
+        const trueOption = {
+            x: canvas.width * 0.25,
+            y: canvas.height * 0.6,
+            originalX: canvas.width * 0.25,
+            originalY: canvas.height * 0.6,
+            width: 120,
+            height: 120,
+            text: 'TRUE',
+            hover: false,
+            selected: false,
+            particles: []
+        };
+        
+        const falseOption = {
+            x: canvas.width * 0.75,
+            y: canvas.height * 0.6,
+            originalX: canvas.width * 0.75,
+            originalY: canvas.height * 0.6,
+            width: 120,
+            height: 120,
+            text: 'FALSE',
+            hover: false,
+            selected: false,
+            particles: []
+        };
+        
+        // Mouse tracking
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        // Sound effects
+        function createBeepSound(frequency, duration, type = 'square') {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        function playHoverSound() {
+            createBeepSound(220, 60);
+        }
+        
+        function playSelectSound(correct) {
+            if (correct) {
+                createBeepSound(660, 150);
+                setTimeout(() => createBeepSound(880, 200), 150);
+            } else {
+                createBeepSound(110, 200);
+                setTimeout(() => createBeepSound(90, 300), 200);
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            const trueDistance = Math.hypot(mouseX - trueOption.originalX, mouseY - trueOption.originalY);
+            const falseDistance = Math.hypot(mouseX - falseOption.originalX, mouseY - falseOption.originalY);
+            
+            // Hover detection
+            if (!gameOver) {
+                const wasHoveringTrue = trueOption.hover;
+                const wasHoveringFalse = falseOption.hover;
+                
+                trueOption.hover = trueDistance < 160;
+                falseOption.hover = falseDistance < 160;
+                
+                if (trueOption.hover && !wasHoveringTrue) playHoverSound();
+                if (falseOption.hover && !wasHoveringFalse) playHoverSound();
+            }
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (clickX > restartBtn.x && clickX < restartBtn.x + restartBtn.width &&
+                    clickY > restartBtn.y && clickY < restartBtn.y + restartBtn.height) {
+                    gameOver = false;
+                    correct = null;
+                    trueOption.selected = false;
+                    falseOption.selected = false;
+                    trueOption.x = trueOption.originalX;
+                    trueOption.y = trueOption.originalY;
+                    falseOption.x = falseOption.originalX;
+                    falseOption.y = falseOption.originalY;
+                    trueOption.particles = [];
+                    falseOption.particles = [];
+                    createBeepSound(440, 100);
+                }
+                return;
+            }
+            
+            // Check if true option was clicked
+            if (clickX > trueOption.x - trueOption.width/2 && clickX < trueOption.x + trueOption.width/2 &&
+                clickY > trueOption.y - trueOption.height/2 && clickY < trueOption.y + trueOption.height/2) {
+                trueOption.selected = true;
+                correct = true; // The answer to the question is TRUE
+                gameOver = true;
+                playSelectSound(true);
+            }
+            
+            // Check if false option was clicked
+            if (clickX > falseOption.x - falseOption.width/2 && clickX < falseOption.x + falseOption.width/2 &&
+                clickY > falseOption.y - falseOption.height/2 && clickY < falseOption.y + falseOption.height/2) {
+                falseOption.selected = true;
+                correct = false; // The answer is TRUE, so selecting FALSE is incorrect
+                gameOver = true;
+                playSelectSound(false);
+            }
+        });
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color, strokeColor) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), width, height);
+            
+            if (strokeColor) {
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(Math.floor(x), Math.floor(y), width, height);
+            }
+        }
+        
+        function drawOption(option) {
+            const x = option.x - option.width/2;
+            const y = option.y - option.height/2;
+            
+            let color = option === trueOption ? COLORS.trueOption : COLORS.falseOption;
+            
+            if (option.selected) {
+                color = option === trueOption ? COLORS.trueSelected : COLORS.falseSelected;
+            } else if (option.hover) {
+                color = option === trueOption ? COLORS.trueHover : COLORS.falseHover;
+            }
+            
+            // Draw main box
+            drawPixelRect(x, y, option.width, option.height, color, COLORS.outline);
+            
+            // Draw magnetic field particles if hovering
+            if (option.hover && !gameOver) {
+                // Create new particle on hover
+                if (Math.random() < 0.2) {
+                    const angle = Math.atan2(mouseY - option.y, mouseX - option.x);
+                    const distance = Math.min(Math.hypot(mouseX - option.x, mouseY - option.y), 100);
+                    const offsetX = Math.cos(angle) * distance * 0.3;
+                    const offsetY = Math.sin(angle) * distance * 0.3;
+                    
+                    option.particles.push({
+                        x: option.x + offsetX + (Math.random() - 0.5) * 30,
+                        y: option.y + offsetY + (Math.random() - 0.5) * 30,
+                        targetX: mouseX,
+                        targetY: mouseY,
+                        alpha: 1,
+                        size: Math.floor(Math.random() * 4) + 2
+                    });
+                }
+            }
+            
+            // Draw particles
+            option.particles.forEach((p, i) => {
+                ctx.fillStyle = `rgba(139, 172, 15, ${p.alpha})`;
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), p.size, p.size);
+                
+                // Update particle
+                const dx = p.targetX - p.x;
+                const dy = p.targetY - p.y;
+                p.x += dx * 0.04;
+                p.y += dy * 0.04;
+                p.alpha -= 0.02;
+                
+                // Remove faded particles
+                if (p.alpha <= 0) {
+                    option.particles.splice(i, 1);
+                }
+            });
+            
+            // Draw label
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(option.text, option.x, option.y);
+        }
+        
+        function drawQuestion() {
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Water boils at 100 degrees Celsius at sea level.', canvas.width/2, 150);
+        }
+        
+        function drawResult() {
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (correct === true) {
+                ctx.fillStyle = COLORS.trueSelected;
+                ctx.fillText('CORRECT!', canvas.width/2, canvas.height/2);
+            } else {
+                ctx.fillStyle = COLORS.falseSelected;
+                ctx.fillText('INCORRECT!', canvas.width/2, canvas.height/2);
+            }
+            
+            // Draw restart button
+            drawPixelRect(restartBtn.x, restartBtn.y, restartBtn.width, restartBtn.height, COLORS.text, COLORS.outline);
+            
+            ctx.fillStyle = COLORS.background;
+            ctx.font = '20px sans-serif';
+            ctx.fillText('RESTART', canvas.width/2, restartBtn.y + 20);
+        }
+        
+        // Main game loop
+        function update() {
+            if (!gameOver) {
+                // Apply magnetic attraction
+                if (trueOption.hover) {
+                    const distX = mouseX - trueOption.originalX;
+                    const distY = mouseY - trueOption.originalY;
+                    const dist = Math.hypot(distX, distY);
+                    const maxDist = 160;
+                    const pull = (1 - Math.min(dist, maxDist) / maxDist) * 30;
+                    
+                    trueOption.x = Math.floor(trueOption.originalX + (distX / dist) * pull);
+                    trueOption.y = Math.floor(trueOption.originalY + (distY / dist) * pull);
+                } else {
+                    // Spring back to original position
+                    trueOption.x = trueOption.originalX + (trueOption.x - trueOption.originalX) * 0.8;
+                    trueOption.y = trueOption.originalY + (trueOption.y - trueOption.originalY) * 0.8;
+                    
+                    // Snap to original if close enough
+                    if (Math.abs(trueOption.x - trueOption.originalX) < 0.5) trueOption.x = trueOption.originalX;
+                    if (Math.abs(trueOption.y - trueOption.originalY) < 0.5) trueOption.y = trueOption.originalY;
+                }
+                
+                if (falseOption.hover) {
+                    const distX = mouseX - falseOption.originalX;
+                    const distY = mouseY - falseOption.originalY;
+                    const dist = Math.hypot(distX, distY);
+                    const maxDist = 160;
+                    const pull = (1 - Math.min(dist, maxDist) / maxDist) * 30;
+                    
+                    falseOption.x = Math.floor(falseOption.originalX + (distX / dist) * pull);
+                    falseOption.y = Math.floor(falseOption.originalY + (distY / dist) * pull);
+                } else {
+                    // Spring back to original position
+                    falseOption.x = falseOption.originalX + (falseOption.x - falseOption.originalX) * 0.8;
+                    falseOption.y = falseOption.originalY + (falseOption.y - falseOption.originalY) * 0.8;
+                    
+                    // Snap to original if close enough
+                    if (Math.abs(falseOption.x - falseOption.originalX) < 0.5) falseOption.x = falseOption.originalX;
+                    if (Math.abs(falseOption.y - falseOption.originalY) < 0.5) falseOption.y = falseOption.originalY;
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw options
+            drawOption(trueOption);
+            drawOption(falseOption);
+            
+            // Draw result if game is over
+            if (gameOver) {
+                drawResult();
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Cannon</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        const state = {
+            cannonAngle: Math.PI/4,
+            cannonPower: 10,
+            projectiles: [],
+            targets: [
+                {x: 200, y: 150, width: 100, height: 50, text: "London", color: "#FF6B6B"},
+                {x: 400, y: 100, width: 100, height: 50, text: "Paris", color: "#4ECDC4", correct: true},
+                {x: 600, y: 150, width: 100, height: 50, text: "Berlin", color: "#FFD166"}
+            ],
+            gameOver: false,
+            ammoLeft: 3,
+            aimActive: false,
+            wind: Math.random() * 0.2 - 0.1
+        };
+        
+        // Colors
+        const colors = {
+            background: "#1A1A2E",
+            cannon: "#E3E3E3",
+            cannonBase: "#4A4A4A",
+            projectile: "#FFE66D",
+            question: "#FFFFFF",
+            ammo: "#FFA5A5",
+            aimGuide: "#FFFFFF"
+        };
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'fire':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(80, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+                case 'hit':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+            }
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            // Draw slightly chunky rectangle to look pixelated
+            const blockSize = 4;
+            for (let i = 0; i < width; i += blockSize) {
+                for (let j = 0; j < height; j += blockSize) {
+                    ctx.fillRect(Math.floor(x + i), Math.floor(y + j), blockSize, blockSize);
+                }
+            }
+        }
+        
+        function drawCannon() {
+            // Draw base
+            drawPixelRect(canvas.width/2 - 30, canvas.height - 50, 60, 30, colors.cannonBase);
+            
+            // Draw cannon barrel
+            ctx.save();
+            ctx.translate(canvas.width/2, canvas.height - 40);
+            ctx.rotate(-state.cannonAngle);
+            drawPixelRect(0, -10, 50, 20, colors.cannon);
+            ctx.restore();
+        }
+        
+        function drawProjectiles() {
+            state.projectiles.forEach(p => {
+                drawPixelRect(p.x - 6, p.y - 6, 12, 12, p.hit ? "#FF0000" : colors.projectile);
+                
+                // Draw trail
+                for (let i = 0; i < 5; i++) {
+                    const trailX = p.x - p.vx * 0.1 * i;
+                    const trailY = p.y - p.vy * 0.1 * i;
+                    const size = 10 - i * 2;
+                    drawPixelRect(trailX - size/2, trailY - size/2, size, size, `rgba(255, 230, 109, ${0.8 - i * 0.15})`);
+                }
+            });
+        }
+        
+        function drawTargets() {
+            state.targets.forEach(target => {
+                drawPixelRect(target.x, target.y, target.width, target.height, target.color);
+                
+                // Draw target text
+                ctx.fillStyle = "#000";
+                ctx.font = "20px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(target.text, target.x + target.width/2, target.y + target.height/2);
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.question;
+            ctx.font = "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("What is the capital of France?", canvas.width/2, 50);
+        }
+        
+        function drawAmmo() {
+            for (let i = 0; i < state.ammoLeft; i++) {
+                drawPixelRect(canvas.width - 30 - i * 20, 20, 15, 15, colors.ammo);
+            }
+        }
+        
+        function drawAimGuide() {
+            if (state.aimActive) {
+                ctx.save();
+                ctx.translate(canvas.width/2, canvas.height - 40);
+                ctx.rotate(-state.cannonAngle);
+                
+                // Draw dotted line for aim
+                ctx.strokeStyle = colors.aimGuide;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(50, 0);
+                
+                // Show trajectory with wind influence
+                let simX = 50;
+                let simY = 0;
+                let simVx = Math.cos(state.cannonAngle) * state.cannonPower;
+                let simVy = -Math.sin(state.cannonAngle) * state.cannonPower;
+                
+                for (let t = 0; t < 30; t++) {
+                    simVy += 0.1; // Gravity
+                    simVx += state.wind; // Wind effect
+                    simX += simVx * 0.1;
+                    simY += simVy * 0.1;
+                    
+                    if (t % 5 === 0) { // Place dots at intervals
+                        ctx.lineTo(simX, simY);
+                    }
+                }
+                
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+        }
+        
+        function drawWindIndicator() {
+            ctx.fillStyle = "white";
+            ctx.font = "16px sans-serif";
+            const windStr = state.wind > 0 ? "→" : "←";
+            const windMag = Math.abs(state.wind) * 50;
+            ctx.fillText(`Wind: ${windStr.repeat(Math.ceil(windMag))}`, 80, 20);
+        }
+        
+        function drawGameOver() {
+            if (state.gameOver) {
+                // Draw semi-transparent overlay
+                ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw restart button
+                drawPixelRect(canvas.width/2 - 70, canvas.height/2 - 25, 140, 50, "#4CAF50");
+                
+                ctx.fillStyle = "white";
+                ctx.font = "20px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText("Try Again", canvas.width/2, canvas.height/2);
+            }
+        }
+        
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawQuestion();
+            drawTargets();
+            drawProjectiles();
+            drawCannon();
+            drawAimGuide();
+            drawAmmo();
+            drawWindIndicator();
+            drawGameOver();
+        }
+        
+        // Game logic
+        function updateProjectiles() {
+            for (let i = 0; i < state.projectiles.length; i++) {
+                const p = state.projectiles[i];
+                
+                if (p.hit) continue;
+                
+                // Apply gravity and wind
+                p.vy += 0.2;
+                p.vx += state.wind;
+                
+                // Update position
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Check for collisions with targets
+                state.targets.forEach(target => {
+                    if (p.x > target.x && p.x < target.x + target.width &&
+                        p.y > target.y && p.y < target.y + target.height) {
+                        p.hit = true;
+                        playSound('hit');
+                        
+                        if (target.correct) {
+                            setTimeout(() => {
+                                playSound('correct');
+                                state.gameOver = true;
+                            }, 300);
+                        } else {
+                            setTimeout(() => {
+                                playSound('wrong');
+                                if (state.ammoLeft <= 0) {
+                                    state.gameOver = true;
+                                }
+                            }, 300);
+                        }
+                    }
+                });
+                
+                // Remove if out of bounds
+                if (p.x < 0 || p.x > canvas.width || p.y > canvas.height) {
+                    state.projectiles.splice(i, 1);
+                    i--;
+                    
+                    if (state.ammoLeft <= 0 && state.projectiles.length === 0) {
+                        state.gameOver = true;
+                    }
+                }
+            }
+        }
+        
+        function fireProjectile() {
+            if (state.ammoLeft > 0 && !state.gameOver) {
+                state.ammoLeft--;
+                
+                const vx = Math.cos(state.cannonAngle) * state.cannonPower;
+                const vy = -Math.sin(state.cannonAngle) * state.cannonPower;
+                
+                state.projectiles.push({
+                    x: canvas.width/2 + Math.cos(state.cannonAngle) * 50,
+                    y: canvas.height - 40 - Math.sin(state.cannonAngle) * 50,
+                    vx: vx,
+                    vy: vy,
+                    hit: false
+                });
+                
+                playSound('fire');
+            }
+        }
+        
+        function resetGame() {
+            state.projectiles = [];
+            state.gameOver = false;
+            state.ammoLeft = 3;
+            state.cannonAngle = Math.PI/4;
+            state.wind = Math.random() * 0.2 - 0.1;
+        }
+        
+        // Game loop
+        function gameLoop() {
+            updateProjectiles();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            if (state.gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Calculate angle between cannon and mouse
+            const dx = mouseX - canvas.width/2;
+            const dy = canvas.height - 40 - mouseY;
+            state.cannonAngle = Math.atan2(dy, dx);
+            
+            // Clamp angle between 0 and PI
+            state.cannonAngle = Math.max(0, Math.min(Math.PI, state.cannonAngle));
+            
+            // Adjust power based on mouse distance
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            state.cannonPower = Math.max(5, Math.min(15, dist / 30));
+        });
+        
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Check if clicked on restart button
+                if (mouseX > canvas.width/2 - 70 && mouseX < canvas.width/2 + 70 &&
+                    mouseY > canvas.height/2 - 25 && mouseY < canvas.height/2 + 25) {
+                    resetGame();
+                }
+            } else {
+                state.aimActive = true;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            if (state.aimActive) {
+                fireProjectile();
+                state.aimActive = false;
+            }
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (state.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.touches[0].clientX - rect.left;
+                const touchY = e.touches[0].clientY - rect.top;
+                
+                // Check if touched restart button
+                if (touchX > canvas.width/2 - 70 && touchX < canvas.width/2 + 70 &&
+                    touchY > canvas.height/2 - 25 && touchY < canvas.height/2 + 25) {
+                    resetGame();
+                }
+            } else {
+                state.aimActive = true;
+                
+                const rect = canvas.getBoundingClientRect();
+                const touchX = e.touches[0].clientX - rect.left;
+                const touchY = e.touches[0].clientY - rect.top;
+                
+                // Calculate angle between cannon and touch
+                const dx = touchX - canvas.width/2;
+                const dy = canvas.height - 40 - touchY;
+                state.cannonAngle = Math.atan2(dy, dx);
+                
+                // Clamp angle between 0 and PI
+                state.cannonAngle = Math.max(0, Math.min(Math.PI, state.cannonAngle));
+                
+                // Adjust power based on touch distance
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                state.cannonPower = Math.max(5, Math.min(15, dist / 30));
+            }
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (state.gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            const touchY = e.touches[0].clientY - rect.top;
+            
+            // Calculate angle between cannon and touch
+            const dx = touchX - canvas.width/2;
+            const dy = canvas.height - 40 - touchY;
+            state.cannonAngle = Math.atan2(dy, dx);
+            
+            // Clamp angle between 0 and PI
+            state.cannonAngle = Math.max(0, Math.min(Math.PI, state.cannonAngle));
+            
+            // Adjust power based on touch distance
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            state.cannonPower = Math.max(5, Math.min(15, dist / 30));
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (state.aimActive) {
+                fireProjectile();
+                state.aimActive = false;
+            }
+        });
+        
+        // Handle window resize
+        function resizeCanvas() {
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            
+            // Set canvas size for web or mobile
+            if (windowWidth < 600) {
+                // Mobile
+                canvas.width = 360;
+                canvas.height = 640;
+            } else {
+                // Web
+                canvas.width = 800;
+                canvas.height = 600;
+            }
+            
+            // Reposition targets
+            state.targets[0].x = canvas.width * 0.25;
+            state.targets[1].x = canvas.width * 0.5;
+            state.targets[2].x = canvas.width * 0.75;
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Start the game
+        resizeCanvas();
+        gameLoop();
+    </script>
+</body>
+</html>

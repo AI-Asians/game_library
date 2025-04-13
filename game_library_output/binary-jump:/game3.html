@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>True or False Jump Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background: #222;
+    }
+    canvas {
+      border: 2px solid #444;
+      image-rendering: pixelated;
+    }
+    .game-container {
+      position: relative;
+    }
+    #restartBtn {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 5px 10px;
+      background: #555;
+      color: white;
+      border: 2px solid #777;
+      display: none;
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+  </div>
+
+  <script>
+    // Game setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restartBtn');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth < 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game colors
+    const COLORS = {
+      bg: '#5C94FC',
+      ground: '#8F563B',
+      truePath: '#4CAF50',
+      falsePath: '#F44336',
+      character: '#FFEB3B',
+      obstacles: '#555555',
+      text: '#FFFFFF',
+      progress: '#FFFFFF'
+    };
+    
+    // Game state
+    let gameOver = false;
+    let gameWon = false;
+    let onTruePath = false;
+    let characterX = 50;
+    let characterY = canvas.height - 150;
+    let yVelocity = 0;
+    let isJumping = false;
+    let gameStartTime = Date.now();
+    let gameDuration = 9000; // 9 seconds to complete
+    
+    // Character properties
+    const character = {
+      width: 24,
+      height: 32,
+      frameX: 0,
+      frameCount: 4,
+      frameDelay: 6,
+      frameTimer: 0
+    };
+    
+    // Path properties
+    const pathY = canvas.height - 120;
+    const pathWidth = canvas.width - 100;
+    const pathHeight = 50;
+    const gapWidth = 80;
+    
+    // Obstacles
+    const obstacles = [
+      { x: canvas.width * 0.3, width: gapWidth },
+      { x: canvas.width * 0.5, width: gapWidth },
+      { x: canvas.width * 0.7, width: gapWidth }
+    ];
+    
+    // Set up end gate
+    const endGate = {
+      x: canvas.width - 80,
+      width: 40,
+      pulseValue: 0,
+      pulseDirection: 1
+    };
+    
+    // Audio context and sounds
+    let audioCtx;
+    
+    function initAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    function playSound(frequency, duration, type = 'square') {
+      if (!audioCtx) initAudio();
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    // Game functions
+    function jump() {
+      if (!isJumping && !gameOver) {
+        isJumping = true;
+        yVelocity = -14;
+        playSound(660, 0.1);
+        
+        // Switch paths
+        onTruePath = !onTruePath;
+      }
+    }
+    
+    function update() {
+      if (gameOver) return;
+      
+      // Update character position
+      characterX += 3; // Character moves forward automatically
+      
+      // Apply gravity
+      if (isJumping) {
+        characterY += yVelocity;
+        yVelocity += 0.8;
+        
+        // Check if landed
+        if (characterY >= pathY - character.height) {
+          characterY = pathY - character.height;
+          isJumping = false;
+          yVelocity = 0;
+        }
+      }
+      
+      // Update character animation
+      character.frameTimer++;
+      if (character.frameTimer >= character.frameDelay) {
+        character.frameTimer = 0;
+        character.frameX = (character.frameX + 1) % character.frameCount;
+      }
+      
+      // Update end gate pulse effect
+      endGate.pulseValue += 0.05 * endGate.pulseDirection;
+      if (endGate.pulseValue >= 1) {
+        endGate.pulseDirection = -1;
+      } else if (endGate.pulseValue <= 0) {
+        endGate.pulseDirection = 1;
+      }
+      
+      // Check if character has reached the end
+      if (characterX >= endGate.x) {
+        gameOver = true;
+        gameWon = onTruePath === false; // The correct answer is "False"
+        
+        if (gameWon) {
+          playSound(440, 0.1);
+          playSound(660, 0.1, 'sine');
+          playSound(880, 0.2, 'sine');
+        } else {
+          playSound(220, 0.3, 'sawtooth');
+        }
+        
+        restartBtn.style.display = 'block';
+      }
+      
+      // Check if time is up
+      if (Date.now() - gameStartTime >= gameDuration) {
+        gameOver = true;
+        gameWon = onTruePath === false; // The correct answer is "False"
+        restartBtn.style.display = 'block';
+      }
+    }
+    
+    function drawPixelRect(x, y, width, height, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+    }
+    
+    function drawCharacter() {
+      // Draw simple character with animation
+      const frameOffset = character.frameX * character.width;
+      
+      // Body
+      drawPixelRect(characterX, characterY, character.width, character.height, COLORS.character);
+      
+      // Eyes
+      drawPixelRect(characterX + 8, characterY + 8, 4, 4, '#000');
+      drawPixelRect(characterX + 16, characterY + 8, 4, 4, '#000');
+      
+      // Legs (animated)
+      if (character.frameX % 2 === 0) {
+        drawPixelRect(characterX + 6, characterY + 24, 6, 8, '#000');
+        drawPixelRect(characterX + 16, characterY + 24, 6, 8, '#000');
+      } else {
+        drawPixelRect(characterX + 4, characterY + 24, 6, 8, '#000');
+        drawPixelRect(characterX + 14, characterY + 24, 6, 8, '#000');
+      }
+    }
+    
+    function render() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw ground
+      drawPixelRect(0, canvas.height - 70, canvas.width, 70, COLORS.ground);
+      
+      // Draw paths
+      drawPixelRect(50, pathY, pathWidth, pathHeight, COLORS.truePath);
+      drawPixelRect(50, pathY + 100, pathWidth, pathHeight, COLORS.falsePath);
+      
+      // Draw gaps in paths
+      obstacles.forEach(obstacle => {
+        drawPixelRect(obstacle.x, pathY, obstacle.width, pathHeight, COLORS.bg);
+        drawPixelRect(obstacle.x, pathY + 100, obstacle.width, pathHeight, COLORS.bg);
+      });
+      
+      // Draw end gate with pulse effect
+      const pulseSize = 5 * endGate.pulseValue;
+      drawPixelRect(endGate.x - pulseSize, pathY - pulseSize, endGate.width + pulseSize*2, pathHeight + pulseSize*2, `rgba(255,255,255,${0.5*endGate.pulseValue})`);
+      drawPixelRect(endGate.x - pulseSize, pathY + 100 - pulseSize, endGate.width + pulseSize*2, pathHeight + pulseSize*2, `rgba(255,255,255,${0.5*endGate.pulseValue})`);
+      drawPixelRect(endGate.x, pathY, endGate.width, pathHeight, '#FFD700');
+      drawPixelRect(endGate.x, pathY + 100, endGate.width, pathHeight, '#FFD700');
+      
+      // Draw character
+      drawCharacter();
+      
+      // Draw true/false labels
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('TRUE', 100, pathY + 30);
+      ctx.fillText('FALSE', 100, pathY + 130);
+      
+      // Draw question
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = isMobile ? '18px sans-serif' : '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('The Great Wall of China is visible from space.', canvas.width / 2, 50);
+      
+      // Draw progress bar
+      const elapsedTime = Date.now() - gameStartTime;
+      const progress = Math.min(elapsedTime / gameDuration, 1);
+      const progressBarWidth = canvas.width - 100;
+      
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(50, 80, progressBarWidth, 20);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(50, 80, progressBarWidth * progress, 20);
+      
+      // Draw game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = gameWon ? '#4CAF50' : '#F44336';
+        ctx.font = '36px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(gameWon ? 'Correct!' : 'Wrong!', canvas.width / 2, canvas.height / 2);
+        
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '24px sans-serif';
+        ctx.fillText('The Great Wall is NOT visible from space.', canvas.width / 2, canvas.height / 2 + 40);
+      }
+    }
+    
+    function gameLoop() {
+      update();
+      render();
+      
+      if (!gameOver) {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+    
+    function restartGame() {
+      gameOver = false;
+      gameWon = false;
+      onTruePath = false;
+      characterX = 50;
+      characterY = canvas.height - 150;
+      yVelocity = 0;
+      isJumping = false;
+      gameStartTime = Date.now();
+      restartBtn.style.display = 'none';
+      
+      gameLoop();
+    }
+    
+    // Event listeners
+    canvas.addEventListener('click', jump);
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') jump();
+    });
+    restartBtn.addEventListener('click', restartGame);
+    
+    // Start the game
+    initAudio();
+    gameLoop();
+  </script>
+</body>
+</html>

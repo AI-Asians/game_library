@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth < 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const planets = ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn'];
+        const colors = ['#E8E9EB', '#F7C469', '#7FB5B5', '#E27B58', '#C88B3A', '#E2C27D'];
+        let options = [];
+        let gameOver = false;
+        let timeLeft = 10;
+        let timerInterval;
+        
+        // Sound effects
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playCorrect() {
+            playSound(440, 0.1);
+            setTimeout(() => playSound(880, 0.2), 100);
+        }
+        
+        function playWrong() {
+            playSound(200, 0.3, 'sawtooth');
+        }
+        
+        function playTick() {
+            playSound(660, 0.05);
+        }
+        
+        // Create planet options
+        function createOptions() {
+            options = [];
+            // Ensure Mars is included
+            const includedPlanets = planets.slice();
+            const marsIndex = includedPlanets.indexOf('Mars');
+            
+            // Shuffle except for Mars
+            for (let i = includedPlanets.length - 1; i > 0; i--) {
+                if (i !== marsIndex) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    if (j !== marsIndex) {
+                        [includedPlanets[i], includedPlanets[j]] = [includedPlanets[j], includedPlanets[i]];
+                    }
+                }
+            }
+            
+            // Take 4 planets including Mars
+            const selectedPlanets = includedPlanets.slice(0, 4);
+            if (!selectedPlanets.includes('Mars')) {
+                const randomIndex = Math.floor(Math.random() * 3);
+                selectedPlanets[randomIndex] = 'Mars';
+            }
+            
+            // Create option objects
+            for (let i = 0; i < selectedPlanets.length; i++) {
+                const planet = selectedPlanets[i];
+                const colorIndex = planets.indexOf(planet);
+                
+                options.push({
+                    name: planet,
+                    color: colors[colorIndex],
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: Math.random() * (canvas.height - 300) + 150,
+                    radius: isMobile ? 30 : 45,
+                    flash: 15, // Flash effect timer
+                    pulseDirection: 1,
+                    pulseValue: 0
+                });
+            }
+        }
+        
+        function startGame() {
+            gameOver = false;
+            timeLeft = 10;
+            createOptions();
+            
+            // Clear any existing timer
+            if (timerInterval) clearInterval(timerInterval);
+            
+            // Start timer
+            timerInterval = setInterval(() => {
+                timeLeft -= 0.1;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    endGame(false);
+                }
+                if (timeLeft <= 3 && timeLeft.toFixed(1).endsWith('.0')) {
+                    playTick();
+                }
+            }, 100);
+        }
+        
+        function endGame(isCorrect) {
+            gameOver = true;
+            clearInterval(timerInterval);
+            
+            if (isCorrect) {
+                playCorrect();
+            } else {
+                playWrong();
+            }
+            
+            // Show restart button after a short delay
+            setTimeout(() => {
+                drawRestartButton();
+            }, 500);
+        }
+        
+        function checkAnswer(x, y) {
+            if (gameOver) return;
+            
+            for (let i = 0; i < options.length; i++) {
+                const option = options[i];
+                const distance = Math.sqrt(
+                    Math.pow(x - option.x, 2) + 
+                    Math.pow(y - option.y, 2)
+                );
+                
+                if (distance < option.radius) {
+                    endGame(option.name === 'Mars');
+                    return;
+                }
+            }
+        }
+        
+        function drawPixelatedCircle(x, y, radius, color) {
+            // Draw a pixelated circle for retro feel
+            const pixelSize = Math.max(2, Math.floor(radius / 10));
+            ctx.fillStyle = color;
+            
+            for (let px = -radius; px < radius; px += pixelSize) {
+                for (let py = -radius; py < radius; py += pixelSize) {
+                    const distance = Math.sqrt(px * px + py * py);
+                    if (distance < radius) {
+                        ctx.fillRect(
+                            Math.floor(x + px), 
+                            Math.floor(y + py), 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+        
+        function drawRestartButton() {
+            const buttonWidth = isMobile ? 120 : 200;
+            const buttonHeight = isMobile ? 40 : 60;
+            const buttonX = canvas.width / 2 - buttonWidth / 2;
+            const buttonY = canvas.height / 2 + 50;
+            
+            // Draw pixelated button
+            ctx.fillStyle = '#444';
+            for (let x = 0; x < buttonWidth; x += 4) {
+                for (let y = 0; y < buttonHeight; y += 4) {
+                    ctx.fillRect(buttonX + x, buttonY + y, 3, 3);
+                }
+            }
+            
+            // Draw text
+            ctx.fillStyle = '#FFF';
+            ctx.font = `${isMobile ? 16 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('RESTART', buttonX + buttonWidth / 2, buttonY + buttonHeight / 2 + 8);
+            
+            // Store button position for click detection
+            canvas.restartButton = {
+                x: buttonX,
+                y: buttonY,
+                width: buttonWidth,
+                height: buttonHeight
+            };
+        }
+        
+        function update() {
+            // Update pulsing effect
+            if (!gameOver) {
+                for (let i = 0; i < options.length; i++) {
+                    const option = options[i];
+                    
+                    // Update flash effect
+                    if (option.flash > 0) {
+                        option.flash--;
+                    }
+                    
+                    // Update pulse
+                    option.pulseValue += 0.05 * option.pulseDirection;
+                    if (option.pulseValue > 1 || option.pulseValue < 0) {
+                        option.pulseDirection *= -1;
+                    }
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas with a retro background
+            ctx.fillStyle = '#111122';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixel grid for retro effect
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            const gridSize = isMobile ? 8 : 12;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                for (let y = 0; y < canvas.height; y += gridSize) {
+                    if ((x + y) % (gridSize * 2) === 0) {
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    }
+                }
+            }
+            
+            // Draw question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, isMobile ? 80 : 100);
+            
+            // Draw timer
+            const timerWidth = isMobile ? 100 : 150;
+            const timerHeight = isMobile ? 20 : 30;
+            const timerX = canvas.width / 2 - timerWidth / 2;
+            const timerY = isMobile ? 30 : 40;
+            
+            // Draw timer background
+            ctx.fillStyle = '#222';
+            ctx.fillRect(timerX, timerY, timerWidth, timerHeight);
+            
+            // Draw timer fill
+            const fillWidth = Math.max(0, (timeLeft / 10) * timerWidth);
+            ctx.fillStyle = timeLeft <= 3 ? '#FF0000' : '#00FF00';
+            ctx.fillRect(timerX, timerY, fillWidth, timerHeight);
+            
+            // Draw time text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+            ctx.fillText(timeLeft.toFixed(1), canvas.width / 2, timerY + timerHeight / 2 + 5);
+            
+            // Draw options
+            for (let i = 0; i < options.length; i++) {
+                const option = options[i];
+                const flashEffect = option.flash > 0;
+                const pulseSize = option.radius * (1 + option.pulseValue * 0.1);
+                
+                // Draw planet with pulse effect
+                drawPixelatedCircle(
+                    option.x, 
+                    option.y, 
+                    flashEffect ? pulseSize + 5 : pulseSize, 
+                    flashEffect ? '#FFFFFF' : option.color
+                );
+                
+                // Draw label
+                ctx.fillStyle = '#000';
+                ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(option.name, option.x, option.y + 5);
+            }
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `${isMobile ? 24 : 36}px sans-serif`;
+                ctx.textAlign = 'center';
+                
+                const resultText = timeLeft <= 0 ? 'TIME UP!' : 
+                                 (options.find(o => o.name === 'Mars').flash > 0 ? 'CORRECT!' : 'WRONG!');
+                ctx.fillText(resultText, canvas.width / 2, canvas.height / 2 - 20);
+                
+                drawRestartButton();
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const button = canvas.restartButton;
+                if (button && 
+                    x >= button.x && 
+                    x <= button.x + button.width && 
+                    y >= button.y && 
+                    y <= button.y + button.height) {
+                    startGame();
+                }
+            } else {
+                checkAnswer(x, y);
+            }
+        });
+        
+        // For mobile touch
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                const button = canvas.restartButton;
+                if (button && 
+                    x >= button.x && 
+                    x <= button.x + button.width && 
+                    y >= button.y && 
+                    y <= button.y + button.height) {
+                    startGame();
+                }
+            } else {
+                checkAnswer(x, y);
+            }
+        }, false);
+        
+        // Initialize and start the game
+        startGame();
+        gameLoop();
+    </script>
+</body>
+</html>

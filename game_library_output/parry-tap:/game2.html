@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parry Truth</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    canvas {
+      border: 4px solid #444;
+      image-rendering: pixelated;
+    }
+    #restart {
+      display: none;
+      position: absolute;
+      padding: 10px 20px;
+      background-color: #222;
+      color: white;
+      border: 4px solid #444;
+      cursor: pointer;
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Responsive canvas size
+    const isMobile = window.innerWidth < 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const question = "Water boils at 100 degrees Celsius at sea level.";
+    const correctAnswer = "TRUE"; // The answer to our question is TRUE
+    
+    let gameActive = true;
+    let gameResult = null;
+    
+    // Colors (limited palette)
+    const colors = {
+      bg1: "#0f380f",
+      bg2: "#306230",
+      player: "#8bac0f",
+      playerHit: "#9bbc0f",
+      true: "#0f8700",
+      false: "#d13800",
+      text: "#e0f8d0",
+      highlight: "#ffff00"
+    };
+    
+    // Sound effects using Audio Context
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(freq, duration, type = "square") {
+      if (!gameActive) return;
+      
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      gainNode.gain.value = 0.2;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start();
+      
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+      setTimeout(() => oscillator.stop(), duration * 1000);
+    }
+    
+    // Player shield
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height - 100,
+      width: isMobile ? 60 : 80,
+      height: isMobile ? 25 : 35,
+      color: colors.player,
+      update: function(mouseX) {
+        // Keep player within canvas bounds
+        this.x = Math.max(this.width/2, Math.min(mouseX, canvas.width - this.width/2));
+      },
+      draw: function() {
+        // Draw 8-bit style shield
+        ctx.fillStyle = this.color;
+        // Main shield body
+        ctx.fillRect(this.x - this.width/2, this.y, this.width, this.height);
+        // Top shield decoration
+        const notchSize = this.width / 8;
+        for (let i = 0; i < 4; i++) {
+          ctx.fillRect(
+            this.x - this.width/2 + i*notchSize*2, 
+            this.y - notchSize, 
+            notchSize, 
+            notchSize
+          );
+        }
+      }
+    };
+    
+    // Background stars for parallax effect
+    const bgStars = [];
+    for (let i = 0; i < 50; i++) {
+      bgStars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.floor(Math.random() * 3) + 1,
+        speed: Math.random() * 2 + 1
+      });
+    }
+    
+    // Object class for True/False answers
+    class AnswerObject {
+      constructor(value, speed) {
+        this.value = value; // "TRUE" or "FALSE"
+        this.width = isMobile ? 80 : 120;
+        this.height = isMobile ? 40 : 60;
+        this.x = Math.random() * (canvas.width - this.width) + this.width/2;
+        this.y = -this.height;
+        this.speed = speed;
+        this.color = value === "TRUE" ? colors.true : colors.false;
+        this.hit = false;
+        this.active = true;
+        this.pixelSize = isMobile ? 4 : 6;
+      }
+      
+      update() {
+        this.y += this.speed;
+        
+        // Check for collision with player
+        if (this.active && !this.hit && 
+            this.y + this.height > player.y &&
+            this.y < player.y + player.height &&
+            this.x + this.width/2 > player.x - player.width/2 &&
+            this.x - this.width/2 < player.x + player.width/2) {
+          
+          this.hit = true;
+          this.active = false;
+          
+          // Check if answer is correct
+          if (this.value === correctAnswer) {
+            gameResult = "correct";
+            playSound(660, 0.2);
+            playSound(880, 0.3);
+            player.color = colors.playerHit;
+          } else {
+            gameResult = "incorrect";
+            playSound(220, 0.3);
+            playSound(110, 0.4);
+          }
+          
+          gameActive = false;
+          setTimeout(() => {
+            restartBtn.style.display = "block";
+          }, 1000);
+        }
+        
+        // Remove if off screen
+        if (this.y > canvas.height) {
+          this.active = false;
+        }
+      }
+      
+      draw() {
+        ctx.fillStyle = this.color;
+        
+        // Main body (8-bit style)
+        ctx.fillRect(this.x - this.width/2, this.y, this.width, this.height);
+        
+        // Draw text
+        ctx.fillStyle = colors.text;
+        ctx.textAlign = "center";
+        ctx.font = `bold ${isMobile ? 20 : 24}px sans-serif`;
+        ctx.fillText(this.value, this.x, this.y + this.height/2 + 8);
+        
+        // Add pixel details
+        ctx.fillStyle = this.color === colors.true ? "#0aaa0a" : "#ff5a00";
+        
+        // 8-bit corner details
+        const cornerSize = this.pixelSize * 2;
+        ctx.fillRect(this.x - this.width/2, this.y, cornerSize, cornerSize);
+        ctx.fillRect(this.x + this.width/2 - cornerSize, this.y, cornerSize, cornerSize);
+        ctx.fillRect(this.x - this.width/2, this.y + this.height - cornerSize, cornerSize, cornerSize);
+        ctx.fillRect(this.x + this.width/2 - cornerSize, this.y + this.height - cornerSize, cornerSize, cornerSize);
+      }
+    }
+    
+    // Particle effect for hits
+    class Particle {
+      constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.size = Math.random() * 6 + 2;
+        this.speedX = Math.random() * 6 - 3;
+        this.speedY = Math.random() * 6 - 3;
+        this.color = color;
+        this.life = 30;
+      }
+      
+      update() {
+        this.x += this.speedX;
+        this.y += this.speedY;
+        this.life--;
+      }
+      
+      draw() {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+      }
+    }
+    
+    const answerObjects = [];
+    const particles = [];
+    let lastObjectTime = 0;
+    
+    // Spawn objects
+    function spawnObject() {
+      if (!gameActive) return;
+      
+      const currentTime = Date.now();
+      if (currentTime - lastObjectTime > 1000) {
+        const isTrueObject = Math.random() > 0.5;
+        const speed = Math.random() * 3 + (isMobile ? 3 : 2);
+        
+        answerObjects.push(new AnswerObject(isTrueObject ? "TRUE" : "FALSE", speed));
+        lastObjectTime = currentTime;
+        
+        playSound(isTrueObject ? 440 : 330, 0.1);
+      }
+    }
+    
+    // Update game
+    function update() {
+      // Update background
+      bgStars.forEach(star => {
+        star.y += star.speed;
+        if (star.y > canvas.height) {
+          star.y = 0;
+          star.x = Math.random() * canvas.width;
+        }
+      });
+      
+      // Spawn objects
+      spawnObject();
+      
+      // Update objects
+      answerObjects.forEach(obj => {
+        obj.update();
+        
+        // Create particles for hit objects
+        if (obj.hit) {
+          for (let i = 0; i < 15; i++) {
+            particles.push(new Particle(obj.x, obj.y + obj.height/2, obj.color));
+          }
+        }
+      });
+      
+      // Update particles
+      particles.forEach((particle, index) => {
+        particle.update();
+        if (particle.life <= 0) {
+          particles.splice(index, 1);
+        }
+      });
+      
+      // Clean up inactive objects
+      for (let i = answerObjects.length - 1; i >= 0; i--) {
+        if (!answerObjects[i].active) {
+          answerObjects.splice(i, 1);
+        }
+      }
+    }
+    
+    // Draw game
+    function draw() {
+      // Clear and draw background
+      ctx.fillStyle = colors.bg1;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw stars
+      ctx.fillStyle = colors.bg2;
+      bgStars.forEach(star => {
+        ctx.fillRect(star.x, star.y, star.size, star.size);
+      });
+      
+      // Draw question
+      ctx.fillStyle = colors.text;
+      ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(question, canvas.width/2, 40);
+      
+      // Draw instructions
+      ctx.font = `${isMobile ? 12 : 16}px sans-serif`;
+      ctx.fillText("Use mouse to move and parry the correct answer", canvas.width/2, 70);
+      
+      // Draw game objects
+      answerObjects.forEach(obj => obj.draw());
+      
+      // Draw particles
+      particles.forEach(particle => particle.draw());
+      
+      // Draw player
+      player.draw();
+      
+      // Draw result
+      if (gameResult) {
+        ctx.fillStyle = gameResult === "correct" ? colors.true : colors.false;
+        ctx.font = `bold ${isMobile ? 30 : 40}px sans-serif`;
+        ctx.fillText(
+          gameResult === "correct" ? "CORRECT!" : "WRONG!", 
+          canvas.width/2, 
+          canvas.height/2
+        );
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Handle mouse/touch movement
+    function handleMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      player.update(mouseX);
+    }
+    
+    function handleTouchMove(e) {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const touchX = e.touches[0].clientX - rect.left;
+      player.update(touchX);
+    }
+    
+    // Restart game
+    function restartGame() {
+      gameActive = true;
+      gameResult = null;
+      answerObjects.length = 0;
+      particles.length = 0;
+      player.color = colors.player;
+      lastObjectTime = 0;
+      restartBtn.style.display = "none";
+    }
+    
+    // Event listeners
+    canvas.addEventListener("mousemove", handleMove);
+    canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+    restartBtn.addEventListener("click", restartGame);
+    
+    // Position restart button
+    function positionRestartButton() {
+      const rect = canvas.getBoundingClientRect();
+      restartBtn.style.left = `${rect.left + canvas.width/2 - 50}px`;
+      restartBtn.style.top = `${rect.top + canvas.height/2 + 50}px`;
+    }
+    
+    window.addEventListener("resize", positionRestartButton);
+    positionRestartButton();
+    
+    // Start game
+    gameLoop();
+    
+    // Start with one object
+    setTimeout(() => {
+      answerObjects.push(new AnswerObject("TRUE", isMobile ? 3 : 2));
+      lastObjectTime = Date.now();
+    }, 1000);
+    
+    // Add a false object shortly after
+    setTimeout(() => {
+      answerObjects.push(new AnswerObject("FALSE", isMobile ? 4 : 3));
+    }, 2000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+## UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type TF.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ The Great Wall of China is visible from space.
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Heartbeat-Tap**  
+ Description of mechanic: 
+
+* The game features a pulsing/beating heart or similar object that expands and contracts rhythmically
+* Player must tap/click at the precise moment when the heart reaches its maximum or minimum size
+* The pulsing should follow a clear, visible pattern that the player can learn and anticipate
+* Visual cues should indicate when the optimal timing window is approaching
+* Visual and audio feedback should confirm whether the player's timing was correct
+* The speed of the pulsing may gradually increase to add challenge
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The heart graphic should have clear pixel edges and use shades of red that fit the limited color palette.
+
+The pulsing animation should have deliberate "jumps" between size states rather than smooth transitions to maintain the 8-bit aesthetic.
+
+Use flashing effects or color changes when the timing window is optimal for clicking.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The pulsing heart should complete 3-5 full pulse cycles before automatically ending if the player doesn't interact.
+
+True and False options should be visually connected to the heartbeat rhythm, becoming highlighted or emphasized at specific points in the pulsing pattern.
+
+Provide immediate visual feedback on whether the answer was correct based on the timing of the player's tap.
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chemistry Mix - Capital of France</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            background-color: #000;
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: #fff;
+            border: 2px solid #888;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const answers = [
+            { text: "Paris", correct: true, color: "#ff4455" },
+            { text: "London", correct: false, color: "#44ff55" },
+            { text: "Berlin", correct: false, color: "#4477ff" },
+            { text: "Rome", correct: false, color: "#ffcc44" }
+        ];
+        
+        let elements = [];
+        let mixingBeaker = null;
+        let draggingElement = null;
+        let dragOffsetX = 0;
+        let dragOffsetY = 0;
+        let gameOver = false;
+        let particles = [];
+        let hintTimer = 0;
+        let reactionTimer = 0;
+        let reactionResult = null;
+        
+        // Create audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Play a beep sound
+        function playBeep(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Play a success sound
+        function playSuccess() {
+            playBeep(523.25, 0.1); // C5
+            setTimeout(() => playBeep(659.25, 0.1), 100); // E5
+            setTimeout(() => playBeep(783.99, 0.2), 200); // G5
+        }
+        
+        // Play a failure sound
+        function playFailure() {
+            playBeep(369.99, 0.2); // F#4
+            setTimeout(() => playBeep(277.18, 0.3), 250); // C#4
+        }
+        
+        // Play a drag sound
+        function playDrag() {
+            playBeep(220, 0.05, 'sine');
+        }
+        
+        // Play a drop sound
+        function playDrop() {
+            playBeep(440, 0.1, 'sine');
+        }
+        
+        // Initialize game elements
+        function initGame() {
+            mixingBeaker = {
+                x: canvas.width / 2 - 50,
+                y: canvas.height / 2 - 100,
+                width: 100,
+                height: 150,
+                liquid: null,
+                liquidLevel: 0
+            };
+            
+            elements = [];
+            const spacing = canvas.width / 5;
+            
+            // Create element beakers with answers
+            for (let i = 0; i < answers.length; i++) {
+                elements.push({
+                    x: spacing + (i * spacing) - 30,
+                    y: canvas.height - 140,
+                    width: 60,
+                    height: 80,
+                    color: answers[i].color,
+                    text: answers[i].text,
+                    correct: answers[i].correct
+                });
+            }
+            
+            particles = [];
+            gameOver = false;
+            reactionResult = null;
+            restartButton.style.display = 'none';
+        }
+        
+        // Create a particle
+        function createParticle(x, y, color) {
+            return {
+                x: x,
+                y: y,
+                size: Math.random() * 6 + 2,
+                speedX: (Math.random() - 0.5) * 8,
+                speedY: (Math.random() - 0.5) * 8 - 2,
+                color: color,
+                life: 30 + Math.random() * 30
+            };
+        }
+        
+        // Draw the laboratory background
+        function drawBackground() {
+            // Lab workbench
+            ctx.fillStyle = '#5a4d41';
+            ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+            
+            // Workbench top
+            ctx.fillStyle = '#8b7355';
+            ctx.fillRect(0, canvas.height - 65, canvas.width, 5);
+            
+            // Wall with tiles
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(0, 0, canvas.width, canvas.height - 65);
+            
+            // Wall tiles
+            ctx.fillStyle = '#34495e';
+            const tileSize = 20;
+            for (let x = 0; x < canvas.width; x += tileSize) {
+                for (let y = 0; y < canvas.height - 65; y += tileSize) {
+                    if ((x / tileSize + y / tileSize) % 2 === 0) {
+                        ctx.fillRect(x, y, tileSize, tileSize);
+                    }
+                }
+            }
+            
+            // Lab equipment silhouettes
+            ctx.fillStyle = '#1c2833';
+            // Test tube rack
+            ctx.fillRect(50, canvas.height - 140, 100, 40);
+            // Lab equipment
+            ctx.fillRect(canvas.width - 150, canvas.height - 120, 80, 60);
+        }
+        
+        // Draw a beaker
+        function drawBeaker(x, y, width, height, color = null, label = null, level = 0.8) {
+            // Glass outline
+            ctx.fillStyle = '#aaccff';
+            ctx.fillRect(x - 2, y - 2, width + 4, height + 4);
+            
+            // Inside of beaker
+            ctx.fillStyle = '#111122';
+            ctx.fillRect(x, y, width, height);
+            
+            // Liquid in beaker
+            if (color) {
+                ctx.fillStyle = color;
+                const liquidHeight = height * level;
+                ctx.fillRect(x, y + height - liquidHeight, width, liquidHeight);
+                
+                // Bubbles
+                ctx.fillStyle = '#ffffff';
+                const bubbleCount = Math.floor(Math.random() * 3);
+                for (let i = 0; i < bubbleCount; i++) {
+                    const bubbleSize = Math.floor(Math.random() * 4) + 2;
+                    const bubbleX = x + Math.random() * (width - bubbleSize);
+                    const bubbleY = y + height - liquidHeight + Math.random() * (liquidHeight - bubbleSize);
+                    ctx.fillRect(bubbleX, bubbleY, bubbleSize, bubbleSize);
+                }
+            }
+            
+            // Label
+            if (label) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(label, x + width / 2, y + height + 20);
+            }
+        }
+        
+        // Draw mixing beaker
+        function drawMixingBeaker() {
+            // Draw base beaker
+            drawBeaker(
+                mixingBeaker.x, 
+                mixingBeaker.y, 
+                mixingBeaker.width, 
+                mixingBeaker.height, 
+                mixingBeaker.liquid, 
+                "Mix Here",
+                mixingBeaker.liquidLevel
+            );
+            
+            // Draw reaction particles
+            if (reactionTimer > 0) {
+                const particleCount = reactionResult ? 5 : 2;
+                for (let i = 0; i < particleCount; i++) {
+                    particles.push(createParticle(
+                        mixingBeaker.x + mixingBeaker.width / 2,
+                        mixingBeaker.y + mixingBeaker.height / 2,
+                        mixingBeaker.liquid || '#ffffff'
+                    ));
+                }
+            }
+        }
+        
+        // Draw elements
+        function drawElements() {
+            elements.forEach(element => {
+                if (element !== draggingElement) {
+                    drawBeaker(
+                        element.x, 
+                        element.y, 
+                        element.width, 
+                        element.height, 
+                        element.color, 
+                        element.text
+                    );
+                }
+            });
+            
+            // Draw the element being dragged last (on top)
+            if (draggingElement) {
+                drawBeaker(
+                    draggingElement.x, 
+                    draggingElement.y, 
+                    draggingElement.width, 
+                    draggingElement.height, 
+                    draggingElement.color, 
+                    draggingElement.text
+                );
+            }
+        }
+        
+        // Update and draw particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+                
+                // Draw particle (pixelated)
+                ctx.fillStyle = p.color;
+                const size = Math.floor(p.size);
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), size, size);
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 50);
+            
+            // Draw hint
+            if (hintTimer > 0 && !gameOver) {
+                ctx.font = '16px Arial';
+                ctx.fillText('Drag an element to the mixing beaker', canvas.width / 2, 80);
+            }
+        }
+        
+        // Draw reaction message
+        function drawReactionMessage() {
+            if (reactionResult !== null) {
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'center';
+                
+                if (reactionResult) {
+                    ctx.fillStyle = '#44ff44';
+                    ctx.fillText('Correct! It\'s Paris!', canvas.width / 2, 120);
+                } else {
+                    ctx.fillStyle = '#ff4444';
+                    ctx.fillText('Incorrect! Try again.', canvas.width / 2, 120);
+                }
+            }
+        }
+        
+        // Handle element mixing
+        function mixElements(element) {
+            // Pour the element into the mixing beaker
+            mixingBeaker.liquid = element.color;
+            mixingBeaker.liquidLevel = 0.8;
+            
+            // Check if correct answer
+            reactionResult = element.correct;
+            reactionTimer = 60;
+            
+            // Play appropriate sound
+            if (element.correct) {
+                playSuccess();
+            } else {
+                playFailure();
+            }
+            
+            // Show restart button if game over
+            gameOver = true;
+            setTimeout(() => {
+                restartButton.style.display = 'block';
+            }, 1000);
+        }
+        
+        // Handle mouse/touch down
+        function handleStart(e) {
+            if (gameOver) return;
+            
+            // Convert touch event to mouse-like coordinates
+            const x = e.type.includes('touch') ? 
+                e.touches[0].clientX - canvas.getBoundingClientRect().left : 
+                e.clientX - canvas.getBoundingClientRect().left;
+            const y = e.type.includes('touch') ? 
+                e.touches[0].clientY - canvas.getBoundingClientRect().top : 
+                e.clientY - canvas.getBoundingClientRect().top;
+            
+            // Check if clicked on an element
+            for (let i = elements.length - 1; i >= 0; i--) {
+                const element = elements[i];
+                if (x >= element.x && x <= element.x + element.width &&
+                    y >= element.y && y <= element.y + element.height) {
+                    draggingElement = element;
+                    dragOffsetX = x - element.x;
+                    dragOffsetY = y - element.y;
+                    playDrag();
+                    break;
+                }
+            }
+        }
+        
+        // Handle mouse/touch move
+        function handleMove(e) {
+            if (!draggingElement || gameOver) return;
+            
+            e.preventDefault();
+            
+            // Convert touch event to mouse-like coordinates
+            const x = e.type.includes('touch') ? 
+                e.touches[0].clientX - canvas.getBoundingClientRect().left : 
+                e.clientX - canvas.getBoundingClientRect().left;
+            const y = e.type.includes('touch') ? 
+                e.touches[0].clientY - canvas.getBoundingClientRect().top : 
+                e.clientY - canvas.getBoundingClientRect().top;
+            
+            draggingElement.x = x - dragOffsetX;
+            draggingElement.y = y - dragOffsetY;
+        }
+        
+        // Handle mouse/touch up
+        function handleEnd() {
+            if (!draggingElement || gameOver) return;
+            
+            // Check if element is over mixing beaker
+            if (draggingElement.x + draggingElement.width / 2 > mixingBeaker.x && 
+                draggingElement.x + draggingElement.width / 2 < mixingBeaker.x + mixingBeaker.width &&
+                draggingElement.y + draggingElement.height / 2 > mixingBeaker.y &&
+                draggingElement.y + draggingElement.height / 2 < mixingBeaker.y + mixingBeaker.height) {
+                // Mix the elements
+                mixElements(draggingElement);
+                playDrop();
+            } else {
+                playDrop();
+            }
+            
+            // Return element to original position (if not mixed)
+            const index = elements.indexOf(draggingElement);
+            const spacing = canvas.width / 5;
+            draggingElement.x = spacing + (index * spacing) - 30;
+            draggingElement.y = canvas.height - 140;
+            
+            draggingElement = null;
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawBackground();
+            drawMixingBeaker();
+            drawElements();
+            updateParticles();
+            drawQuestion();
+            drawReactionMessage();
+            
+            // Update timers
+            if (!gameOver) {
+                hintTimer = (hintTimer + 1) % 120;
+            }
+            if (reactionTimer > 0) {
+                reactionTimer--;
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Set up event listeners
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchend', handleEnd);
+        canvas.addEventListener('mouseleave', handleEnd);
+        
+        restartButton.addEventListener('click', initGame);
+        
+        // Initialize game and start loop
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

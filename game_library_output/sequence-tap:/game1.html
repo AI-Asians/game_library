@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capital Quest - Sequence Tap</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      image-rendering: pixelated;
+      border: 4px solid #555;
+      max-width: 100%;
+      max-height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game colors - 8-bit style palette
+    const COLORS = {
+      bg: '#0f380f',
+      frame: '#8bac0f',
+      text: '#9bbc0f',
+      highlight: '#306230',
+      correct: '#0fbc8b',
+      wrong: '#bc0f0f',
+      arrow: '#e6f8da'
+    };
+    
+    // Game state
+    let gameState = {
+      answers: ['Tokyo', 'Berlin', 'Paris', 'Madrid', 'London'],
+      correctAnswer: 'Paris',
+      currentIndex: 0,
+      displayTime: 800, // ms per answer
+      lastUpdateTime: 0,
+      gameOver: false,
+      result: null, // 'correct' or 'wrong'
+      restartVisible: false
+    };
+    
+    // Audio context for simple retro sounds
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Sound effects
+    function playSound(frequency, type, duration) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.value = 0.3;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      
+      setTimeout(() => {
+        oscillator.stop();
+      }, duration);
+    }
+    
+    function playChangeSound() {
+      playSound(220, 'square', 50);
+    }
+    
+    function playCorrectSound() {
+      playSound(440, 'square', 100);
+      setTimeout(() => playSound(660, 'square', 200), 100);
+    }
+    
+    function playWrongSound() {
+      playSound(150, 'sawtooth', 200);
+    }
+    
+    // Draw functions
+    function drawPixelRect(x, y, width, height, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+    }
+    
+    function drawPixelText(text, x, y, color, size) {
+      ctx.fillStyle = color;
+      ctx.font = `${size}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, Math.floor(x), Math.floor(y));
+    }
+    
+    function drawQuestion() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2 - 100;
+      
+      drawPixelText("What is the capital of France?", centerX, centerY, COLORS.text, 24);
+    }
+    
+    function drawAnswerBox() {
+      const boxWidth = canvas.width * 0.7;
+      const boxHeight = 100;
+      const boxX = (canvas.width - boxWidth) / 2;
+      const boxY = canvas.height / 2;
+      
+      // Draw outer frame (pixelated border)
+      drawPixelRect(boxX - 8, boxY - 8, boxWidth + 16, boxHeight + 16, COLORS.frame);
+      drawPixelRect(boxX - 4, boxY - 4, boxWidth + 8, boxHeight + 8, COLORS.highlight);
+      drawPixelRect(boxX, boxY, boxWidth, boxHeight, COLORS.bg);
+      
+      // Draw arrow indicators
+      const arrowSize = 20;
+      const arrowY = boxY + boxHeight / 2;
+      
+      // Left arrow
+      for (let i = 0; i < arrowSize; i++) {
+        const height = arrowSize - i * 2;
+        const y = arrowY - height / 2;
+        drawPixelRect(boxX - 30 + i, y, 4, height, COLORS.arrow);
+      }
+      
+      // Right arrow
+      for (let i = 0; i < arrowSize; i++) {
+        const height = arrowSize - i * 2;
+        const y = arrowY - height / 2;
+        drawPixelRect(boxX + boxWidth + 26 - i, y, 4, height, COLORS.arrow);
+      }
+      
+      // Draw current answer
+      const answer = gameState.answers[gameState.currentIndex];
+      drawPixelText(
+        answer, 
+        boxX + boxWidth / 2, 
+        boxY + boxHeight / 2, 
+        COLORS.text, 
+        32
+      );
+    }
+    
+    function drawResult() {
+      if (!gameState.result) return;
+      
+      const boxWidth = canvas.width * 0.7;
+      const boxHeight = 100;
+      const boxX = (canvas.width - boxWidth) / 2;
+      const boxY = canvas.height / 2;
+      
+      const color = gameState.result === 'correct' ? COLORS.correct : COLORS.wrong;
+      const text = gameState.result === 'correct' ? 'CORRECT!' : 'WRONG!';
+      
+      // Flash effect
+      drawPixelRect(boxX, boxY, boxWidth, boxHeight, color);
+      drawPixelText(text, canvas.width / 2, canvas.height / 2, '#FFFFFF', 32);
+      
+      if (gameState.restartVisible) {
+        const btnY = boxY + boxHeight + 50;
+        const btnWidth = 150;
+        const btnHeight = 50;
+        const btnX = (canvas.width - btnWidth) / 2;
+        
+        drawPixelRect(btnX, btnY, btnWidth, btnHeight, COLORS.frame);
+        drawPixelRect(btnX + 4, btnY + 4, btnWidth - 8, btnHeight - 8, COLORS.highlight);
+        drawPixelText("PLAY AGAIN", canvas.width / 2, btnY + btnHeight / 2, COLORS.text, 16);
+      }
+    }
+    
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      drawQuestion();
+      
+      if (!gameState.gameOver) {
+        drawAnswerBox();
+      } else {
+        drawResult();
+      }
+    }
+    
+    // Game logic
+    function update(currentTime) {
+      if (gameState.gameOver) return;
+      
+      if (!gameState.lastUpdateTime) {
+        gameState.lastUpdateTime = currentTime;
+      }
+      
+      const deltaTime = currentTime - gameState.lastUpdateTime;
+      
+      if (deltaTime >= gameState.displayTime) {
+        gameState.lastUpdateTime = currentTime;
+        gameState.currentIndex = (gameState.currentIndex + 1) % gameState.answers.length;
+        playChangeSound();
+      }
+    }
+    
+    function checkAnswer() {
+      const selectedAnswer = gameState.answers[gameState.currentIndex];
+      
+      if (selectedAnswer === gameState.correctAnswer) {
+        gameState.result = 'correct';
+        playCorrectSound();
+      } else {
+        gameState.result = 'wrong';
+        playWrongSound();
+      }
+      
+      gameState.gameOver = true;
+      
+      // Show restart button after a short delay
+      setTimeout(() => {
+        gameState.restartVisible = true;
+        draw();
+      }, 800);
+    }
+    
+    function resetGame() {
+      gameState = {
+        answers: gameState.answers,
+        correctAnswer: gameState.correctAnswer,
+        currentIndex: 0,
+        displayTime: 800,
+        lastUpdateTime: 0,
+        gameOver: false,
+        result: null,
+        restartVisible: false
+      };
+    }
+    
+    // Event listeners
+    canvas.addEventListener('click', (e) => {
+      if (!gameState.gameOver) {
+        checkAnswer();
+      } else if (gameState.restartVisible) {
+        const btnWidth = 150;
+        const btnHeight = 50;
+        const btnX = (canvas.width - btnWidth) / 2;
+        const btnY = canvas.height / 2 + 100 + 50;
+        
+        const rect = canvas.getBoundingClientRect();
+        const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        
+        if (
+          clickX >= btnX && clickX <= btnX + btnWidth &&
+          clickY >= btnY && clickY <= btnY + btnHeight
+        ) {
+          resetGame();
+        }
+      }
+    });
+    
+    // Game loop
+    function gameLoop(timestamp) {
+      update(timestamp);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game
+    resetGame();
+    requestAnimationFrame(gameLoop);
+    
+    // Ensure audioContext starts properly
+    document.addEventListener('click', () => {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }, { once: true });
+  </script>
+</body>
+</html>

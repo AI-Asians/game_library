@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chemistry-Mix: Capital of France</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        let dragging = false;
+        let draggedElement = null;
+        let gameState = 'playing'; // 'playing', 'correct', 'incorrect'
+        let particles = [];
+        
+        // 8-bit color palette
+        const colors = {
+            background: '#222034',
+            text: '#ffffff',
+            flaskBase: '#76428a',
+            flaskGlass: '#d2d2d2',
+            elementRed: '#d95763',
+            elementBlue: '#5a6988',
+            elementGreen: '#58c078',
+            elementYellow: '#e0c45c',
+            elementPurple: '#8d58c5',
+            correct: '#76c542',
+            incorrect: '#c54242',
+            bubbleLight: '#ffffff',
+            bubbleDark: '#c0c0c0'
+        };
+
+        // Answer options and elements
+        const elements = [
+            { id: 0, name: 'Berlin', x: 150, y: 400, width: 80, height: 100, color: colors.elementRed, dragging: false, home: {x: 150, y: 400} },
+            { id: 1, name: 'Paris', x: 300, y: 400, width: 80, height: 100, color: colors.elementBlue, dragging: false, home: {x: 300, y: 400} },
+            { id: 2, name: 'London', x: 450, y: 400, width: 80, height: 100, color: colors.elementGreen, dragging: false, home: {x: 450, y: 400} },
+            { id: 3, name: 'Rome', x: 600, y: 400, width: 80, height: 100, color: colors.elementYellow, dragging: false, home: {x: 600, y: 400} }
+        ];
+
+        // Mixing area
+        const mixingArea = {
+            x: 350,
+            y: 200,
+            width: 100,
+            height: 120,
+            color: colors.flaskBase
+        };
+
+        // Sound functions
+        function playPickSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+
+        function playDropSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+
+        function playCorrectSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime);
+            }, 100);
+            setTimeout(() => {
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime);
+            }, 200);
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+
+        function playIncorrectSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.frequency.setValueAtTime(196, audioContext.currentTime);
+            }, 150);
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+
+        // Particle system
+        function createParticles(x, y, color, isCorrect) {
+            for (let i = 0; i < 30; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 7,
+                    vy: (Math.random() - 0.5) * 7,
+                    size: Math.random() * 5 + 2,
+                    color: isCorrect ? colors.correct : color,
+                    life: 30 + Math.random() * 30
+                });
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawParticles() {
+            for (const p of particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            }
+        }
+
+        // Draw functions
+        function drawPixelatedCircle(centerX, centerY, radius, color) {
+            ctx.fillStyle = color;
+            for (let y = -radius; y <= radius; y++) {
+                for (let x = -radius; x <= radius; x++) {
+                    if (x*x + y*y <= radius*radius) {
+                        ctx.fillRect(centerX + x, centerY + y, 1, 1);
+                    }
+                }
+            }
+        }
+
+        function drawFlask(x, y, width, height, color, name) {
+            // Flask base
+            ctx.fillStyle = colors.flaskBase;
+            ctx.fillRect(x + width/4, y + height - 20, width/2, 20);
+            
+            // Flask glass
+            ctx.fillStyle = colors.flaskGlass;
+            ctx.globalAlpha = 0.5;
+            ctx.fillRect(x, y, width, height - 20);
+            ctx.globalAlpha = 1;
+            
+            // Content
+            ctx.fillStyle = color;
+            ctx.fillRect(x + 10, y + height/2, width - 20, height/2 - 20);
+            
+            // Bubbles
+            const time = Date.now() / 200;
+            for (let i = 0; i < 5; i++) {
+                const bubbleX = x + 15 + i * 12;
+                const bubbleY = y + height/2 + 10 - (time + i * 50) % 40;
+                const bubbleSize = 3 + Math.sin(time/10 + i) * 2;
+                
+                drawPixelatedCircle(bubbleX, bubbleY, bubbleSize, 
+                    i % 2 === 0 ? colors.bubbleLight : colors.bubbleDark);
+            }
+            
+            // Label
+            ctx.fillStyle = colors.text;
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(name, x + width/2, y + height + 15);
+        }
+
+        function drawMixingFlask() {
+            const x = mixingArea.x;
+            const y = mixingArea.y;
+            const width = mixingArea.width;
+            const height = mixingArea.height;
+            
+            // Draw base
+            ctx.fillStyle = colors.flaskBase;
+            ctx.fillRect(x + width/4, y + height - 20, width/2, 20);
+            
+            // Draw glass
+            ctx.fillStyle = colors.flaskGlass;
+            ctx.globalAlpha = 0.5;
+            ctx.fillRect(x, y, width, height - 20);
+            ctx.globalAlpha = 1;
+            
+            // Draw content area
+            ctx.fillStyle = draggedElement ? draggedElement.color : 'transparent';
+            ctx.fillRect(x + 10, y + height/2, width - 20, height/2 - 20);
+
+            // Draw bubbles if mixing
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                const time = Date.now() / 100;
+                for (let i = 0; i < 10; i++) {
+                    const bubbleX = x + 15 + (i * 7) % width;
+                    const bubbleY = y + height/2 + 10 - (time + i * 20) % 60;
+                    const bubbleSize = 4 + Math.sin(time/10 + i) * 2;
+                    
+                    const bubbleColor = gameState === 'correct' ? colors.correct : colors.incorrect;
+                    drawPixelatedCircle(bubbleX, bubbleY, bubbleSize, bubbleColor);
+                }
+            }
+
+            // Draw label
+            ctx.fillStyle = colors.text;
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Mix Here', x + width/2, y + height + 15);
+        }
+
+        function drawRestartButton() {
+            ctx.fillStyle = '#444';
+            ctx.fillRect(350, 500, 100, 40);
+            ctx.fillStyle = colors.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Restart', 400, 525);
+        }
+
+        function drawAll() {
+            // Background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Question
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width/2, 80);
+            
+            // Mixing area
+            drawMixingFlask();
+            
+            // Elements
+            for (const element of elements) {
+                if (!element.dragging) {
+                    drawFlask(element.x, element.y, element.width, element.height, element.color, element.name);
+                }
+            }
+            
+            // Dragged element
+            if (draggedElement) {
+                drawFlask(draggedElement.x, draggedElement.y, draggedElement.width, draggedElement.height, draggedElement.color, draggedElement.name);
+            }
+            
+            // Particles
+            drawParticles();
+            
+            // Result message
+            if (gameState === 'correct' || gameState === 'incorrect') {
+                ctx.fillStyle = gameState === 'correct' ? colors.correct : colors.incorrect;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState === 'correct' ? 'Correct!' : 'Try Again!', canvas.width/2, 140);
+                
+                drawRestartButton();
+            }
+        }
+
+        // Game logic
+        function isInside(point, area) {
+            return point.x > area.x && 
+                   point.x < area.x + area.width && 
+                   point.y > area.y && 
+                   point.y < area.y + area.height;
+        }
+
+        function handleMouseDown(e) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if game is over and restart button is clicked
+            if (gameState !== 'playing') {
+                if (mouseX > 350 && mouseX < 450 && mouseY > 500 && mouseY < 540) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Check if an element is clicked
+            for (const element of elements) {
+                if (isInside({x: mouseX, y: mouseY}, element)) {
+                    element.dragging = true;
+                    draggedElement = element;
+                    draggedElement.offsetX = mouseX - element.x;
+                    draggedElement.offsetY = mouseY - element.y;
+                    dragging = true;
+                    playPickSound();
+                    break;
+                }
+            }
+        }
+
+        function handleMouseMove(e) {
+            if (!dragging) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            draggedElement.x = mouseX - draggedElement.offsetX;
+            draggedElement.y = mouseY - draggedElement.offsetY;
+        }
+
+        function handleMouseUp(e) {
+            if (!dragging) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Check if dropped in mixing area
+            if (isInside({x: mouseX, y: mouseY}, mixingArea)) {
+                playDropSound();
+                
+                // Check answer
+                if (draggedElement.id === 1) { // Paris is correct
+                    gameState = 'correct';
+                    createParticles(mixingArea.x + mixingArea.width/2, mixingArea.y + mixingArea.height/2, draggedElement.color, true);
+                    playCorrectSound();
+                } else {
+                    gameState = 'incorrect';
+                    createParticles(mixingArea.x + mixingArea.width/2, mixingArea.y + mixingArea.height/2, draggedElement.color, false);
+                    playIncorrectSound();
+                }
+            } else {
+                // Return to original position
+                draggedElement.x = draggedElement.home.x;
+                draggedElement.y = draggedElement.home.y;
+                playDropSound();
+            }
+            
+            draggedElement.dragging = false;
+            dragging = false;
+        }
+
+        function resetGame() {
+            gameState = 'playing';
+            particles = [];
+            
+            // Reset elements to their original positions
+            for (const element of elements) {
+                element.x = element.home.x;
+                element.y = element.home.y;
+                element.dragging = false;
+            }
+            
+            draggedElement = null;
+            dragging = false;
+        }
+
+        function gameLoop() {
+            updateParticles();
+            drawAll();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Filter Gate Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #555;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: none;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const colors = {
+            background: '#0f380f', // Dark green background (Game Boy inspired)
+            trueGate: '#8bac0f',   // Green (Game Boy green)
+            falseGate: '#9c2c2c',  // Red
+            trueObject: '#8bac0f',
+            falseObject: '#9c2c2c',
+            text: '#e0f8cf',       // Light green for text
+            gateFrame: '#306230'
+        };
+        
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const correctAnswer = true; // The statement is true
+        
+        let gameActive = true;
+        let gameResult = null; // null = in progress, true = win, false = lose
+        
+        // Gate properties
+        const gateWidth = canvas.width * 0.2;
+        const gateHeight = canvas.height * 0.15;
+        const trueGate = {
+            x: canvas.width * 0.2 - gateWidth / 2,
+            y: canvas.height - gateHeight - 40,
+            width: gateWidth,
+            height: gateHeight,
+            open: false,
+            label: "TRUE (T key)"
+        };
+        
+        const falseGate = {
+            x: canvas.width * 0.8 - gateWidth / 2,
+            y: canvas.height - gateHeight - 40,
+            width: gateWidth,
+            height: gateHeight,
+            open: false,
+            label: "FALSE (F key)"
+        };
+        
+        // Droplet/object
+        const droplet = {
+            x: canvas.width / 2,
+            y: 100,
+            size: 30,
+            speed: 2.5,
+            isTrue: correctAnswer, // This determines the correct gate
+            particles: []
+        };
+        
+        // Sound effects
+        function playSound(freq, duration) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square'; // 8-bit style sound
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(660, 100);
+            setTimeout(() => playSound(880, 100), 100);
+        }
+        
+        function playWrongSound() {
+            playSound(200, 300);
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 16 : 24}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw instructions
+            ctx.font = `${isMobile ? 12 : 14}px Arial`;
+            ctx.fillText("Press T or F to open gates", canvas.width / 2, 80);
+            
+            // Draw gates
+            drawGate(trueGate, colors.trueGate);
+            drawGate(falseGate, colors.falseGate);
+            
+            // Draw water droplet
+            drawDroplet();
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw game result if game is over
+            if (gameResult !== null) {
+                ctx.fillStyle = gameResult ? colors.trueGate : colors.falseGate;
+                ctx.font = `${isMobile ? 20 : 30}px Arial`;
+                ctx.fillText(gameResult ? "CORRECT!" : "WRONG!", canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        function drawGate(gate, color) {
+            // Gate frame
+            ctx.fillStyle = colors.gateFrame;
+            ctx.fillRect(gate.x - 10, gate.y - 10, gate.width + 20, gate.height + 20);
+            
+            // Gate door
+            if (gate.open) {
+                // Open gate - draw sides only
+                ctx.fillStyle = color;
+                ctx.fillRect(gate.x - 10, gate.y - 10, 10, gate.height + 20); // left side
+                ctx.fillRect(gate.x + gate.width, gate.y - 10, 10, gate.height + 20); // right side
+            } else {
+                // Closed gate
+                ctx.fillStyle = color;
+                ctx.fillRect(gate.x, gate.y, gate.width, gate.height);
+                
+                // Pixelated pattern for gate
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                for (let i = 0; i < gate.width; i += 10) {
+                    for (let j = 0; j < gate.height; j += 10) {
+                        if ((i + j) % 20 === 0) {
+                            ctx.fillRect(gate.x + i, gate.y + j, 5, 5);
+                        }
+                    }
+                }
+            }
+            
+            // Gate label
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 12 : 16}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(gate.label, gate.x + gate.width / 2, gate.y + gate.height + 20);
+        }
+        
+        function drawDroplet() {
+            if (droplet.particles.length > 0) return; // Don't draw if already passed
+            
+            ctx.fillStyle = droplet.isTrue ? colors.trueGate : colors.falseGate;
+            
+            // Pixelated water droplet shape
+            ctx.beginPath();
+            ctx.moveTo(droplet.x, droplet.y - droplet.size/2);
+            ctx.lineTo(droplet.x - droplet.size/2, droplet.y);
+            ctx.lineTo(droplet.x, droplet.y + droplet.size/2);
+            ctx.lineTo(droplet.x + droplet.size/2, droplet.y);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Label
+            ctx.fillStyle = colors.text;
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(droplet.isTrue ? "TRUE" : "FALSE", droplet.x, droplet.y + droplet.size + 15);
+        }
+        
+        function drawParticles() {
+            for (let i = 0; i < droplet.particles.length; i++) {
+                const p = droplet.particles[i];
+                ctx.fillStyle = droplet.isTrue ? colors.trueGate : colors.falseGate;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                
+                // Update particle
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                // Remove dead particles
+                if (p.life <= 0) {
+                    droplet.particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+        
+        function createParticles(x, y) {
+            for (let i = 0; i < 15; i++) {
+                droplet.particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 6 + 2,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 0.5) * 5,
+                    life: Math.random() * 20 + 10
+                });
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameActive) return;
+            
+            // Move water droplet down
+            droplet.y += droplet.speed;
+            
+            // Check for gate collision
+            const targetGate = droplet.isTrue ? trueGate : falseGate;
+            const wrongGate = droplet.isTrue ? falseGate : trueGate;
+            
+            // Check if droplet is at gate level
+            if (droplet.y > targetGate.y - droplet.size/2 && droplet.y < targetGate.y + targetGate.height + droplet.size/2) {
+                // Check if over the correct gate
+                if (droplet.x > targetGate.x && droplet.x < targetGate.x + targetGate.width) {
+                    if (targetGate.open) {
+                        // Correct gate is open - win!
+                        gameResult = true;
+                        gameActive = false;
+                        createParticles(droplet.x, droplet.y);
+                        playCorrectSound();
+                        restartBtn.style.display = 'block';
+                    }
+                }
+                
+                // Check if over the wrong gate
+                if (droplet.x > wrongGate.x && droplet.x < wrongGate.x + wrongGate.width) {
+                    if (wrongGate.open) {
+                        // Wrong gate is open - lose!
+                        gameResult = false;
+                        gameActive = false;
+                        playWrongSound();
+                        restartBtn.style.display = 'block';
+                    }
+                }
+            }
+            
+            // Check if droplet is past gates - game over
+            if (droplet.y > canvas.height) {
+                gameResult = false;
+                gameActive = false;
+                playWrongSound();
+                restartBtn.style.display = 'block';
+            }
+            
+            // Move droplet towards the correct gate as it falls
+            if (droplet.y > canvas.height / 2) {
+                if (droplet.isTrue) {
+                    droplet.x = droplet.x + (trueGate.x + trueGate.width/2 - droplet.x) * 0.02;
+                } else {
+                    droplet.x = droplet.x + (falseGate.x + falseGate.width/2 - droplet.x) * 0.02;
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle key presses
+        document.addEventListener('keydown', function(event) {
+            if (!gameActive) return;
+            
+            if (event.key.toLowerCase() === 't') {
+                trueGate.open = true;
+                playSound(440, 50);
+            } else if (event.key.toLowerCase() === 'f') {
+                falseGate.open = true;
+                playSound(330, 50);
+            }
+        });
+        
+        document.addEventListener('keyup', function(event) {
+            if (event.key.toLowerCase() === 't') {
+                trueGate.open = false;
+            } else if (event.key.toLowerCase() === 'f') {
+                falseGate.open = false;
+            }
+        });
+        
+        // Mobile touch controls
+        canvas.addEventListener('touchstart', function(event) {
+            event.preventDefault();
+            if (!gameActive) return;
+            
+            const touch = event.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const x = touch.clientX - rect.left;
+            
+            if (x < canvas.width / 2) {
+                trueGate.open = true;
+                playSound(440, 50);
+            } else {
+                falseGate.open = true;
+                playSound(330, 50);
+            }
+        });
+        
+        canvas.addEventListener('touchend', function(event) {
+            trueGate.open = false;
+            falseGate.open = false;
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            // Reset game state
+            gameActive = true;
+            gameResult = null;
+            droplet.y = 100;
+            droplet.x = canvas.width / 2;
+            droplet.particles = [];
+            trueGate.open = false;
+            falseGate.open = false;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

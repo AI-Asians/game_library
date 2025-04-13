@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garden Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #5a3921;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #2e1e10;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #3a8c30;
+            color: white;
+            border: 4px solid #2e1e10;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Adjust for device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (16 color palette)
+        const COLORS = {
+            sky: '#8be5ff',
+            dirt: '#795548',
+            dirtDark: '#5d4037',
+            grassLight: '#8bc34a',
+            grassDark: '#558b2f',
+            stemGreen: '#4caf50',
+            stemBrown: '#795548',
+            flowerRed: '#f44336',
+            flowerPink: '#e91e63',
+            flowerBlue: '#2196f3',
+            flowerYellow: '#ffeb3b',
+            textDark: '#3e2723',
+            white: '#ffffff',
+            black: '#000000',
+            gray: '#9e9e9e',
+            cloud: '#e0f7fa'
+        };
+        
+        // Plants data
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "Lyon", correct: false },
+            { text: "Marseille", correct: false },
+            { text: "Nice", correct: false }
+        ];
+        
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        let plants = [];
+        let wateringCan = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            width: 40,
+            height: 40,
+            targetX: canvas.width / 2,
+            targetY: canvas.height - 100,
+            speed: 5,
+            watering: false,
+            wateringTime: 0,
+            waterDrops: []
+        };
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(180, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'grow') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(350, audioContext.currentTime + 0.05);
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameOver = false;
+            gameWon = false;
+            plants = [];
+            restartBtn.style.display = 'none';
+            
+            // Shuffle answers
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            // Create plants at different positions
+            const spacing = canvas.width / (shuffledAnswers.length + 1);
+            shuffledAnswers.forEach((answer, index) => {
+                plants.push({
+                    x: spacing * (index + 1),
+                    y: canvas.height - 120,
+                    answer: answer,
+                    growthStage: 0, // 0-3: seed, small, medium, full
+                    growthTime: 0,
+                    width: 60,
+                    height: 0, // Starts at 0, grows to 120
+                    maxHeight: 120,
+                    wilting: false,
+                    blooming: false,
+                    animationTime: 0,
+                    selected: false
+                });
+            });
+        }
+        
+        // Update game
+        function update(deltaTime) {
+            if (gameOver) return;
+            
+            // Update plants
+            plants.forEach(plant => {
+                if (plant.growthStage < 3) {
+                    plant.growthTime += deltaTime;
+                    if (plant.growthTime > 0.7 && plant.growthStage === 0) {
+                        plant.growthStage = 1;
+                        plant.height = 40;
+                        playSound('grow');
+                    } else if (plant.growthTime > 1.4 && plant.growthStage === 1) {
+                        plant.growthStage = 2;
+                        plant.height = 80;
+                        playSound('grow');
+                    } else if (plant.growthTime > 2.1 && plant.growthStage === 2) {
+                        plant.growthStage = 3;
+                        plant.height = 120;
+                        playSound('grow');
+                    }
+                }
+                
+                if (plant.wilting) {
+                    plant.animationTime += deltaTime;
+                    // Wilting animation
+                } else if (plant.blooming) {
+                    plant.animationTime += deltaTime;
+                    // Blooming animation
+                }
+            });
+            
+            // Move watering can to target
+            const dx = wateringCan.targetX - wateringCan.x;
+            const dy = wateringCan.targetY - wateringCan.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > 1) {
+                wateringCan.x += dx * wateringCan.speed * deltaTime;
+                wateringCan.y += dy * wateringCan.speed * deltaTime;
+            }
+            
+            // Update water drops
+            if (wateringCan.watering) {
+                wateringCan.wateringTime += deltaTime;
+                
+                if (wateringCan.wateringTime > 0.1) {
+                    wateringCan.wateringTime = 0;
+                    
+                    // Add new water drop
+                    wateringCan.waterDrops.push({
+                        x: wateringCan.x + wateringCan.width / 2,
+                        y: wateringCan.y + wateringCan.height,
+                        speed: 150 + Math.random() * 50,
+                        size: 4 + Math.random() * 4
+                    });
+                }
+            }
+            
+            // Update existing water drops
+            for (let i = wateringCan.waterDrops.length - 1; i >= 0; i--) {
+                const drop = wateringCan.waterDrops[i];
+                drop.y += drop.speed * deltaTime;
+                
+                // Check if drop hits a plant
+                plants.forEach(plant => {
+                    if (!plant.selected && plant.growthStage === 3 && 
+                        drop.x > plant.x - plant.width/2 && 
+                        drop.x < plant.x + plant.width/2 && 
+                        drop.y > plant.y - plant.height && 
+                        drop.y < plant.y) {
+                        selectPlant(plant);
+                    }
+                });
+                
+                // Remove drops that fall off screen
+                if (drop.y > canvas.height) {
+                    wateringCan.waterDrops.splice(i, 1);
+                }
+            }
+        }
+        
+        // Select a plant
+        function selectPlant(plant) {
+            if (gameOver || plant.selected || plant.growthStage < 3) return;
+            
+            plant.selected = true;
+            wateringCan.watering = false;
+            wateringCan.waterDrops = [];
+            
+            if (plant.answer.correct) {
+                plant.blooming = true;
+                gameWon = true;
+                gameOver = true;
+                playSound('correct');
+            } else {
+                plant.wilting = true;
+                gameOver = true;
+                playSound('wrong');
+            }
+            
+            // Show restart button after a delay
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+            }, 1500);
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw clouds
+            ctx.fillStyle = COLORS.cloud;
+            drawCloud(100, 80, 60, 30);
+            drawCloud(300, 50, 80, 40);
+            drawCloud(500, 100, 70, 35);
+            drawCloud(700, 70, 60, 30);
+            
+            // Draw ground
+            ctx.fillStyle = COLORS.grassLight;
+            ctx.fillRect(0, canvas.height - 100, canvas.width, 20);
+            
+            // Draw dirt pattern
+            ctx.fillStyle = COLORS.dirt;
+            ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+            
+            // Draw dirt details
+            ctx.fillStyle = COLORS.dirtDark;
+            for (let x = 0; x < canvas.width; x += 20) {
+                for (let y = canvas.height - 80; y < canvas.height; y += 20) {
+                    if (Math.random() > 0.7) {
+                        ctx.fillRect(x, y, 10, 10);
+                    }
+                }
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.black;
+            ctx.font = isMobile ? '20px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 50);
+            
+            // Draw plants
+            plants.forEach(plant => {
+                if (plant.growthStage > 0) {
+                    drawPlant(plant);
+                }
+            });
+            
+            // Draw water drops
+            ctx.fillStyle = COLORS.flowerBlue;
+            wateringCan.waterDrops.forEach(drop => {
+                ctx.beginPath();
+                ctx.arc(drop.x, drop.y, drop.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Draw watering can
+            drawWateringCan(wateringCan.x, wateringCan.y);
+            
+            // Draw game over text
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = COLORS.white;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                
+                if (gameWon) {
+                    ctx.fillText("Correct! Paris is the capital of France.", canvas.width / 2, canvas.height / 2);
+                } else {
+                    ctx.fillText("Incorrect! The capital of France is Paris.", canvas.width / 2, canvas.height / 2);
+                }
+            }
+        }
+        
+        // Draw a plant
+        function drawPlant(plant) {
+            const x = plant.x;
+            const y = plant.y;
+            const height = plant.height;
+            const width = plant.width;
+            
+            let stemColor = COLORS.stemGreen;
+            let flowerColor = plant.answer.correct ? COLORS.flowerRed : 
+                              [COLORS.flowerBlue, COLORS.flowerPink, COLORS.flowerYellow][plants.indexOf(plant) % 3];
+            
+            if (plant.wilting) {
+                stemColor = COLORS.stemBrown;
+                flowerColor = COLORS.gray;
+            } else if (plant.blooming && plant.answer.correct) {
+                // Alternate colors for blooming correct plant
+                if (Math.floor(plant.animationTime * 10) % 2 === 0) {
+                    flowerColor = COLORS.flowerYellow;
+                }
+            }
+            
+            // Draw stem
+            ctx.fillStyle = stemColor;
+            ctx.fillRect(x - 6, y - height, 12, height);
+            
+            // Draw leaves
+            ctx.fillStyle = plant.wilting ? COLORS.stemBrown : COLORS.grassDark;
+            
+            // Left leaf
+            ctx.beginPath();
+            ctx.ellipse(x - 15, y - height * 0.7, 10, 5, Math.PI / 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Right leaf
+            ctx.beginPath();
+            ctx.ellipse(x + 15, y - height * 0.5, 10, 5, -Math.PI / 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw flower/bud based on growth stage
+            if (plant.growthStage >= 2) {
+                const flowerSize = plant.growthStage === 3 ? 20 : 10;
+                
+                // Draw flower petals
+                ctx.fillStyle = flowerColor;
+                
+                // Draw blooming animation
+                if (plant.blooming) {
+                    const extraSize = Math.sin(plant.animationTime * 10) * 5;
+                    for (let i = 0; i < 8; i++) {
+                        const angle = i * Math.PI / 4;
+                        const petalX = x + Math.cos(angle) * (flowerSize + extraSize);
+                        const petalY = y - height + Math.sin(angle) * (flowerSize + extraSize);
+                        ctx.beginPath();
+                        ctx.arc(petalX, petalY, flowerSize / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                } else if (plant.wilting) {
+                    // Wilting animation
+                    const droopFactor = Math.min(1, plant.animationTime);
+                    
+                    ctx.beginPath();
+                    ctx.arc(x, y - height * (1 - droopFactor/2), flowerSize, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Normal flower
+                    ctx.beginPath();
+                    ctx.arc(x, y - height, flowerSize, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Draw flower center
+                ctx.fillStyle = COLORS.flowerYellow;
+                ctx.beginPath();
+                ctx.arc(x, y - height, flowerSize / 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw answer text
+            if (plant.growthStage >= 3) {
+                ctx.fillStyle = COLORS.white;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(plant.answer.text, x, y - height - 30);
+            }
+        }
+        
+        // Draw watering can
+        function drawWateringCan(x, y) {
+            ctx.fillStyle = COLORS.gray;
+            
+            // Can body
+            ctx.fillRect(x, y, 30, 25);
+            
+            // Can handle
+            ctx.fillRect(x + 30, y + 5, 10, 15);
+            
+            // Can spout
+            ctx.beginPath();
+            ctx.moveTo(x, y + 10);
+            ctx.lineTo(x - 15, y + 25);
+            ctx.lineTo(x - 15, y + 35);
+            ctx.lineTo(x, y + 20);
+            ctx.fill();
+        }
+        
+        // Draw cloud
+        function drawCloud(x, y, width, height) {
+            ctx.beginPath();
+            ctx.arc(x, y, height, 0, Math.PI * 2);
+            ctx.arc(x + width * 0.4, y - height * 0.1, height * 0.9, 0, Math.PI * 2);
+            ctx.arc(x + width * 0.8, y, height * 0.8, 0, Math.PI * 2);
+            ctx.arc(x + width * 0.4, y + height * 0.1, height, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Handle mouse/touch events
+        function handlePointerDown(e) {
+            e.preventDefault();
+            
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            // Check if a plant was clicked directly
+            for (const plant of plants) {
+                if (plant.growthStage === 3 && !plant.selected &&
+                    x > plant.x - plant.width/2 && 
+                    x < plant.x + plant.width/2 && 
+                    y > plant.y - plant.height && 
+                    y < plant.y) {
+                    selectPlant(plant);
+                    return;
+                }
+            }
+            
+            // Move watering can to pointer position
+            wateringCan.targetX = x - wateringCan.width / 2;
+            wateringCan.targetY = y - wateringCan.height / 2;
+            wateringCan.watering = true;
+        }
+        
+        function handlePointerUp(e) {
+            e.preventDefault();
+            wateringCan.watering = false;
+        }
+        
+        function handlePointerMove(e) {
+            if (!wateringCan.watering) return;
+            
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            wateringCan.targetX = x - wateringCan.width / 2;
+            wateringCan.targetY = y - wateringCan.height / 2;
+        }
+        
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handlePointerDown);
+        canvas.addEventListener('touchstart', e => handlePointerDown(e.touches[0]));
+        
+        canvas.addEventListener('mouseup', handlePointerUp);
+        canvas.addEventListener('touchend', handlePointerUp);
+        
+        canvas.addEventListener('mousemove', handlePointerMove);
+        canvas.addEventListener('touchmove', e => handlePointerMove(e.touches[0]));
+        
+        restartBtn.addEventListener('click', initGame);
+        
+        // Start game
+        initGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

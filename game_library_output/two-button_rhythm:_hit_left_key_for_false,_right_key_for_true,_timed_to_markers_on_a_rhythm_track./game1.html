@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rhythm True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        
+        // Game constants
+        const COLORS = {
+            background: "#111122",
+            track: "#334455",
+            targetZone: "#88AAFF",
+            targetHit: "#FFFF00",
+            markerTrue: "#00FF88",
+            markerFalse: "#FF5566",
+            text: "#FFFFFF",
+            button: "#555555",
+            buttonActive: "#888888"
+        };
+        
+        // Game state
+        let gameState = {
+            question: "The Great Wall of China is visible from space.",
+            correctAnswer: false,
+            gameOver: false,
+            showRestart: false,
+            result: null,
+            markers: [
+                { type: 'false', position: 700, speed: 3 },
+                { type: 'true', position: 800, speed: 3 }
+            ],
+            targetZone: { x: 200, width: 50 },
+            countdown: 60, // frames before showing result
+            restartButton: { x: 350, y: 400, width: 100, height: 40 }
+        };
+        
+        // Sound effects using AudioContext
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.10); // C5
+            setTimeout(() => playSound(659.25, 0.15), 100); // E5
+            setTimeout(() => playSound(783.99, 0.20), 250); // G5
+        }
+        
+        function playWrongSound() {
+            playSound(196.00, 0.20, 'sawtooth'); // G3
+            setTimeout(() => playSound(185.00, 0.30, 'sawtooth'), 200); // F#3
+        }
+        
+        function playHitSound() {
+            playSound(440, 0.08); // A4
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            const pixelSize = 4;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x + i), 
+                        Math.floor(y + j), 
+                        pixelSize - 1, 
+                        pixelSize - 1
+                    );
+                }
+            }
+        }
+        
+        function drawTrack() {
+            // Draw rhythm track
+            drawPixelRect(100, 300, 600, 60, COLORS.track);
+            
+            // Draw target zone
+            const targetX = gameState.targetZone.x;
+            const targetWidth = gameState.targetZone.width;
+            drawPixelRect(targetX, 295, targetWidth, 70, COLORS.targetZone);
+        }
+        
+        function drawMarkers() {
+            // Draw markers
+            gameState.markers.forEach(marker => {
+                const color = marker.type === 'true' ? COLORS.markerTrue : COLORS.markerFalse;
+                drawPixelRect(marker.position, 310, 30, 40, color);
+                
+                // Draw T or F on marker
+                ctx.fillStyle = "#000000";
+                ctx.font = "bold 24px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    marker.type === 'true' ? "T" : "F", 
+                    marker.position + 15, 
+                    335
+                );
+            });
+        }
+        
+        function drawUI() {
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(gameState.question, canvas.width / 2, 100);
+            
+            // Draw controls
+            ctx.font = "16px Arial";
+            ctx.fillText("LEFT = FALSE", 150, 260);
+            ctx.fillText("RIGHT = TRUE", 650, 260);
+            
+            // Draw buttons
+            drawPixelRect(120, 400, 60, 60, COLORS.button);
+            drawPixelRect(620, 400, 60, 60, COLORS.button);
+            
+            // Draw button labels
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("F", 150, 435);
+            ctx.fillText("T", 650, 435);
+            
+            // Draw arrow keys
+            ctx.font = "18px Arial";
+            ctx.fillText("◀", 150, 470);
+            ctx.fillText("▶", 650, 470);
+        }
+        
+        function drawResult() {
+            if (gameState.result !== null) {
+                const resultText = gameState.result ? "CORRECT!" : "WRONG!";
+                ctx.fillStyle = gameState.result ? "#00FF88" : "#FF5566";
+                ctx.font = "bold 32px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(resultText, canvas.width / 2, 200);
+                
+                // Show answer
+                ctx.fillStyle = COLORS.text;
+                ctx.font = "20px Arial";
+                ctx.fillText(
+                    `The answer is: ${gameState.correctAnswer ? "TRUE" : "FALSE"}`, 
+                    canvas.width / 2, 
+                    240
+                );
+                
+                if (gameState.showRestart) {
+                    // Draw restart button
+                    drawPixelRect(
+                        gameState.restartButton.x,
+                        gameState.restartButton.y,
+                        gameState.restartButton.width,
+                        gameState.restartButton.height,
+                        COLORS.button
+                    );
+                    
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = "16px Arial";
+                    ctx.fillText(
+                        "RESTART", 
+                        gameState.restartButton.x + gameState.restartButton.width / 2, 
+                        gameState.restartButton.y + 25
+                    );
+                }
+            }
+        }
+        
+        function drawFlash() {
+            if (gameState.flash > 0) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${gameState.flash})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                gameState.flash -= 0.05;
+            }
+        }
+        
+        function checkMarkerHit(marker, answer) {
+            const targetX = gameState.targetZone.x;
+            const targetWidth = gameState.targetZone.width;
+            
+            // Check if marker is in target zone
+            if (marker.position >= targetX && marker.position <= targetX + targetWidth) {
+                gameState.flash = 0.7;
+                playHitSound();
+                
+                // Check if answer is correct
+                if ((answer === 'true' && marker.type === 'true') || 
+                    (answer === 'false' && marker.type === 'false')) {
+                    gameState.result = true;
+                    playCorrectSound();
+                } else {
+                    gameState.result = false;
+                    playWrongSound();
+                }
+                
+                gameState.gameOver = true;
+                setTimeout(() => { gameState.showRestart = true; }, 1500);
+                return true;
+            }
+            return false;
+        }
+        
+        function update() {
+            // Update markers
+            if (!gameState.gameOver) {
+                gameState.markers.forEach(marker => {
+                    marker.position -= marker.speed;
+                    
+                    // Reset marker when it goes off screen
+                    if (marker.position < -50) {
+                        marker.position = canvas.width + Math.random() * 100;
+                    }
+                });
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawTrack();
+            drawMarkers();
+            drawUI();
+            drawResult();
+            drawFlash();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handling
+        document.addEventListener('keydown', (e) => {
+            if (gameState.gameOver) return;
+            
+            if (e.key === 'ArrowLeft') {
+                gameState.markers.forEach(marker => {
+                    checkMarkerHit(marker, 'false');
+                });
+                drawPixelRect(120, 400, 60, 60, COLORS.buttonActive);
+            } else if (e.key === 'ArrowRight') {
+                gameState.markers.forEach(marker => {
+                    checkMarkerHit(marker, 'true');
+                });
+                drawPixelRect(620, 400, 60, 60, COLORS.buttonActive);
+            }
+        });
+        
+        // Mouse/touch handling for restart button
+        canvas.addEventListener('click', (e) => {
+            if (!gameState.showRestart) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            const btn = gameState.restartButton;
+            if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+                clickY >= btn.y && clickY <= btn.y + btn.height) {
+                // Reset game
+                gameState = {
+                    question: "The Great Wall of China is visible from space.",
+                    correctAnswer: false,
+                    gameOver: false,
+                    showRestart: false,
+                    result: null,
+                    markers: [
+                        { type: 'false', position: 700, speed: 3 },
+                        { type: 'true', position: 900, speed: 3 }
+                    ],
+                    targetZone: { x: 200, width: 50 },
+                    countdown: 60,
+                    restartButton: { x: 350, y: 400, width: 100, height: 40 },
+                    flash: 0
+                };
+            }
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameState.gameOver) return;
+            
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const touchX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            
+            if (touchX < canvas.width / 2) {
+                // Left side = False
+                gameState.markers.forEach(marker => {
+                    checkMarkerHit(marker, 'false');
+                });
+            } else {
+                // Right side = True
+                gameState.markers.forEach(marker => {
+                    checkMarkerHit(marker, 'true');
+                });
+            }
+        });
+        
+        // Add flash effect property
+        gameState.flash = 0;
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

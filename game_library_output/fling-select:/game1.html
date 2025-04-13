@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .restart-btn {
+            position: absolute;
+            bottom: 10px;
+            background-color: #444;
+            color: white;
+            border: 2px solid #888;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button class="restart-btn" id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - limited 8-bit palette
+        const COLORS = {
+            background: '#0f380f',
+            question: '#8bac0f',
+            target: '#306230',
+            targetPulse: '#9bbc0f',
+            correctAnswer: '#0f8000',
+            wrongAnswer: '#800000',
+            text: '#e0f8d0',
+            launcher: '#8bac0f',
+            power: '#9bbc0f',
+            obstacle: '#306230'
+        };
+        
+        // Game variables
+        let gameOver = false;
+        let gameWon = false;
+        const options = [
+            { text: 'Berlin', correct: false },
+            { text: 'Paris', correct: true },
+            { text: 'London', correct: false },
+            { text: 'Rome', correct: false }
+        ];
+        
+        // Physics objects
+        const objects = [];
+        let gravity = 0.4;
+        let friction = 0.98;
+        let bounceEnergy = 0.7;
+        
+        // Target area
+        const target = {
+            x: canvas.width / 2,
+            y: canvas.height / 5,
+            radius: canvas.width / 6,
+            pulseSize: 0,
+            pulseDirection: 1
+        };
+        
+        // Obstacles
+        const obstacles = [
+            { x: canvas.width * 0.3, y: canvas.height * 0.4, width: canvas.width * 0.1, height: 20 },
+            { x: canvas.width * 0.6, y: canvas.height * 0.6, width: canvas.width * 0.1, height: 20 }
+        ];
+        
+        // Launcher
+        const launcher = {
+            x: canvas.width / 2,
+            y: canvas.height - 80,
+            radius: 30,
+            angle: -Math.PI / 2,
+            power: 0,
+            maxPower: 20,
+            aiming: false,
+            activeOption: 0,
+            startX: 0,
+            startY: 0
+        };
+        
+        // Particles
+        const particles = [];
+        
+        // Sound effects
+        function createAudioContext() {
+            return new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        let audioCtx;
+        
+        function playSound(freq, duration, type = 'square') {
+            if (!audioCtx) audioCtx = createAudioContext();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playSoundLaunch() {
+            playSound(220, 0.2, 'triangle');
+        }
+        
+        function playSoundHit() {
+            playSound(110, 0.1);
+        }
+        
+        function playSoundCorrect() {
+            playSound(440, 0.1);
+            setTimeout(() => playSound(660, 0.2), 100);
+        }
+        
+        function playSoundWrong() {
+            playSound(200, 0.1);
+            setTimeout(() => playSound(150, 0.2), 100);
+        }
+        
+        // Create a new answer object
+        function createObject(option) {
+            return {
+                x: launcher.x,
+                y: launcher.y,
+                vx: Math.cos(launcher.angle) * launcher.power,
+                vy: Math.sin(launcher.angle) * launcher.power,
+                radius: 25,
+                text: option.text,
+                correct: option.correct,
+                active: true,
+                color: '#8bac0f',
+                hitObstacle: false
+            };
+        }
+        
+        // Create particles
+        function createParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    radius: Math.random() * 4 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Check collision with target
+        function checkTargetCollision(obj) {
+            const dx = obj.x - target.x;
+            const dy = obj.y - target.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < target.radius + obj.radius) {
+                obj.active = false;
+                createParticles(obj.x, obj.y, 15, obj.correct ? COLORS.correctAnswer : COLORS.wrongAnswer);
+                
+                if (obj.correct) {
+                    gameWon = true;
+                    gameOver = true;
+                    playSoundCorrect();
+                } else {
+                    gameOver = true;
+                    playSoundWrong();
+                }
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Check collision with obstacles
+        function checkObstacleCollision(obj) {
+            for (const obstacle of obstacles) {
+                if (obj.x + obj.radius > obstacle.x &&
+                    obj.x - obj.radius < obstacle.x + obstacle.width &&
+                    obj.y + obj.radius > obstacle.y &&
+                    obj.y - obj.radius < obstacle.y + obstacle.height) {
+                    
+                    // Simple bounce effect
+                    if (obj.y < obstacle.y || obj.y > obstacle.y + obstacle.height) {
+                        obj.vy = -obj.vy * bounceEnergy;
+                    } else {
+                        obj.vx = -obj.vx * bounceEnergy;
+                    }
+                    
+                    if (!obj.hitObstacle) {
+                        obj.hitObstacle = true;
+                        playSoundHit();
+                        createParticles(obj.x, obj.y, 5, COLORS.obstacle);
+                    }
+                    
+                    return true;
+                }
+            }
+            obj.hitObstacle = false;
+            return false;
+        }
+        
+        // Update game objects
+        function update() {
+            // Update target pulse effect
+            target.pulseSize += 0.05 * target.pulseDirection;
+            if (target.pulseSize > 1 || target.pulseSize < 0) {
+                target.pulseDirection *= -1;
+            }
+            
+            // Update launcher power if aiming
+            if (launcher.aiming && launcher.power < launcher.maxPower) {
+                launcher.power += 0.2;
+            }
+            
+            // Update physics objects
+            for (let i = 0; i < objects.length; i++) {
+                const obj = objects[i];
+                
+                if (!obj.active) continue;
+                
+                // Apply gravity and friction
+                obj.vy += gravity;
+                obj.vx *= friction;
+                
+                // Update position
+                obj.x += obj.vx;
+                obj.y += obj.vy;
+                
+                // Check boundary collisions
+                if (obj.x - obj.radius < 0) {
+                    obj.x = obj.radius;
+                    obj.vx = -obj.vx * bounceEnergy;
+                    playSoundHit();
+                }
+                
+                if (obj.x + obj.radius > canvas.width) {
+                    obj.x = canvas.width - obj.radius;
+                    obj.vx = -obj.vx * bounceEnergy;
+                    playSoundHit();
+                }
+                
+                if (obj.y - obj.radius < 0) {
+                    obj.y = obj.radius;
+                    obj.vy = -obj.vy * bounceEnergy;
+                    playSoundHit();
+                }
+                
+                if (obj.y + obj.radius > canvas.height) {
+                    obj.y = canvas.height - obj.radius;
+                    obj.vy = -obj.vy * bounceEnergy;
+                    playSoundHit();
+                }
+                
+                // Check obstacle collisions
+                checkObstacleCollision(obj);
+                
+                // Check target collision
+                checkTargetCollision(obj);
+                
+                // Remove if off screen for too long
+                if (obj.y > canvas.height + 100) {
+                    objects.splice(i, 1);
+                    i--;
+                }
+            }
+            
+            // Update particles
+            for (let i = 0; i < particles.length; i++) {
+                const particle = particles[i];
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.life--;
+                
+                if (particle.life <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 30);
+            
+            // Draw target area
+            ctx.fillStyle = COLORS.target;
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, target.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw target pulse effect
+            ctx.strokeStyle = COLORS.targetPulse;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, target.radius + target.pulseSize * 10, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Draw obstacles (8-bit style with grid pattern)
+            ctx.fillStyle = COLORS.obstacle;
+            for (const obstacle of obstacles) {
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                
+                // Add grid pattern for 8-bit look
+                ctx.strokeStyle = '#204020';
+                ctx.lineWidth = 1;
+                for (let x = 0; x < obstacle.width; x += 8) {
+                    ctx.beginPath();
+                    ctx.moveTo(obstacle.x + x, obstacle.y);
+                    ctx.lineTo(obstacle.x + x, obstacle.y + obstacle.height);
+                    ctx.stroke();
+                }
+                for (let y = 0; y < obstacle.height; y += 8) {
+                    ctx.beginPath();
+                    ctx.moveTo(obstacle.x, obstacle.y + y);
+                    ctx.lineTo(obstacle.x + obstacle.width, obstacle.y + y);
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw physics objects
+            for (const obj of objects) {
+                if (!obj.active) continue;
+                
+                // Pixelated circle (8-bit style)
+                ctx.fillStyle = obj.color;
+                ctx.beginPath();
+                ctx.arc(obj.x, obj.y, obj.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Grid pattern for 8-bit look
+                ctx.strokeStyle = '#204020';
+                ctx.lineWidth = 1;
+                for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+                    ctx.beginPath();
+                    ctx.moveTo(obj.x, obj.y);
+                    ctx.lineTo(obj.x + Math.cos(angle) * obj.radius, obj.y + Math.sin(angle) * obj.radius);
+                    ctx.stroke();
+                }
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(obj.text, obj.x, obj.y + 5);
+            }
+            
+            // Draw particles
+            for (const particle of particles) {
+                ctx.fillStyle = particle.color;
+                ctx.beginPath();
+                // Draw square pixels instead of circles for 8-bit effect
+                ctx.fillRect(
+                    Math.floor(particle.x), 
+                    Math.floor(particle.y), 
+                    Math.floor(particle.radius), 
+                    Math.floor(particle.radius)
+                );
+            }
+            
+            // Draw launcher
+            if (!gameOver) {
+                ctx.fillStyle = COLORS.launcher;
+                ctx.beginPath();
+                ctx.arc(launcher.x, launcher.y, launcher.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw current option in launcher
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(options[launcher.activeOption].text, launcher.x, launcher.y + 5);
+                
+                // Draw launcher power meter
+                if (launcher.aiming) {
+                    // Draw aim line
+                    ctx.strokeStyle = COLORS.power;
+                    ctx.lineWidth = 3;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    ctx.moveTo(launcher.x, launcher.y);
+                    const aimLength = launcher.power * 5;
+                    ctx.lineTo(
+                        launcher.x + Math.cos(launcher.angle) * aimLength,
+                        launcher.y + Math.sin(launcher.angle) * aimLength
+                    );
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    
+                    // Draw power meter
+                    ctx.fillStyle = COLORS.power;
+                    const powerHeight = (launcher.power / launcher.maxPower) * 50;
+                    ctx.fillRect(launcher.x + 40, launcher.y - 25, 10, 50);
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(launcher.x + 40, launcher.y + 25 - powerHeight, 10, powerHeight);
+                }
+            }
+            
+            // Draw game result
+            if (gameOver) {
+                ctx.fillStyle = gameWon ? COLORS.correctAnswer : COLORS.wrongAnswer;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameWon ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            if (!gameOver) {
+                update();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', startAiming);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            startAiming({ clientX: touch.clientX, clientY: touch.clientY });
+        });
+        
+        window.addEventListener('mouseup', releaseAiming);
+        window.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            releaseAiming();
+        });
+        
+        window.addEventListener('mousemove', updateAiming);
+        window.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            updateAiming({ clientX: touch.clientX, clientY: touch.clientY });
+        });
+        
+        restartBtn.addEventListener('click', resetGame);
+        
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+        
+        function startAiming(e) {
+            if (gameOver) return;
+            
+            const pos = getCanvasCoordinates(e);
+            const dx = pos.x - launcher.x;
+            const dy = pos.y - launcher.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < launcher.radius * 2) {
+                launcher.aiming = true;
+                launcher.power = 0;
+                launcher.startX = pos.x;
+                launcher.startY = pos.y;
+            }
+        }
+        
+        function updateAiming(e) {
+            if (!launcher.aiming) return;
+            
+            const pos = getCanvasCoordinates(e);
+            const dx = launcher.startX - pos.x;
+            const dy = launcher.startY - pos.y;
+            
+            launcher.angle = Math.atan2(dy, dx);
+        }
+        
+        function releaseAiming() {
+            if (launcher.aiming) {
+                launcher.aiming = false;
+                if (launcher.power > 0) {
+                    playSoundLaunch();
+                    objects.push(createObject(options[launcher.activeOption]));
+                    launcher.activeOption = (launcher.activeOption + 1) % options.length;
+                }
+            }
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            gameWon = false;
+            objects.length = 0;
+            particles.length = 0;
+            launcher.activeOption = 0;
+            launcher.power = 0;
+            launcher.angle = -Math.PI / 2;
+            restartBtn.style.display = 'none';
+        }
+        
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

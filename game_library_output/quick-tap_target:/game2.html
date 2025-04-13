@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Red Planet Tapper</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      cursor: none;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+    }
+    #restart {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #442244;
+      color: #fff;
+      border: 2px solid #ff44ff;
+      padding: 5px 10px;
+      font-family: sans-serif;
+      display: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+
+  <script>
+    // Game setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth < 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    let gameOver = false;
+    let targets = [];
+    const answers = [
+      { text: "Mars", correct: true },
+      { text: "Venus", correct: false },
+      { text: "Jupiter", correct: false },
+      { text: "Mercury", correct: false }
+    ];
+    
+    // Colors - 16-color palette
+    const COLORS = {
+      background: '#000022',
+      text: '#FFFFFF',
+      highlight: '#FF5555',
+      correct: '#55FF55',
+      incorrect: '#FF0000',
+      targets: ['#FF5533', '#55AAFF', '#FFFF55', '#33FF99'],
+      stars: ['#FFFFFF', '#AAAAFF', '#FFDDAA']
+    };
+    
+    // Star background
+    const stars = [];
+    for (let i = 0; i < 80; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 2 + 1,
+        color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)],
+        blink: Math.random() > 0.7
+      });
+    }
+    
+    // Custom cursor
+    const cursor = {
+      x: 0,
+      y: 0,
+      size: 16
+    };
+    
+    // Sound effects (simple beeps using Web Audio API)
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(frequency, duration, type = 'square') {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+    
+    function createTarget() {
+      // Don't create targets if game is over
+      if (gameOver) return;
+      
+      // Only create a new target if we have fewer than 4 active targets
+      if (targets.length >= 4) return;
+      
+      const availableAnswers = answers.filter(answer => 
+        !targets.some(target => target.text === answer.text)
+      );
+      
+      if (availableAnswers.length === 0) return;
+      
+      const randomAnswer = availableAnswers[Math.floor(Math.random() * availableAnswers.length)];
+      const size = Math.floor(Math.random() * 20) + 50; // Random size between 50-70
+      const targetColorIndex = Math.floor(Math.random() * COLORS.targets.length);
+      
+      const target = {
+        x: Math.random() * (canvas.width - size * 2) + size,
+        y: Math.random() * (canvas.height - size * 2 - 100) + size + 100, // Leave room for question
+        size: size,
+        text: randomAnswer.text,
+        correct: randomAnswer.correct,
+        color: COLORS.targets[targetColorIndex],
+        age: 0,
+        lifespan: Math.random() * 1 + 1, // 1-2 seconds
+        scale: 0,
+        appearing: true,
+        flash: true
+      };
+      
+      targets.push(target);
+      
+      // Play spawn sound
+      playSound(150 + Math.random() * 100, 0.1);
+    }
+    
+    function drawCrosshair() {
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      
+      // Outer circle
+      ctx.beginPath();
+      ctx.arc(cursor.x, cursor.y, cursor.size, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      // Center dot
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(cursor.x, cursor.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Crosshairs
+      ctx.beginPath();
+      ctx.moveTo(cursor.x - cursor.size, cursor.y);
+      ctx.lineTo(cursor.x - 5, cursor.y);
+      ctx.moveTo(cursor.x + 5, cursor.y);
+      ctx.lineTo(cursor.x + cursor.size, cursor.y);
+      ctx.moveTo(cursor.x, cursor.y - cursor.size);
+      ctx.lineTo(cursor.x, cursor.y - 5);
+      ctx.moveTo(cursor.x, cursor.y + 5);
+      ctx.lineTo(cursor.x, cursor.y + cursor.size);
+      ctx.stroke();
+    }
+    
+    function drawPixelCircle(x, y, radius, color) {
+      ctx.fillStyle = color;
+      for (let i = -radius; i <= radius; i++) {
+        for (let j = -radius; j <= radius; j++) {
+          if (i*i + j*j <= radius*radius) {
+            ctx.fillRect(
+              Math.floor(x + i), 
+              Math.floor(y + j), 
+              1, 1
+            );
+          }
+        }
+      }
+    }
+    
+    function drawTarget(target) {
+      const s = target.appearing ? target.scale * target.size : target.size;
+      
+      // Base planet circle with pixelated effect
+      drawPixelCircle(target.x, target.y, s, target.flash ? '#FFFFFF' : target.color);
+      
+      // Add pixel detail to make it look like a planet
+      if (!target.flash) {
+        if (target.text === "Mars") {
+          // Mars has surface features
+          ctx.fillStyle = "#AA3311";
+          for (let i = 0; i < 5; i++) {
+            const spotSize = s * 0.2;
+            const angle = i * Math.PI * 0.4;
+            const spotX = target.x + Math.cos(angle) * s * 0.5;
+            const spotY = target.y + Math.sin(angle) * s * 0.5;
+            drawPixelCircle(spotX, spotY, spotSize, "#AA3311");
+          }
+        } else if (target.text === "Jupiter") {
+          // Jupiter has stripes
+          ctx.fillStyle = "#DDAA55";
+          ctx.fillRect(target.x - s, target.y - s * 0.3, s * 2, s * 0.2);
+          ctx.fillRect(target.x - s, target.y + s * 0.3, s * 2, s * 0.2);
+        } else if (target.text === "Venus") {
+          // Venus is cloudy
+          ctx.fillStyle = "#FFAA55";
+          for (let i = 0; i < 8; i++) {
+            const spotSize = s * 0.15;
+            const angle = i * Math.PI * 0.25;
+            const dist = s * 0.7;
+            const spotX = target.x + Math.cos(angle) * dist;
+            const spotY = target.y + Math.sin(angle) * dist;
+            drawPixelCircle(spotX, spotY, spotSize, "#FFEEAA");
+          }
+        } else if (target.text === "Mercury") {
+          // Mercury has craters
+          for (let i = 0; i < 4; i++) {
+            const spotSize = s * 0.1;
+            const angle = i * Math.PI * 0.5;
+            const dist = s * 0.5;
+            const spotX = target.x + Math.cos(angle) * dist;
+            const spotY = target.y + Math.sin(angle) * dist;
+            drawPixelCircle(spotX, spotY, spotSize, "#888888");
+          }
+        }
+      }
+      
+      // Text label
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(target.text, target.x, target.y + s + 15);
+    }
+    
+    function drawStars() {
+      stars.forEach(star => {
+        if (star.blink && Math.random() > 0.95) {
+          star.visible = !star.visible;
+        } else {
+          star.visible = true;
+        }
+        
+        if (star.visible) {
+          ctx.fillStyle = star.color;
+          ctx.fillRect(star.x, star.y, star.size, star.size);
+        }
+      });
+    }
+    
+    function drawQuestion() {
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      // Draw background panel
+      ctx.fillStyle = '#222255';
+      ctx.fillRect(0, 20, canvas.width, 60);
+      ctx.strokeStyle = '#5555FF';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(0, 20, canvas.width, 60);
+      
+      // Draw question text
+      ctx.fillStyle = COLORS.text;
+      ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 50);
+    }
+    
+    function update(deltaTime) {
+      // Create targets periodically
+      if (Math.random() < 0.05 && !gameOver) {
+        createTarget();
+      }
+      
+      // Update targets
+      targets.forEach(target => {
+        target.age += deltaTime;
+        
+        // Handle appearance animation
+        if (target.appearing) {
+          target.scale = Math.min(1, target.scale + deltaTime * 5);
+          if (target.scale >= 1) {
+            target.appearing = false;
+          }
+        }
+        
+        // Flash effect at the beginning
+        if (target.flash && target.age > 0.1) {
+          target.flash = false;
+        }
+      });
+      
+      // Remove expired targets
+      targets = targets.filter(target => target.age < target.lifespan);
+    }
+    
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw stars
+      drawStars();
+      
+      // Draw question
+      drawQuestion();
+      
+      // Draw targets
+      targets.forEach(drawTarget);
+      
+      // Draw game over message
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.font = '32px sans-serif';
+        ctx.fillStyle = gameOver === 'correct' ? COLORS.correct : COLORS.incorrect;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        if (gameOver === 'correct') {
+          ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2);
+        } else {
+          ctx.fillText('Incorrect!', canvas.width / 2, canvas.height / 2);
+        }
+      }
+      
+      // Draw crosshair cursor
+      drawCrosshair();
+    }
+    
+    function checkClick(x, y) {
+      if (gameOver) return;
+      
+      let clicked = false;
+      
+      targets.forEach(target => {
+        const dx = x - target.x;
+        const dy = y - target.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < target.size) {
+          clicked = true;
+          if (target.correct) {
+            gameOver = 'correct';
+            playSound(440, 0.5, 'sine');
+            setTimeout(() => playSound(880, 0.7, 'sine'), 100);
+          } else {
+            gameOver = 'incorrect';
+            playSound(180, 0.3);
+            setTimeout(() => playSound(150, 0.5), 100);
+          }
+          
+          restartBtn.style.display = 'block';
+        }
+      });
+      
+      if (!clicked) {
+        // Miss sound
+        playSound(100, 0.1);
+      }
+    }
+    
+    // Input handlers
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      cursor.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      cursor.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    });
+    
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      checkClick(x, y);
+    });
+    
+    // Touch support
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      cursor.x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+      cursor.y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+    });
+    
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+      
+      cursor.x = x;
+      cursor.y = y;
+      checkClick(x, y);
+    });
+    
+    restartBtn.addEventListener('click', () => {
+      gameOver = false;
+      targets = [];
+      restartBtn.style.display = 'none';
+    });
+    
+    // Game loop
+    let lastTime = 0;
+    
+    function gameLoop(timestamp) {
+      const deltaTime = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
+      
+      update(deltaTime);
+      draw();
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>

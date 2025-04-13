@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Time Travel Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Adjust for mobile if needed
+        if (window.innerWidth <= 600) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game variables
+        const timePeriods = [
+            { 
+                name: "Ancient Rome", 
+                color: "#4a8c6f", 
+                buildings: [[100, 450, 150, 150], [300, 420, 180, 180], [580, 440, 160, 160]],
+                answer: "Rome",
+                correct: false
+            },
+            { 
+                name: "Medieval England", 
+                color: "#6f4a8c", 
+                buildings: [[150, 420, 120, 180], [350, 440, 200, 160], [600, 400, 180, 200]],
+                answer: "London",
+                correct: false
+            },
+            { 
+                name: "Modern France", 
+                color: "#8c4a4a", 
+                buildings: [[120, 400, 100, 200], [280, 350, 140, 250], [500, 380, 220, 220]],
+                answer: "Paris",
+                correct: true
+            },
+            { 
+                name: "Future City", 
+                color: "#4a6f8c", 
+                buildings: [[80, 380, 80, 220], [200, 320, 120, 280], [400, 350, 150, 250], [620, 300, 120, 300]],
+                answer: "Neo Tokyo",
+                correct: false
+            }
+        ];
+        
+        let currentPeriod = 0;
+        let gameState = "playing"; // playing, correct, incorrect
+        let transitionEffect = 0;
+        let transitioning = false;
+        
+        // Arrow buttons
+        const leftArrow = { x: 50, y: 300, width: 50, height: 50 };
+        const rightArrow = { x: canvas.width - 100, y: 300, width: 50, height: 50 };
+        
+        // Answer button
+        const answerButton = { x: canvas.width / 2 - 100, y: 500, width: 200, height: 50 };
+        
+        // Restart button
+        const restartButton = { x: canvas.width / 2 - 80, y: 400, width: 160, height: 40 };
+        
+        // Sound generator
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case "select":
+                    oscillator.type = "square";
+                    oscillator.frequency.value = 220;
+                    gainNode.gain.value = 0.1;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 100);
+                    break;
+                case "travel":
+                    oscillator.type = "sawtooth";
+                    oscillator.frequency.setValueAtTime(110, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(440, audioContext.currentTime + 0.3);
+                    gainNode.gain.value = 0.1;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 300);
+                    break;
+                case "correct":
+                    oscillator.type = "sine";
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.value = 0.1;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 300);
+                    break;
+                case "incorrect":
+                    oscillator.type = "square";
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(110, audioContext.currentTime + 0.1);
+                    gainNode.gain.value = 0.1;
+                    oscillator.start();
+                    setTimeout(() => oscillator.stop(), 200);
+                    break;
+            }
+        }
+        
+        // Draw a pixel art building
+        function drawBuilding(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Windows
+            ctx.fillStyle = "#FFFF77";
+            const windowSize = Math.max(8, Math.floor(width / 10));
+            const windowSpacing = Math.max(5, Math.floor(width / 15));
+            
+            for (let wy = y + windowSpacing; wy < y + height - windowSize; wy += windowSize + windowSpacing) {
+                for (let wx = x + windowSpacing; wx < x + width - windowSize; wx += windowSize + windowSpacing) {
+                    // Random dark windows
+                    if (Math.random() > 0.7) {
+                        ctx.fillStyle = "#555555";
+                    } else {
+                        ctx.fillStyle = "#FFFF77";
+                    }
+                    ctx.fillRect(wx, wy, windowSize, windowSize);
+                }
+            }
+        }
+        
+        // Draw background for current time period
+        function drawTimePeriod(period, offset = 0) {
+            // Sky
+            ctx.fillStyle = period.color;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Ground
+            ctx.fillStyle = "#333333";
+            ctx.fillRect(0, 500 + offset, canvas.width, 100);
+            
+            // Stars or particles for future
+            if (period.name === "Future City") {
+                ctx.fillStyle = "#FFFFFF";
+                for (let i = 0; i < 100; i++) {
+                    ctx.fillRect(
+                        Math.floor(Math.random() * canvas.width), 
+                        Math.floor(Math.random() * 300), 
+                        2, 2
+                    );
+                }
+            }
+            
+            // Sun/Moon
+            ctx.fillStyle = "#FFFF88";
+            if (period.name === "Ancient Rome") {
+                ctx.beginPath();
+                ctx.arc(650, 100, 40, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (period.name === "Medieval England") {
+                ctx.beginPath();
+                ctx.arc(150, 120, 30, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (period.name === "Modern France") {
+                ctx.beginPath();
+                ctx.arc(400, 80, 50, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Two moons for future
+                ctx.beginPath();
+                ctx.arc(200, 90, 20, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(300, 150, 15, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw buildings
+            period.buildings.forEach((building, i) => {
+                const buildingColor = period.name === "Ancient Rome" ? "#A97D5D" :
+                                     period.name === "Medieval England" ? "#8A6642" :
+                                     period.name === "Modern France" ? "#777777" : "#AAAADD";
+                                     
+                drawBuilding(building[0], building[1] + offset, building[2], building[3], buildingColor);
+            });
+            
+            // Draw time portal effects around edges
+            ctx.lineWidth = 6;
+            const portalGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            portalGradient.addColorStop(0, '#8C00FF');
+            portalGradient.addColorStop(0.5, '#FF00C3');
+            portalGradient.addColorStop(1, '#0096FF');
+            ctx.strokeStyle = portalGradient;
+            ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+        }
+        
+        // Draw UI elements
+        function drawUI() {
+            // Draw question
+            ctx.fillStyle = "#111111";
+            ctx.fillRect(canvas.width / 2 - 250, 40, 500, 70);
+            ctx.strokeStyle = "#FFFF00";
+            ctx.lineWidth = 4;
+            ctx.strokeRect(canvas.width / 2 - 250, 40, 500, 70);
+            
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 85);
+            
+            // Draw current time period name
+            ctx.fillStyle = "#111111";
+            ctx.fillRect(canvas.width / 2 - 150, 130, 300, 40);
+            ctx.strokeStyle = "#00FFFF";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(canvas.width / 2 - 150, 130, 300, 40);
+            
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "18px sans-serif";
+            ctx.fillText(timePeriods[currentPeriod].name, canvas.width / 2, 157);
+            
+            // Draw arrow buttons if not in result state
+            if (gameState === "playing" && !transitioning) {
+                ctx.fillStyle = "#222222";
+                ctx.fillRect(leftArrow.x, leftArrow.y, leftArrow.width, leftArrow.height);
+                ctx.strokeStyle = "#00FFFF";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(leftArrow.x, leftArrow.y, leftArrow.width, leftArrow.height);
+                
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "30px sans-serif";
+                ctx.fillText("←", leftArrow.x + 25, leftArrow.y + 35);
+                
+                ctx.fillStyle = "#222222";
+                ctx.fillRect(rightArrow.x, rightArrow.y, rightArrow.width, rightArrow.height);
+                ctx.strokeStyle = "#00FFFF";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(rightArrow.x, rightArrow.y, rightArrow.width, rightArrow.height);
+                
+                ctx.fillStyle = "#FFFFFF";
+                ctx.fillText("→", rightArrow.x + 25, rightArrow.y + 35);
+                
+                // Draw answer button
+                ctx.fillStyle = "#222222";
+                ctx.fillRect(answerButton.x, answerButton.y, answerButton.width, answerButton.height);
+                ctx.strokeStyle = "#FFFF00";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(answerButton.x, answerButton.y, answerButton.width, answerButton.height);
+                
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "20px sans-serif";
+                ctx.fillText("Select: " + timePeriods[currentPeriod].answer, canvas.width / 2, answerButton.y + 33);
+            }
+            
+            // Draw result and restart button if game is over
+            if (gameState === "correct" || gameState === "incorrect") {
+                ctx.fillStyle = "#111111";
+                ctx.fillRect(canvas.width / 2 - 200, 250, 400, 100);
+                ctx.strokeStyle = gameState === "correct" ? "#00FF00" : "#FF0000";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(canvas.width / 2 - 200, 250, 400, 100);
+                
+                ctx.fillStyle = gameState === "correct" ? "#00FF00" : "#FF0000";
+                ctx.font = "30px sans-serif";
+                ctx.fillText(
+                    gameState === "correct" ? "CORRECT!" : "INCORRECT!", 
+                    canvas.width / 2, 
+                    300
+                );
+                ctx.font = "20px sans-serif";
+                ctx.fillText("The capital of France is Paris", canvas.width / 2, 330);
+                
+                // Restart button
+                ctx.fillStyle = "#222222";
+                ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+                ctx.strokeStyle = "#00FFFF";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+                
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "20px sans-serif";
+                ctx.fillText("Restart", canvas.width / 2, restartButton.y + 27);
+            }
+        }
+        
+        // Time travel transition effect
+        function drawTransition() {
+            if (transitioning) {
+                // Draw scanlines
+                ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+                for (let i = 0; i < canvas.height; i += 8) {
+                    ctx.fillRect(0, i, canvas.width, 4);
+                }
+                
+                // Draw warp effect
+                ctx.fillStyle = "rgba(140, 0, 255, " + Math.abs(Math.sin(transitionEffect)) * 0.3 + ")";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw pixelated distortion
+                for (let i = 0; i < 50; i++) {
+                    const x = Math.floor(Math.random() * canvas.width);
+                    const y = Math.floor(Math.random() * canvas.height);
+                    const size = Math.floor(Math.random() * 20) + 5;
+                    
+                    ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.5})`;
+                    ctx.fillRect(x, y, size, size);
+                }
+                
+                transitionEffect += 0.2;
+                if (transitionEffect >= 2) {
+                    transitioning = false;
+                }
+            }
+        }
+        
+        // Game loop
+        function update() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw current time period
+            drawTimePeriod(timePeriods[currentPeriod]);
+            
+            // Draw UI
+            drawUI();
+            
+            // Draw transition effect if needed
+            drawTransition();
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameState === "playing" && !transitioning) {
+                // Check if left arrow clicked
+                if (x >= leftArrow.x && x <= leftArrow.x + leftArrow.width &&
+                    y >= leftArrow.y && y <= leftArrow.y + leftArrow.height) {
+                    playSound("travel");
+                    transitioning = true;
+                    transitionEffect = 0;
+                    setTimeout(() => {
+                        currentPeriod = (currentPeriod - 1 + timePeriods.length) % timePeriods.length;
+                    }, 150);
+                }
+                
+                // Check if right arrow clicked
+                if (x >= rightArrow.x && x <= rightArrow.x + rightArrow.width &&
+                    y >= rightArrow.y && y <= rightArrow.y + rightArrow.height) {
+                    playSound("travel");
+                    transitioning = true;
+                    transitionEffect = 0;
+                    setTimeout(() => {
+                        currentPeriod = (currentPeriod + 1) % timePeriods.length;
+                    }, 150);
+                }
+                
+                // Check if answer button clicked
+                if (x >= answerButton.x && x <= answerButton.x + answerButton.width &&
+                    y >= answerButton.y && y <= answerButton.y + answerButton.height) {
+                    if (timePeriods[currentPeriod].correct) {
+                        gameState = "correct";
+                        playSound("correct");
+                    } else {
+                        gameState = "incorrect";
+                        playSound("incorrect");
+                    }
+                }
+            } else if (gameState !== "playing") {
+                // Check if restart button clicked
+                if (x >= restartButton.x && x <= restartButton.x + restartButton.width &&
+                    y >= restartButton.y && y <= restartButton.y + restartButton.height) {
+                    gameState = "playing";
+                    currentPeriod = 0;
+                    playSound("select");
+                }
+            }
+        });
+        
+        // Start the game
+        update();
+    </script>
+</body>
+</html>

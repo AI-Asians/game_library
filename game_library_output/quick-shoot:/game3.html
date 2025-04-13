@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quick-Shoot</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #333;
+            color: white;
+            border: 2px solid #666;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restartButton">RESTART</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Adjust for mobile
+        if (window.innerWidth <= 600) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game variables
+        const colors = ['#FF5555', '#55FF55', '#5555FF', '#FFFF55', '#FF55FF'];
+        const answers = ['Paris', 'London', 'Berlin', 'Rome', 'Madrid'];
+        const correctAnswer = 'Paris';
+        let targets = [];
+        let crosshair = { x: canvas.width / 2, y: canvas.height / 2, size: 20 };
+        let gameOver = false;
+        let lastShot = 0;
+        let cooldown = 250; // ms
+        let screenShake = 0;
+        let shakeAmount = 0;
+        
+        // Audio context and functions
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playSound(freq, duration, type = 'square') {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playShootSound() {
+            playSound(150, 0.1);
+        }
+        
+        function playHitSound() {
+            playSound(440, 0.2);
+        }
+        
+        function playCorrectSound() {
+            playSound(660, 0.1);
+            setTimeout(() => playSound(880, 0.2), 100);
+        }
+        
+        function playWrongSound() {
+            playSound(220, 0.1);
+            setTimeout(() => playSound(110, 0.3), 100);
+        }
+        
+        // Create targets
+        function createTargets() {
+            targets = [];
+            
+            for (let i = 0; i < answers.length; i++) {
+                let size = 70;
+                targets.push({
+                    x: Math.random() * (canvas.width - size * 2) + size,
+                    y: Math.random() * (canvas.height - size * 2) + size,
+                    size: size,
+                    color: colors[i],
+                    text: answers[i],
+                    speedX: (Math.random() - 0.5) * 4,
+                    speedY: (Math.random() - 0.5) * 4
+                });
+            }
+        }
+        
+        // Draw a pixelated circle
+        function drawPixelCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            for (let i = -radius; i < radius; i++) {
+                for (let j = -radius; j < radius; j++) {
+                    if (i*i + j*j < radius*radius) {
+                        ctx.fillRect(Math.floor(x + i), Math.floor(y + j), 2, 2);
+                    }
+                }
+            }
+        }
+        
+        // Draw a pixelated crosshair
+        function drawCrosshair() {
+            const size = crosshair.size;
+            ctx.fillStyle = '#FFFFFF';
+            
+            // Outer circle
+            drawPixelCircle(crosshair.x, crosshair.y, size/2, '#FFFFFF');
+            
+            // Inner circle
+            ctx.fillStyle = '#000000';
+            drawPixelCircle(crosshair.x, crosshair.y, size/3, '#000000');
+            
+            // Center dot
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(crosshair.x - 2, crosshair.y - 2, 4, 4);
+            
+            // Crosshair lines
+            ctx.fillRect(crosshair.x - size/2, crosshair.y - 1, size/4, 2);
+            ctx.fillRect(crosshair.x + size/4, crosshair.y - 1, size/4, 2);
+            ctx.fillRect(crosshair.x - 1, crosshair.y - size/2, 2, size/4);
+            ctx.fillRect(crosshair.x - 1, crosshair.y + size/4, 2, size/4);
+        }
+        
+        // Draw muzzle flash
+        function drawMuzzleFlash() {
+            const flash = {
+                x: crosshair.x,
+                y: crosshair.y - 30,
+                width: 20,
+                height: 20
+            };
+            
+            ctx.fillStyle = '#FFFF00';
+            for (let i = 0; i < 8; i++) {
+                const angle = Math.PI * 2 * i / 8;
+                const radius = 15;
+                ctx.fillRect(
+                    flash.x + Math.cos(angle) * radius - 2,
+                    flash.y + Math.sin(angle) * radius - 2,
+                    4, 4
+                );
+            }
+            
+            // Center flash
+            ctx.fillRect(flash.x - 4, flash.y - 4, 8, 8);
+        }
+        
+        // Update targets
+        function updateTargets() {
+            targets.forEach(target => {
+                // Move target
+                target.x += target.speedX;
+                target.y += target.speedY;
+                
+                // Bounce off walls
+                if (target.x - target.size < 0 || target.x + target.size > canvas.width) {
+                    target.speedX *= -1;
+                }
+                if (target.y - target.size < 0 || target.y + target.size > canvas.height) {
+                    target.speedY *= -1;
+                }
+                
+                // Keep within bounds
+                target.x = Math.max(target.size, Math.min(canvas.width - target.size, target.x));
+                target.y = Math.max(target.size, Math.min(canvas.height - target.size, target.y));
+            });
+        }
+        
+        // Draw targets
+        function drawTargets() {
+            targets.forEach(target => {
+                // Draw target
+                drawPixelCircle(target.x, target.y, target.size, target.color);
+                
+                // Draw inner circle
+                drawPixelCircle(target.x, target.y, target.size - 8, '#000000');
+                
+                // Draw text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(target.text, target.x, target.y);
+            });
+        }
+        
+        // Check for hit
+        function checkHit(x, y) {
+            if (Date.now() - lastShot < cooldown) return;
+            
+            lastShot = Date.now();
+            playShootSound();
+            shakeAmount = 5;
+            
+            let hit = false;
+            targets.forEach(target => {
+                const distance = Math.sqrt((target.x - x) ** 2 + (target.y - y) ** 2);
+                if (distance < target.size) {
+                    hit = true;
+                    
+                    if (target.text === correctAnswer) {
+                        playCorrectSound();
+                        gameOver = true;
+                        showResult(true);
+                    } else {
+                        playWrongSound();
+                        gameOver = true;
+                        showResult(false);
+                    }
+                }
+            });
+            
+            if (hit) {
+                setTimeout(() => {
+                    restartButton.style.display = 'block';
+                }, 1000);
+            }
+        }
+        
+        // Show result
+        function showResult(correct) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = correct ? '#55FF55' : '#FF5555';
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (correct) {
+                ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2);
+            } else {
+                ctx.fillText('Wrong! The capital of France is Paris', canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 20);
+        }
+        
+        // Draw background
+        function drawBackground() {
+            // Starfield background
+            ctx.fillStyle = '#000022';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw some stars
+            for (let i = 0; i < 100; i++) {
+                const x = Math.floor((i * 17) % canvas.width);
+                const y = Math.floor((i * 23) % canvas.height);
+                const size = i % 3 + 1;
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        // Update screen shake
+        function updateScreenShake() {
+            if (shakeAmount > 0) {
+                screenShake = (Math.random() - 0.5) * shakeAmount;
+                shakeAmount *= 0.9;
+                if (shakeAmount < 0.5) shakeAmount = 0;
+            } else {
+                screenShake = 0;
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply screen shake
+            updateScreenShake();
+            ctx.setTransform(1, 0, 0, 1, screenShake, screenShake);
+            
+            // Draw game elements
+            drawBackground();
+            drawQuestion();
+            
+            if (!gameOver) {
+                updateTargets();
+                drawTargets();
+                drawCrosshair();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            crosshair.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            crosshair.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            if (!gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                checkHit(x, y);
+                drawMuzzleFlash();
+            }
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            crosshair.x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+            crosshair.y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (!gameOver) {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+                const y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+                
+                checkHit(x, y);
+                drawMuzzleFlash();
+            }
+        });
+        
+        restartButton.addEventListener('click', () => {
+            gameOver = false;
+            restartButton.style.display = 'none';
+            createTargets();
+        });
+        
+        // Initialize and start game
+        createTargets();
+        gameLoop();
+    </script>
+</body>
+</html>

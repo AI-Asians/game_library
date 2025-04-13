@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Capital Quiz - Conveyor Belt</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #333;
+      overflow: hidden;
+      height: 100vh;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 4px solid #222;
+    }
+    @media (max-width: 800px) {
+      canvas {
+        width: 360px;
+        height: 640px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas dimensions based on device
+    const isMobile = window.innerWidth <= 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Colors (limited palette)
+    const colors = {
+      background: '#1a1a2e',
+      conveyor: '#424242',
+      conveyorBelt: '#616161',
+      conveyorPattern: '#212121',
+      tapZone: '#4a4a88',
+      tapZoneActive: '#6a6aa8',
+      questionBg: '#383850',
+      correct: '#4a8048',
+      incorrect: '#804848',
+      textLight: '#e0e0e0',
+      textDark: '#2a2a2a',
+      metal: '#808080',
+      highlight: '#a0a0a0',
+      gears: '#505050'
+    };
+    
+    // Game state
+    let gameOver = false;
+    let gameResult = null; // 'correct', 'incorrect', or null
+    
+    // Question
+    const question = "What is the capital of France?";
+    const answers = [
+      { text: "Paris", correct: true },
+      { text: "London", correct: false },
+      { text: "Berlin", correct: false },
+      { text: "Rome", correct: false }
+    ];
+    
+    // Shuffle answers
+    answers.sort(() => Math.random() - 0.5);
+    
+    // Conveyor belt properties
+    const beltSpeed = 2;
+    const itemWidth = canvas.width * 0.3;
+    const itemHeight = canvas.height * 0.12;
+    const itemGap = canvas.width * 0.15;
+    const totalItemWidth = itemWidth + itemGap;
+    
+    // Position items on the conveyor belt
+    let items = [];
+    answers.forEach((answer, i) => {
+      items.push({
+        x: canvas.width + i * totalItemWidth,
+        y: canvas.height * 0.5 - itemHeight / 2,
+        width: itemWidth,
+        height: itemHeight,
+        text: answer.text,
+        correct: answer.correct
+      });
+    });
+    
+    // Tap zone properties
+    const tapZone = {
+      x: canvas.width * 0.25,
+      y: canvas.height * 0.5 - itemHeight / 2 - 10,
+      width: canvas.width * 0.2,
+      height: itemHeight + 20,
+      active: false
+    };
+    
+    // Gear properties
+    const gearRadius = canvas.height * 0.04;
+    const gears = [
+      { x: 0, y: canvas.height * 0.5, rotation: 0 },
+      { x: canvas.width, y: canvas.height * 0.5, rotation: 0 }
+    ];
+    
+    // Sound effects
+    function createBeepSound(freq, duration, type = 'square') {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = freq;
+      gainNode.gain.value = 0.3;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      setTimeout(() => {
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.1);
+        setTimeout(() => oscillator.stop(), 100);
+      }, duration);
+    }
+    
+    function playCorrect() {
+      createBeepSound(660, 100);
+      setTimeout(() => createBeepSound(880, 200), 100);
+    }
+    
+    function playIncorrect() {
+      createBeepSound(330, 100);
+      setTimeout(() => createBeepSound(220, 200), 100);
+    }
+    
+    function playEnterZone() {
+      createBeepSound(440, 50, 'sine');
+    }
+    
+    // Draw functions
+    function drawPixelatedRect(x, y, width, height, color, pixelSize = 4) {
+      ctx.fillStyle = color;
+      
+      for (let i = 0; i < width; i += pixelSize) {
+        for (let j = 0; j < height; j += pixelSize) {
+          ctx.fillRect(
+            Math.floor(x + i), 
+            Math.floor(y + j), 
+            pixelSize, 
+            pixelSize
+          );
+        }
+      }
+    }
+    
+    function drawPixelatedGear(x, y, radius, rotation) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+      
+      // Gear body
+      drawPixelatedRect(-radius, -radius, radius * 2, radius * 2, colors.gears);
+      
+      // Gear teeth
+      const teethCount = 8;
+      const teethLength = radius * 0.3;
+      const teethWidth = radius * 0.4;
+      
+      for (let i = 0; i < teethCount; i++) {
+        const angle = (i / teethCount) * Math.PI * 2;
+        const tx = Math.cos(angle) * radius;
+        const ty = Math.sin(angle) * radius;
+        
+        drawPixelatedRect(
+          tx - teethWidth/2, 
+          ty - teethWidth/2, 
+          teethWidth, 
+          teethWidth, 
+          colors.metal
+        );
+      }
+      
+      // Gear center
+      drawPixelatedRect(-radius * 0.3, -radius * 0.3, radius * 0.6, radius * 0.6, colors.highlight);
+      
+      ctx.restore();
+    }
+    
+    function drawConveyorBelt() {
+      // Main belt
+      drawPixelatedRect(0, canvas.height * 0.5 - 5, canvas.width, 10, colors.conveyorBelt);
+      
+      // Belt pattern
+      const pattern = Math.floor(Date.now() / 50) % 20;
+      for (let i = 0; i < canvas.width; i += 20) {
+        drawPixelatedRect(i - pattern, canvas.height * 0.5 - 5, 10, 10, colors.conveyorPattern);
+      }
+      
+      // Belt frame
+      drawPixelatedRect(0, canvas.height * 0.5 - 25, canvas.width, 20, colors.conveyor);
+      drawPixelatedRect(0, canvas.height * 0.5 + 5, canvas.width, 20, colors.conveyor);
+      
+      // Draw gears
+      gears.forEach(gear => {
+        gear.rotation += 0.02;
+        drawPixelatedGear(gear.x, gear.y, gearRadius, gear.rotation);
+      });
+    }
+    
+    function drawTapZone() {
+      const color = tapZone.active ? colors.tapZoneActive : colors.tapZone;
+      drawPixelatedRect(tapZone.x, tapZone.y, tapZone.width, tapZone.height, color);
+      
+      // Tap zone border
+      ctx.strokeStyle = colors.highlight;
+      ctx.lineWidth = 4;
+      ctx.setLineDash([8, 4]);
+      ctx.strokeRect(tapZone.x, tapZone.y, tapZone.width, tapZone.height);
+      ctx.setLineDash([]);
+      
+      // Tap zone text
+      ctx.fillStyle = colors.textLight;
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('TAP HERE', tapZone.x + tapZone.width / 2, tapZone.y - 10);
+    }
+    
+    function drawItems() {
+      items.forEach(item => {
+        // Check if item is entering tap zone
+        const itemCenter = item.x + item.width / 2;
+        const zoneCenter = tapZone.x + tapZone.width / 2;
+        const distance = Math.abs(itemCenter - zoneCenter);
+        
+        if (distance < 5 && !item.playedSound) {
+          playEnterZone();
+          item.playedSound = true;
+          tapZone.active = true;
+          setTimeout(() => { tapZone.active = false; }, 200);
+        }
+        
+        // Draw item
+        drawPixelatedRect(item.x, item.y, item.width, item.height, colors.questionBg);
+        
+        // Item text
+        ctx.fillStyle = colors.textLight;
+        ctx.font = '20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(item.text, item.x + item.width / 2, item.y + item.height / 2);
+      });
+    }
+    
+    function drawQuestion() {
+      ctx.fillStyle = colors.textLight;
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(question, canvas.width / 2, 30);
+    }
+    
+    function drawGameOver() {
+      if (!gameOver) return;
+      
+      // Overlay
+      ctx.fillStyle = gameResult === 'correct' ? 
+                      'rgba(0, 100, 0, 0.7)' : 
+                      'rgba(100, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Result text
+      ctx.fillStyle = colors.textLight;
+      ctx.font = 'bold 36px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        gameResult === 'correct' ? 'CORRECT!' : 'INCORRECT!', 
+        canvas.width / 2, 
+        canvas.height / 2 - 50
+      );
+      
+      // Draw restart button
+      const btnWidth = 200;
+      const btnHeight = 60;
+      const btnX = canvas.width / 2 - btnWidth / 2;
+      const btnY = canvas.height / 2 + 30;
+      
+      drawPixelatedRect(btnX, btnY, btnWidth, btnHeight, colors.questionBg);
+      
+      ctx.fillStyle = colors.textLight;
+      ctx.font = '24px sans-serif';
+      ctx.fillText('RESTART', canvas.width / 2, btnY + btnHeight / 2);
+    }
+    
+    function update() {
+      if (gameOver) return;
+      
+      // Move items
+      items.forEach(item => {
+        item.x -= beltSpeed;
+        
+        // Loop items back to right side when they go off screen
+        if (item.x + item.width < 0) {
+          // Find rightmost item
+          let rightmostX = -Infinity;
+          items.forEach(i => {
+            rightmostX = Math.max(rightmostX, i.x + i.width);
+          });
+          item.x = rightmostX + itemGap;
+          item.playedSound = false;
+        }
+      });
+    }
+    
+    function render() {
+      // Clear canvas
+      ctx.fillStyle = colors.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      drawConveyorBelt();
+      drawTapZone();
+      drawItems();
+      drawQuestion();
+      drawGameOver();
+    }
+    
+    function gameLoop() {
+      update();
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Handle click/tap
+    canvas.addEventListener('click', (e) => {
+      if (gameOver) {
+        // Restart game if it's over
+        location.reload();
+        return;
+      }
+      
+      // Convert click position to canvas coordinates
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      
+      // Check if click is in tap zone
+      if (x >= tapZone.x && x <= tapZone.x + tapZone.width &&
+          y >= tapZone.y && y <= tapZone.y + tapZone.height) {
+        
+        // Check if any item is in the tap zone
+        let tapped = false;
+        items.forEach(item => {
+          // Check for overlap between item and tap zone
+          if (item.x < tapZone.x + tapZone.width && 
+              item.x + item.width > tapZone.x) {
+            tapped = true;
+            gameOver = true;
+            
+            if (item.correct) {
+              gameResult = 'correct';
+              playCorrect();
+            } else {
+              gameResult = 'incorrect';
+              playIncorrect();
+            }
+          }
+        });
+        
+        // If no item was tapped in the zone
+        if (!tapped) {
+          playIncorrect();
+        }
+      }
+    });
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

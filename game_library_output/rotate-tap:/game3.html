@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Rotate-Tap Quiz Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      background-color: #000;
+      image-rendering: pixelated;
+    }
+    #gameContainer {
+      position: relative;
+    }
+    #restartBtn {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: #444;
+      color: #fff;
+      border: 4px solid #888;
+      padding: 8px 16px;
+      font-family: sans-serif;
+      font-size: 16px;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+  </div>
+
+  <script>
+    // Game setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restartBtn');
+    
+    // Detect device type and set canvas size
+    const isMobile = window.innerWidth <= 768;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game colors (8-bit style palette)
+    const COLORS = {
+      background: '#111122',
+      wheel: ['#d95763', '#43a09a', '#8f563b', '#6b692f'],
+      pointer: '#f8e077',
+      correct: '#56ac4d',
+      incorrect: '#d95763',
+      text: '#f2f2f2',
+      shadow: '#222034',
+      border: '#4b5bab',
+      decoration: '#8f563b'
+    };
+
+    // Game state
+    let gameState = {
+      rotation: 0,
+      rotationSpeed: 0.03,
+      wheelRadius: isMobile ? 120 : 180,
+      isSpinning: true,
+      selectedSegment: null,
+      gameOver: false,
+      wobble: 0,
+      wobbleDirection: 1,
+      wobbleAmount: 0.005,
+      pointerPulse: 0,
+      decorations: []
+    };
+
+    // Answer options
+    const options = ["Paris", "London", "Berlin", "Madrid"];
+    const correctAnswer = "Paris";
+    const segmentCount = options.length;
+    
+    // Initialize decorative elements
+    function initDecorations() {
+      const decorCount = 8;
+      for(let i = 0; i < decorCount; i++) {
+        gameState.decorations.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: 5 + Math.random() * 15,
+          pulse: Math.random() * Math.PI * 2
+        });
+      }
+    }
+    
+    // Audio context and sounds
+    let audioCtx;
+    
+    function initAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    function playSound(type) {
+      if (!audioCtx) initAudio();
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      if (type === 'click') {
+        oscillator.type = 'square';
+        oscillator.frequency.value = 220;
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.2);
+      } else if (type === 'correct') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.1);
+        oscillator.frequency.setValueAtTime(523, audioCtx.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.3);
+      } else if (type === 'incorrect') {
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+        oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.3);
+      }
+    }
+    
+    // Draw wheel with pixelated style
+    function drawWheel() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const radius = gameState.wheelRadius;
+      
+      // Apply wobble effect
+      gameState.wobble += gameState.wobbleDirection * gameState.wobbleAmount;
+      if (Math.abs(gameState.wobble) > 0.03) {
+        gameState.wobbleDirection *= -1;
+      }
+      
+      // Draw wheel segments
+      for (let i = 0; i < segmentCount; i++) {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(gameState.rotation + (i * Math.PI * 2 / segmentCount) + gameState.wobble);
+        
+        // Draw segment with pixelated effect
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, radius, -Math.PI / segmentCount, Math.PI / segmentCount);
+        ctx.lineTo(0, 0);
+        ctx.fillStyle = COLORS.wheel[i % COLORS.wheel.length];
+        ctx.fill();
+        
+        // Add segment border
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = COLORS.border;
+        ctx.stroke();
+        
+        // Draw answer text
+        ctx.fillStyle = COLORS.text;
+        ctx.font = `${isMobile ? 16 : 22}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Position text in middle of segment
+        const textRadius = radius * 0.7;
+        ctx.fillText(options[i], 0, -textRadius);
+        
+        // Pixelate text effect
+        ctx.restore();
+      }
+      
+      // Draw wheel border
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = COLORS.border;
+      ctx.stroke();
+      
+      // Draw center of wheel
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 20, 0, Math.PI * 2);
+      ctx.fillStyle = COLORS.border;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 12, 0, Math.PI * 2);
+      ctx.fillStyle = COLORS.shadow;
+      ctx.fill();
+    }
+    
+    // Draw selection pointer
+    function drawPointer() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2 - gameState.wheelRadius - 25;
+      
+      // Pulsing effect
+      gameState.pointerPulse += 0.1;
+      const pulseScale = 1 + Math.sin(gameState.pointerPulse) * 0.2;
+      
+      // Pointer
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.scale(pulseScale, pulseScale);
+      
+      // Triangle pointer
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-15, -20);
+      ctx.lineTo(15, -20);
+      ctx.closePath();
+      ctx.fillStyle = COLORS.pointer;
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = COLORS.border;
+      ctx.stroke();
+      
+      ctx.restore();
+    }
+    
+    // Draw decorations
+    function drawDecorations() {
+      gameState.decorations.forEach(decor => {
+        decor.pulse += 0.05;
+        const pulseSize = decor.size + Math.sin(decor.pulse) * 2;
+        
+        // Draw pixelated decoration
+        ctx.fillStyle = COLORS.decoration;
+        ctx.fillRect(
+          Math.floor(decor.x / 4) * 4, 
+          Math.floor(decor.y / 4) * 4, 
+          Math.floor(pulseSize / 4) * 4, 
+          Math.floor(pulseSize / 4) * 4
+        );
+        
+        ctx.strokeStyle = COLORS.border;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          Math.floor(decor.x / 4) * 4, 
+          Math.floor(decor.y / 4) * 4, 
+          Math.floor(pulseSize / 4) * 4, 
+          Math.floor(pulseSize / 4) * 4
+        );
+      });
+    }
+    
+    // Draw question text
+    function drawQuestion() {
+      const question = "What is the capital of France?";
+      
+      ctx.fillStyle = COLORS.text;
+      ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      // Add pixelated text shadow effect
+      ctx.fillStyle = COLORS.shadow;
+      ctx.fillText(question, canvas.width / 2 + 3, 50 + 3);
+      
+      ctx.fillStyle = COLORS.text;
+      ctx.fillText(question, canvas.width / 2, 50);
+    }
+    
+    // Calculate which segment is at the pointer
+    function getSelectedSegment() {
+      const segmentAngle = Math.PI * 2 / segmentCount;
+      let normalizedRotation = gameState.rotation % (Math.PI * 2);
+      if (normalizedRotation < 0) normalizedRotation += Math.PI * 2;
+      
+      // The top segment is at 3*PI/2 (270 degrees)
+      const topPosition = 3 * Math.PI / 2;
+      let normalizedTopPosition = (topPosition - normalizedRotation) % (Math.PI * 2);
+      if (normalizedTopPosition < 0) normalizedTopPosition += Math.PI * 2;
+      
+      // Find which segment is at the top
+      return Math.floor(normalizedTopPosition / segmentAngle) % segmentCount;
+    }
+    
+    // Show result
+    function showResult(isCorrect) {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      
+      // Draw result box
+      ctx.fillStyle = isCorrect ? COLORS.correct : COLORS.incorrect;
+      ctx.fillRect(centerX - 150, centerY - 60, 300, 120);
+      
+      // Draw result border
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = COLORS.border;
+      ctx.strokeRect(centerX - 150, centerY - 60, 300, 120);
+      
+      // Draw result text
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '28px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(isCorrect ? 'CORRECT!' : 'WRONG!', centerX, centerY);
+      
+      // Show restart button
+      restartBtn.style.display = 'block';
+    }
+    
+    // Game initialization
+    function initGame() {
+      gameState.rotation = 0;
+      gameState.isSpinning = true;
+      gameState.selectedSegment = null;
+      gameState.gameOver = false;
+      gameState.wobble = 0;
+      gameState.pointerPulse = 0;
+      gameState.decorations = [];
+      initDecorations();
+      restartBtn.style.display = 'none';
+    }
+    
+    // Game loop
+    function gameLoop() {
+      // Clear canvas
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw decorations
+      drawDecorations();
+      
+      // Draw question
+      drawQuestion();
+      
+      // Update wheel rotation if spinning
+      if (gameState.isSpinning) {
+        gameState.rotation += gameState.rotationSpeed;
+      }
+      
+      // Draw wheel
+      drawWheel();
+      
+      // Draw pointer
+      drawPointer();
+      
+      // Request next frame
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Handle mouse/touch input
+    canvas.addEventListener('click', function(e) {
+      if (gameState.gameOver) return;
+      
+      if (gameState.isSpinning) {
+        gameState.isSpinning = false;
+        gameState.selectedSegment = getSelectedSegment();
+        playSound('click');
+        
+        // Small delay before showing result
+        setTimeout(() => {
+          const isCorrect = options[gameState.selectedSegment] === correctAnswer;
+          playSound(isCorrect ? 'correct' : 'incorrect');
+          gameState.gameOver = true;
+          showResult(isCorrect);
+        }, 500);
+      }
+    });
+    
+    // Restart button
+    restartBtn.addEventListener('click', function() {
+      initGame();
+    });
+    
+    // Start game
+    initGame();
+    gameLoop();
+  </script>
+</body>
+</html>

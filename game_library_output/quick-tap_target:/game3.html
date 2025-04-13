@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        button {
+            position: absolute;
+            display: none;
+            padding: 10px 20px;
+            font-family: sans-serif;
+            background-color: #5a6988;
+            color: white;
+            border: 4px solid #8095bf;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Check if mobile
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Colors (limited palette)
+        const COLORS = {
+            bg: '#0f380f',
+            bgShade: '#306230',
+            text: '#e0f8d0',
+            highlight: '#88c070',
+            target1: '#8bac0f',
+            target2: '#9bbc0f',
+            target3: '#306848',
+            target4: '#8ba06f',
+            correct: '#30a860',
+            wrong: '#a83030',
+            timer: '#e0f8d0',
+            outline: '#0f1f0f'
+        };
+        
+        // Game variables
+        let targets = [];
+        let gameOver = false;
+        let gameStart = Date.now();
+        let gameResult = null;
+        let timerWidth = canvas.width - 40;
+        const gameDuration = 10000; // 10 seconds
+        
+        // Answers (first one is correct)
+        const answers = ["Paris", "London", "Berlin", "Madrid"];
+        
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Simple sound function
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Particle system
+        let particles = [];
+        
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 4 + 2;
+                this.speedX = Math.random() * 3 - 1.5;
+                this.speedY = Math.random() * 3 - 1.5;
+                this.color = color;
+                this.life = 30;
+            }
+            
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life--;
+                if (this.life > 0) this.size -= 0.1;
+            }
+            
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(Math.floor(this.x), Math.floor(this.y), Math.floor(this.size), Math.floor(this.size));
+            }
+        }
+        
+        // Create particles
+        function createParticles(x, y, color, amount = 20) {
+            for (let i = 0; i < amount; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+        
+        // Target class
+        class Target {
+            constructor(answer, isCorrect) {
+                this.text = answer;
+                this.isCorrect = isCorrect;
+                this.width = 120;
+                this.height = 60;
+                this.x = Math.random() * (canvas.width - this.width - 40) + 20;
+                this.y = Math.random() * (canvas.height - this.height - 140) + 100;
+                this.speedX = (Math.random() - 0.5) * 2;
+                this.speedY = (Math.random() - 0.5) * 2;
+                this.flashTimer = 10;
+                this.color = isCorrect ? COLORS.target1 : [COLORS.target2, COLORS.target3, COLORS.target4][Math.floor(Math.random() * 3)];
+                this.active = true;
+            }
+            
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.flashTimer--;
+                
+                // Bounce off edges
+                if (this.x <= 10 || this.x + this.width >= canvas.width - 10) {
+                    this.speedX *= -1;
+                    this.x = Math.max(10, Math.min(this.x, canvas.width - this.width - 10));
+                }
+                if (this.y <= 90 || this.y + this.height >= canvas.height - 10) {
+                    this.speedY *= -1;
+                    this.y = Math.max(90, Math.min(this.y, canvas.height - this.height - 10));
+                }
+            }
+            
+            draw() {
+                // Draw target with pixelated appearance
+                ctx.fillStyle = this.flashTimer > 0 ? COLORS.highlight : this.color;
+                // Draw chunky target with pixel-art style outline
+                ctx.fillStyle = COLORS.outline;
+                ctx.fillRect(Math.floor(this.x - 4), Math.floor(this.y - 4), this.width + 8, this.height + 8);
+                ctx.fillStyle = this.flashTimer > 0 ? COLORS.highlight : this.color;
+                ctx.fillRect(Math.floor(this.x), Math.floor(this.y), this.width, this.height);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.text, Math.floor(this.x + this.width / 2), Math.floor(this.y + this.height / 2 + 7));
+            }
+            
+            checkClick(x, y) {
+                return x >= this.x && x <= this.x + this.width && 
+                       y >= this.y && y <= this.y + this.height && 
+                       this.active;
+            }
+        }
+        
+        // Initialize targets
+        function initGame() {
+            gameStart = Date.now();
+            gameOver = false;
+            gameResult = null;
+            targets = [];
+            particles = [];
+            restartBtn.style.display = 'none';
+            
+            // Shuffle answers
+            const shuffledAnswers = [...answers];
+            for (let i = shuffledAnswers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledAnswers[i], shuffledAnswers[j]] = [shuffledAnswers[j], shuffledAnswers[i]];
+            }
+            
+            // Create targets with delay
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                setTimeout(() => {
+                    targets.push(new Target(
+                        shuffledAnswers[i], 
+                        shuffledAnswers[i] === answers[0]
+                    ));
+                    playSound(200 + i * 50, 0.1);
+                }, i * 300);
+            }
+        }
+        
+        // Handle click/tap
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / (rect.right - rect.left) * canvas.width;
+            const y = (e.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height;
+            
+            for (const target of targets) {
+                if (target.checkClick(x, y)) {
+                    target.active = false;
+                    
+                    if (target.isCorrect) {
+                        gameResult = "correct";
+                        playSound(600, 0.3);
+                        createParticles(x, y, COLORS.correct, 40);
+                    } else {
+                        gameResult = "wrong";
+                        playSound(200, 0.3, 'sawtooth');
+                        createParticles(x, y, COLORS.wrong, 40);
+                    }
+                    
+                    gameOver = true;
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 1000);
+                    break;
+                }
+            }
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas with background pattern
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background pattern (8-bit style)
+            ctx.fillStyle = COLORS.bgShade;
+            for (let i = 0; i < canvas.width; i += 20) {
+                for (let j = 0; j < canvas.height; j += 20) {
+                    if ((i + j) % 40 === 0) {
+                        ctx.fillRect(i, j, 10, 10);
+                    }
+                }
+            }
+            
+            // Draw timer bar
+            const elapsed = Date.now() - gameStart;
+            const timeLeft = Math.max(0, gameDuration - elapsed);
+            const barWidth = (timeLeft / gameDuration) * timerWidth;
+            
+            ctx.fillStyle = COLORS.outline;
+            ctx.fillRect(18, 68, timerWidth + 4, 14);
+            ctx.fillStyle = COLORS.timer;
+            ctx.fillRect(20, 70, barWidth, 10);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 50);
+            
+            // Draw targets
+            for (const target of targets) {
+                target.update();
+                target.draw();
+            }
+            
+            // Draw particles
+            particles.forEach((particle, index) => {
+                particle.update();
+                particle.draw();
+                if (particle.life <= 0) {
+                    particles.splice(index, 1);
+                }
+            });
+            
+            // Game over
+            if (gameOver) {
+                ctx.fillStyle = gameResult === 'correct' ? COLORS.correct : COLORS.wrong;
+                ctx.globalAlpha = 0.7;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalAlpha = 1;
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameResult === 'correct' ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+            
+            // Time's up
+            if (!gameOver && timeLeft <= 0) {
+                gameOver = true;
+                gameResult = "timeout";
+                playSound(150, 0.5, 'sawtooth');
+                
+                setTimeout(() => {
+                    restartBtn.style.display = 'block';
+                }, 1000);
+            }
+            
+            requestAnimationFrame(draw);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', initGame);
+        
+        // Start game
+        initGame();
+        draw();
+    </script>
+</body>
+</html>

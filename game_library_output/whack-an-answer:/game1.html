@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Whack-An-Answer</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      cursor: default;
+    }
+    canvas {
+      border: 4px solid #333;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game settings
+    const colors = {
+      sky: '#87CEEB',
+      ground: '#8B4513',
+      hole: '#3A2A1D',
+      correctAnswer: '#00FF00',
+      wrongAnswer: '#FF6347',
+      text: '#FFFFFF',
+      hammer: '#555555',
+      woodenHandle: '#CD853F'
+    };
+    
+    // Mallet cursor
+    const malletCursor = new Image();
+    malletCursor.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAhdJREFUWEftlj1rFUEUhp93doNY+ANEm0QQFGxEsLGwErRQEQsRsRDBQkSwsxHBLxALC8HGQrCwEfwBaiOCjSBYiGBlof4Au3vHd4ZZ2M3eubtZQsCFZWfOnHnnmXPmY+A/l+zVfmb2GTgSCpvZXWAIeBc+zXS+KmhmH4BjoZCkl8BFYA78ltQ3swvApVD+kaQXsfhKAWZ2D7jRcCJ3JI3N7AxwF9gXPj2UNA3/rwLHw/s3STejfccCzOwocC/sdDfifCFpT7NuizsS4hzwKGzyp6Qd7QDOE9PALPZelIaVgDbxvaSh5r2Z+e6vAM+Bq5KWVgIws7/u3Mx2AneBkZ4ASRNmdgA4A9zvBZDE9wOXJC2E/E+Ap8DbhKvNGm+Bm5K+rvQFzOwQMA3sAD5JGq2rYWYnw1fk/bcMIHrxWNIVM3OHr4G7YcEPkk7VALE1TvoKGJc0F7s4c1/RzLzNbwMnJH3rB8DBsNhxSRKNxCwdLyO3kyGtqwJGgDfAQUlfc84HA/lySZpNXEcBDklz7TpOcszsNXAqBIrGpKeAZJHMc3tNz+x9E6BcXcHMvJP5yDUraTjzrpfTzAxQHmE5AOq6ZNoBXLdbQX9CgFiLvdTsb9xFH4CZHR5gTLuluLXacTc/yCVlZnWTPr7nHAuDKDdbZ9A90LUHoA5ofA9AAcjmgaIF5+eBsg1r2zBrw4VlWI7ibD7o2oYN+AD+AU9nbiABJ6PeAAAAAElFTkSuQmCC';
+    
+    // Game state
+    let gameActive = true;
+    let wrongClicks = 0;
+    const MAX_WRONG_CLICKS = 3;
+    let holes = [];
+    const NUM_HOLES = 6;
+    let answers = [
+      { text: "Paris", correct: true },
+      { text: "London", correct: false },
+      { text: "Berlin", correct: false },
+      { text: "Rome", correct: false }
+    ];
+    
+    // Sound effects
+    function playSound(type) {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      if (type === 'correct') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+        oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+        oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.3);
+      } else if (type === 'wrong') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(311.13, audioContext.currentTime); // D#4
+        oscillator.frequency.setValueAtTime(233.08, audioContext.currentTime + 0.1); // A#3
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2);
+      } else if (type === 'pop') {
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(311.13, audioContext.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.1);
+      }
+    }
+    
+    // Hole class
+    class Hole {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 40;
+        this.activeAnswer = null;
+        this.animationState = 0; // 0: inactive, 1-10: appearing, 11-20: active, 21-30: disappearing
+        this.cooldown = 0;
+        this.warningTime = 0;
+      }
+      
+      update() {
+        if (this.cooldown > 0) {
+          this.cooldown--;
+          if (this.cooldown < 15 && this.cooldown % 5 === 0) {
+            this.warningTime = 5; // Set warning flash
+          }
+        }
+        
+        if (this.warningTime > 0) {
+          this.warningTime--;
+        }
+        
+        if (this.animationState > 0 && this.animationState < 30) {
+          this.animationState++;
+          if (this.animationState === 30) {
+            this.animationState = 0;
+            this.activeAnswer = null;
+          }
+        }
+      }
+      
+      setAnswer(answer) {
+        if (this.cooldown === 0 && this.animationState === 0) {
+          this.activeAnswer = answer;
+          this.animationState = 1;
+          playSound('pop');
+        }
+      }
+      
+      draw() {
+        // Draw hole
+        ctx.fillStyle = colors.hole;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, this.radius, this.radius * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Warning flash
+        if (this.warningTime > 0 && this.warningTime % 2 === 0) {
+          ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
+          ctx.beginPath();
+          ctx.ellipse(this.x, this.y, this.radius, this.radius * 0.4, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        
+        // Draw dirt mound around hole
+        ctx.fillStyle = colors.ground;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y + 5, this.radius + 10, (this.radius + 10) * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, this.radius + 10, (this.radius + 10) * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw hole
+        ctx.fillStyle = colors.hole;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, this.radius, this.radius * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw answer if active
+        if (this.activeAnswer && this.animationState > 0) {
+          let popUpHeight = 0;
+          
+          // Calculate pop-up height based on animation state
+          if (this.animationState <= 10) {
+            // Popping up
+            popUpHeight = (this.animationState / 10) * 50;
+          } else if (this.animationState <= 20) {
+            // Fully visible
+            popUpHeight = 50;
+          } else {
+            // Popping down
+            popUpHeight = 50 - ((this.animationState - 20) / 10) * 50;
+          }
+          
+          // Draw answer bubble
+          ctx.fillStyle = this.activeAnswer.correct ? colors.correctAnswer : colors.wrongAnswer;
+          const bubbleWidth = ctx.measureText(this.activeAnswer.text).width + 20;
+          const bubbleHeight = 30;
+          const bubbleX = this.x - bubbleWidth / 2;
+          const bubbleY = this.y - popUpHeight - bubbleHeight / 2;
+          
+          // Pixelated bubble
+          ctx.fillRect(
+            Math.floor(bubbleX),
+            Math.floor(bubbleY),
+            Math.ceil(bubbleWidth),
+            Math.ceil(bubbleHeight)
+          );
+          
+          // Draw text
+          ctx.fillStyle = colors.text;
+          ctx.font = '16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(this.activeAnswer.text, this.x, this.y - popUpHeight);
+        }
+      }
+      
+      contains(x, y) {
+        const distance = Math.sqrt(Math.pow(x - this.x, 2) + Math.pow(y - this.y, 2));
+        return distance < this.radius && this.activeAnswer && this.animationState > 5 && this.animationState < 25;
+      }
+      
+      hit() {
+        if (this.activeAnswer) {
+          const wasCorrect = this.activeAnswer.correct;
+          this.animationState = 21; // Start disappearing
+          if (wasCorrect) {
+            playSound('correct');
+            gameActive = false;
+            setTimeout(showRestartButton, 1000);
+          } else {
+            playSound('wrong');
+            wrongClicks++;
+            if (wrongClicks >= MAX_WRONG_CLICKS) {
+              gameActive = false;
+              setTimeout(showRestartButton, 1000);
+            }
+          }
+        }
+      }
+    }
+    
+    // Initialize holes
+    function initializeHoles() {
+      holes = [];
+      for (let i = 0; i < NUM_HOLES; i++) {
+        const row = Math.floor(i / 3);
+        const col = i % 3;
+        const x = 150 + col * 250;
+        const y = 300 + row * 150;
+        holes.push(new Hole(x, y));
+      }
+    }
+    
+    // Show a new answer
+    function showNewAnswer() {
+      if (!gameActive) return;
+      
+      // Find available holes
+      const availableHoles = holes.filter(hole => hole.animationState === 0 && hole.cooldown === 0);
+      if (availableHoles.length === 0) return;
+      
+      // Choose a random hole
+      const randomHoleIndex = Math.floor(Math.random() * availableHoles.length);
+      const selectedHole = availableHoles[randomHoleIndex];
+      
+      // Determine if we should show the correct answer
+      // Make correct answer appear less frequently (20% chance)
+      const showCorrectAnswer = Math.random() < 0.2;
+      
+      // Select answer
+      let selectedAnswer;
+      if (showCorrectAnswer) {
+        selectedAnswer = answers.find(answer => answer.correct);
+      } else {
+        const wrongAnswers = answers.filter(answer => !answer.correct);
+        selectedAnswer = wrongAnswers[Math.floor(Math.random() * wrongAnswers.length)];
+      }
+      
+      // Set the answer for the hole
+      selectedHole.setAnswer(selectedAnswer);
+      
+      // Set cooldown for this hole
+      selectedHole.cooldown = 100 + Math.floor(Math.random() * 100);
+    }
+    
+    // Draw background
+    function drawBackground() {
+      // Sky
+      ctx.fillStyle = colors.sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Ground
+      ctx.fillStyle = colors.ground;
+      ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
+      
+      // Draw pixelated clouds
+      ctx.fillStyle = 'white';
+      drawPixelatedCloud(100, 100, 80, 40);
+      drawPixelatedCloud(400, 150, 100, 50);
+      drawPixelatedCloud(700, 80, 70, 30);
+    }
+    
+    function drawPixelatedCloud(x, y, width, height) {
+      const pixelSize = 8;
+      const cloudShape = [
+        [0, 0, 1, 1, 1, 0, 0, 0],
+        [0, 1, 1, 1, 1, 1, 1, 0],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [0, 1, 1, 1, 1, 1, 0, 0]
+      ];
+      
+      const scaleX = width / (cloudShape[0].length * pixelSize);
+      const scaleY = height / (cloudShape.length * pixelSize);
+      
+      for (let row = 0; row < cloudShape.length; row++) {
+        for (let col = 0; col < cloudShape[row].length; col++) {
+          if (cloudShape[row][col] === 1) {
+            ctx.fillRect(
+              Math.floor(x + col * pixelSize * scaleX),
+              Math.floor(y + row * pixelSize * scaleY),
+              Math.ceil(pixelSize * scaleX),
+              Math.ceil(pixelSize * scaleY)
+            );
+          }
+        }
+      }
+    }
+    
+    // Draw game elements
+    function drawGame() {
+      drawBackground();
+      
+      // Draw question
+      ctx.fillStyle = 'black';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText("What is the capital of France?", canvas.width / 2, 80);
+      
+      // Draw holes
+      holes.forEach(hole => hole.draw());
+      
+      // Draw wrong clicks indicator
+      ctx.fillStyle = 'white';
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Wrong clicks: ${wrongClicks}/${MAX_WRONG_CLICKS}`, 20, 40);
+    }
+    
+    function showRestartButton() {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(canvas.width / 2 - 100, canvas.height / 2 - 35, 200, 70);
+      
+      ctx.fillStyle = 'white';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText("Restart", canvas.width / 2, canvas.height / 2);
+    }
+    
+    // Game loop
+    function gameLoop() {
+      // Update holes
+      holes.forEach(hole => hole.update());
+      
+      // Randomly show new answers
+      if (gameActive && Math.random() < 0.05) {
+        showNewAnswer();
+      }
+      
+      // Draw everything
+      drawGame();
+      
+      // Continue loop
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Initialize game
+    initializeHoles();
+    gameLoop();
+    
+    // Handle mouse/touch events
+    canvas.addEventListener('click', function(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+      
+      if (!gameActive) {
+        // Check if restart button is clicked
+        if (x > canvas.width / 2 - 100 && x < canvas.width / 2 + 100 &&
+            y > canvas.height / 2 - 35 && y < canvas.height / 2 + 35) {
+          // Reset game
+          gameActive = true;
+          wrongClicks = 0;
+          initializeHoles();
+        }
+        return;
+      }
+      
+      // Check if any hole is clicked
+      for (const hole of holes) {
+        if (hole.contains(x, y)) {
+          hole.hit();
+          break;
+        }
+      }
+    });
+    
+    // Custom cursor
+    canvas.addEventListener('mousemove', function(e) {
+      canvas.style.cursor = 'none';
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Draw custom cursor during the next frame
+      const originalDraw = holes[0].draw;
+      holes[0].draw = function() {
+        originalDraw.call(this);
+        if (malletCursor.complete) {
+          ctx.drawImage(malletCursor, mouseX - 16, mouseY - 16, 32, 32);
+        }
+      };
+      
+      // Restore original draw method next frame
+      setTimeout(() => {
+        holes[0].draw = originalDraw;
+      }, 16);
+    });
+
+    // Handle touch events for mobile
+    canvas.addEventListener('touchstart', function(event) {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const touch = event.touches[0];
+      const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+      
+      if (!gameActive) {
+        // Check if restart button is clicked
+        if (x > canvas.width / 2 - 100 && x < canvas.width / 2 + 100 &&
+            y > canvas.height / 2 - 35 && y < canvas.height / 2 + 35) {
+          // Reset game
+          gameActive = true;
+          wrongClicks = 0;
+          initializeHoles();
+        }
+        return;
+      }
+      
+      // Check if any hole is clicked
+      for (const hole of holes) {
+        if (hole.contains(x, y)) {
+          hole.hit();
+          break;
+        }
+      }
+    }, { passive: false });
+    
+    // Resize canvas for mobile if needed
+    function checkMobile() {
+      if (window.innerWidth <= 500) {
+        canvas.width = 360;
+        canvas.height = 640;
+      }
+    }
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+  </script>
+</body>
+</html>

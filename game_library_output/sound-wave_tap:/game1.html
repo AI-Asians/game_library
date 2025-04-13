@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sound Wave True/False Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            overflow: hidden;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+            width: 100%;
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="instructions">Tap when the wave matches TRUE or FALSE</div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        let width = 800;
+        let height = 600;
+        
+        // Check if mobile
+        if (window.innerWidth <= 480) {
+            width = 360;
+            height = 640;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Game variables
+        const colors = [
+            '#0f380f', '#306230', '#8bac0f', '#9bbc0f',  // Green tones
+            '#472b1b', '#854c30', '#ab5236', '#d2aa99',  // Brown tones
+            '#333333', '#666666', '#999999', '#cccccc',  // Gray tones
+            '#000000', '#ffffff', '#ff0000', '#0000ff'   // B&W + R&B
+        ];
+        
+        let gameActive = true;
+        let gameResult = null;
+        let correctAnswer = false; // The Great Wall of China is NOT visible from space
+        let waveSpeed = 0.05;
+        let waveAmplitude = 0.5;
+        let waveFrequency = 0.02;
+        let time = 0;
+        let difficulty = 1;
+        
+        // Sound-related variables
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Generate simple sounds
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'click') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            }
+        }
+        
+        // Draw pixelated wave
+        function drawWave() {
+            const waveHeight = height * 0.6;
+            const waveY = height * 0.55;
+            const segments = 40; // Pixelated effect
+            
+            ctx.lineWidth = 6;
+            ctx.strokeStyle = colors[2];
+            
+            // Draw base wave line
+            ctx.beginPath();
+            
+            for (let x = 0; x <= width; x += width/segments) {
+                const normalizedX = x / width;
+                
+                // Create complex wave pattern
+                const y = waveY + 
+                    Math.sin(normalizedX * Math.PI * 10 + time * 2) * waveHeight * 0.05 * difficulty +
+                    Math.sin(normalizedX * Math.PI * 5 + time * 3) * waveHeight * 0.15 +
+                    Math.sin(normalizedX * Math.PI * 2 + time) * waveHeight * 0.3 * waveAmplitude;
+                
+                if (x === 0) {
+                    ctx.moveTo(x, Math.round(y));
+                } else {
+                    ctx.lineTo(x, Math.round(y));
+                }
+            }
+            
+            ctx.stroke();
+            
+            // Draw true zone (upper wave area)
+            const trueY = waveY - waveHeight * 0.4;
+            ctx.fillStyle = colors[3];
+            ctx.strokeStyle = colors[15];
+            ctx.lineWidth = 3;
+            
+            drawPixelRect(width/2 - 80, trueY - 20, 160, 40);
+            
+            ctx.fillStyle = colors[0];
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("TRUE", width/2, trueY + 7);
+            
+            // Draw false zone (lower wave area)
+            const falseY = waveY + waveHeight * 0.4;
+            ctx.fillStyle = colors[3];
+            ctx.strokeStyle = colors[15];
+            
+            drawPixelRect(width/2 - 80, falseY - 20, 160, 40);
+            
+            ctx.fillStyle = colors[0];
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("FALSE", width/2, falseY + 7);
+            
+            // Show scan lines effect
+            drawScanLines();
+        }
+        
+        function drawPixelRect(x, y, w, h) {
+            // Draw pixelated rectangle
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+            ctx.strokeRect(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+            
+            // Add pixelated corners
+            ctx.fillStyle = colors[15];
+            ctx.fillRect(Math.floor(x), Math.floor(y), 3, 3);
+            ctx.fillRect(Math.floor(x + w - 3), Math.floor(y), 3, 3);
+            ctx.fillRect(Math.floor(x), Math.floor(y + h - 3), 3, 3);
+            ctx.fillRect(Math.floor(x + w - 3), Math.floor(y + h - 3), 3, 3);
+        }
+        
+        function drawScanLines() {
+            // Draw retro scan lines
+            ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
+            for (let y = 0; y < height; y += 4) {
+                ctx.fillRect(0, y, width, 2);
+            }
+            
+            // Random glitch effect
+            if (Math.random() < 0.01) {
+                ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+                const glitchHeight = Math.random() * 10 + 5;
+                const glitchY = Math.random() * height;
+                ctx.fillRect(0, glitchY, width, glitchHeight);
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = colors[15];
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // Draw question with shadow for readability
+            ctx.fillStyle = colors[0];
+            ctx.fillRect(width/2 - 300, height * 0.15 - 25, 600, 60);
+            ctx.strokeStyle = colors[15];
+            ctx.lineWidth = 3;
+            ctx.strokeRect(width/2 - 300, height * 0.15 - 25, 600, 60);
+            
+            ctx.fillStyle = colors[3];
+            ctx.fillText("The Great Wall of China is visible from space.", width/2, height * 0.15 + 10);
+        }
+        
+        // Draw result screen
+        function drawResult() {
+            ctx.fillStyle = gameResult ? colors[2] : colors[14];
+            ctx.fillRect(width/2 - 150, height/2 - 100, 300, 150);
+            ctx.strokeStyle = colors[15];
+            ctx.lineWidth = 4;
+            ctx.strokeRect(width/2 - 150, height/2 - 100, 300, 150);
+            
+            ctx.fillStyle = colors[15];
+            ctx.font = '30px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gameResult ? "CORRECT!" : "WRONG!", width/2, height/2 - 40);
+            
+            // Show correct answer
+            ctx.font = '16px sans-serif';
+            ctx.fillText("The Great Wall is NOT visible", width/2, height/2);
+            ctx.fillText("from space with the naked eye.", width/2, height/2 + 25);
+            
+            // Draw restart button
+            ctx.fillStyle = colors[3];
+            ctx.fillRect(width/2 - 60, height/2 + 50, 120, 40);
+            ctx.strokeStyle = colors[15];
+            ctx.lineWidth = 3;
+            ctx.strokeRect(width/2 - 60, height/2 + 50, 120, 40);
+            
+            ctx.fillStyle = colors[0];
+            ctx.font = '20px sans-serif';
+            ctx.fillText("RESTART", width/2, height/2 + 75);
+        }
+        
+        // Draw visual tap effect
+        function drawTapEffect(x, y, frame) {
+            const size = frame * 10;
+            const alpha = 1 - frame / 5;
+            
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Pixelate the circle
+            const segments = 8;
+            const angleStep = Math.PI * 2 / segments;
+            
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
+            for (let i = 0; i < segments; i++) {
+                const angle = i * angleStep;
+                const pixelX = x + Math.cos(angle) * size;
+                const pixelY = y + Math.sin(angle) * size;
+                ctx.fillRect(pixelX - 2, pixelY - 2, 4, 4);
+            }
+        }
+        
+        // Handle tapping on the wave
+        let tapEffects = [];
+        function handleTap(x, y) {
+            if (!gameActive) {
+                // Check if restart button was clicked
+                if (gameResult !== null && 
+                    x > width/2 - 60 && x < width/2 + 60 && 
+                    y > height/2 + 50 && y < height/2 + 90) {
+                    restartGame();
+                    return;
+                }
+                return;
+            }
+            
+            // Add tap visual effect
+            tapEffects.push({x, y, frame: 0});
+            
+            // Play tap sound
+            playSound('click');
+            
+            // Get wave position at center of screen
+            const waveY = height * 0.55;
+            const waveHeight = height * 0.6;
+            
+            // Add complexity to the wave
+            const waveFactor = 
+                Math.sin(0.5 * Math.PI * 10 + time * 2) * waveHeight * 0.05 * difficulty +
+                Math.sin(0.5 * Math.PI * 5 + time * 3) * waveHeight * 0.15 +
+                Math.sin(0.5 * Math.PI * 2 + time) * waveHeight * 0.3 * waveAmplitude;
+            
+            const currentWaveY = waveY + waveFactor;
+            
+            // Determine if tap was in TRUE or FALSE zone
+            const trueZoneY = waveY - waveHeight * 0.4;
+            const falseZoneY = waveY + waveHeight * 0.4;
+            
+            const selectedTrue = Math.abs(y - trueZoneY) < Math.abs(y - falseZoneY) && 
+                                 Math.abs(y - trueZoneY) < 40;
+            const selectedFalse = Math.abs(y - falseZoneY) < Math.abs(y - trueZoneY) && 
+                                  Math.abs(y - falseZoneY) < 40;
+            
+            if (selectedTrue || selectedFalse) {
+                const playerAnswer = selectedTrue;
+                gameResult = playerAnswer === correctAnswer;
+                playSound(gameResult ? 'correct' : 'wrong');
+                gameActive = false;
+            }
+        }
+        
+        // Restart the game
+        function restartGame() {
+            gameActive = true;
+            gameResult = null;
+            time = 0;
+            difficulty = 1;
+            tapEffects = [];
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors[1];
+            ctx.fillRect(0, 0, width, height);
+            
+            // Draw game elements
+            if (gameActive) {
+                drawWave();
+                drawQuestion();
+                
+                // Update and draw tap effects
+                for (let i = tapEffects.length - 1; i >= 0; i--) {
+                    const effect = tapEffects[i];
+                    drawTapEffect(effect.x, effect.y, effect.frame);
+                    effect.frame += 0.2;
+                    if (effect.frame > 5) {
+                        tapEffects.splice(i, 1);
+                    }
+                }
+                
+                // Increase difficulty over time
+                time += waveSpeed;
+                if (time > 2) {
+                    difficulty = Math.min(2, 1 + (time - 2) / 5);
+                    waveSpeed = 0.05 + (time - 2) * 0.005;
+                }
+            } else {
+                drawResult();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle user interaction
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            handleTap(x, y);
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            handleTap(x, y);
+        }, {passive: false});
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

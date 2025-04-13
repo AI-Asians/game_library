@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Fan-Tap Question Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      max-width: 100%;
+      max-height: 100%;
+      border: 2px solid #fff;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size
+    const isMobile = window.innerWidth < window.innerHeight;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const colors = {
+      bg: '#0f0f2d',
+      question: '#f8f8f8',
+      fanBg1: '#d53032',
+      fanBg2: '#4ca3dd',
+      fanBorder: '#ffcc00',
+      fanHover: '#ffffff',
+      fanText: '#eeeeee',
+      correct: '#33cc33',
+      incorrect: '#ff3333',
+      arrow: '#ffcc00'
+    };
+    
+    // Fan configuration
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2 + canvas.height * 0.15;
+    const radius = Math.min(canvas.width, canvas.height) * 0.38;
+    const fanSegments = [
+      { text: "TRUE", value: true, angle: -Math.PI / 4, hover: false },
+      { text: "FALSE", value: false, angle: Math.PI / 4, hover: false }
+    ];
+    const fanSpread = Math.PI / 2; // 90 degrees
+    const fanWidth = Math.PI / 3; // 60 degrees
+    
+    let gameOver = false;
+    let correct = null;
+    let animation = 0;
+    let fanState = 0; // For fan unfolding animation
+    let restartBtn = {
+      x: centerX,
+      y: centerY + radius * 0.7,
+      width: 120,
+      height: 40,
+      visible: false
+    };
+    
+    // Sound effects
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(frequency, type, duration) {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.value = 0.2;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start();
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+    
+    function playSelectSound() {
+      playSound(220, 'square', 0.1);
+    }
+    
+    function playCorrectSound() {
+      playSound(440, 'square', 0.1);
+      setTimeout(() => playSound(660, 'square', 0.2), 100);
+    }
+    
+    function playIncorrectSound() {
+      playSound(200, 'sawtooth', 0.2);
+      setTimeout(() => playSound(150, 'sawtooth', 0.3), 200);
+    }
+    
+    // Pixelate utility function
+    function drawPixelated(drawFunc, pixelSize = 2) {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width / pixelSize;
+      tempCanvas.height = canvas.height / pixelSize;
+      const tempCtx = tempCanvas.getContext('2d');
+      
+      tempCtx.save();
+      tempCtx.scale(1/pixelSize, 1/pixelSize);
+      drawFunc(tempCtx);
+      tempCtx.restore();
+      
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
+    }
+    
+    // Draw fan segment
+    function drawFanSegment(ctx, segment, hovered, selectedSegment) {
+      const state = Math.min(1, fanState * 1.5);
+      const segmentAngle = fanWidth * state;
+      const startAngle = segment.angle - segmentAngle / 2;
+      const endAngle = segment.angle + segmentAngle / 2;
+      
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, radius * state, startAngle, endAngle);
+      ctx.closePath();
+      
+      // Create pixelated border effect
+      if (hovered && !gameOver) {
+        ctx.fillStyle = colors.fanHover;
+      } else {
+        ctx.fillStyle = segment.text === "TRUE" ? colors.fanBg1 : colors.fanBg2;
+      }
+      
+      if (gameOver && selectedSegment && selectedSegment.text === segment.text) {
+        if ((correct && segment.value === true) || (!correct && segment.value === false)) {
+          ctx.fillStyle = colors.correct;
+        } else {
+          ctx.fillStyle = colors.incorrect;
+        }
+      }
+      
+      ctx.fill();
+      
+      // Pixelated border
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = colors.fanBorder;
+      ctx.stroke();
+      
+      // Add text
+      if (state > 0.7) {
+        const textDist = radius * 0.7 * state;
+        const textX = centerX + Math.cos(segment.angle) * textDist;
+        const textY = centerY + Math.sin(segment.angle) * textDist;
+        
+        ctx.save();
+        ctx.translate(textX, textY);
+        ctx.rotate(segment.angle + Math.PI/2);
+        ctx.fillStyle = colors.fanText;
+        ctx.font = 'bold 24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(segment.text, 0, 0);
+        ctx.restore();
+      }
+    }
+    
+    // Draw arrow indicators
+    function drawArrows(ctx) {
+      const arrowSize = 15;
+      const distance = radius * 1.15;
+      
+      for (const segment of fanSegments) {
+        const arrowX = centerX + Math.cos(segment.angle) * distance;
+        const arrowY = centerY + Math.sin(segment.angle) * distance;
+        
+        ctx.save();
+        ctx.translate(arrowX, arrowY);
+        ctx.rotate(segment.angle + Math.PI/2);
+        
+        // Draw arrow with pixelated look
+        ctx.fillStyle = colors.arrow;
+        ctx.beginPath();
+        
+        // Chunky pixelated arrow
+        ctx.moveTo(-arrowSize, arrowSize);
+        ctx.lineTo(0, -arrowSize);
+        ctx.lineTo(arrowSize, arrowSize);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Pulse effect
+        if (!gameOver) {
+          ctx.globalAlpha = 0.5 + 0.5 * Math.sin(animation * 5);
+          ctx.scale(1 + 0.1 * Math.sin(animation * 5), 1 + 0.1 * Math.sin(animation * 5));
+          ctx.fill();
+        }
+        
+        ctx.restore();
+      }
+    }
+    
+    function drawQuestion(ctx) {
+      const text = "Water boils at 100 degrees Celsius at sea level.";
+      ctx.fillStyle = colors.question;
+      ctx.font = '24px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      // Calculate text position
+      const textY = canvas.height * 0.2;
+      
+      // Add pixelated background rectangle
+      ctx.fillStyle = '#000000';
+      ctx.globalAlpha = 0.7;
+      const textWidth = ctx.measureText(text).width;
+      const padding = 20;
+      ctx.fillRect(centerX - textWidth/2 - padding, textY - 20, textWidth + padding*2, 40);
+      ctx.globalAlpha = 1;
+      
+      // Draw text
+      ctx.fillStyle = colors.question;
+      ctx.fillText(text, centerX, textY);
+    }
+    
+    function drawRestartButton(ctx) {
+      if (!restartBtn.visible) return;
+      
+      // Draw pixelated button
+      ctx.fillStyle = '#2a60a3';
+      ctx.fillRect(restartBtn.x - restartBtn.width/2, restartBtn.y - restartBtn.height/2, 
+                 restartBtn.width, restartBtn.height);
+      
+      // Button border
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(restartBtn.x - restartBtn.width/2, restartBtn.y - restartBtn.height/2, 
+                   restartBtn.width, restartBtn.height);
+      
+      // Button text
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText("RESTART", restartBtn.x, restartBtn.y);
+    }
+    
+    function checkSegmentHover(mouseX, mouseY) {
+      for (const segment of fanSegments) {
+        const dx = mouseX - centerX;
+        const dy = mouseY - centerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance <= radius) {
+          // Calculate mouse angle from center
+          let angle = Math.atan2(dy, dx);
+          
+          // Normalize angle around the segment's angle
+          const diff = angle - segment.angle;
+          const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
+          
+          // Check if inside segment angle
+          if (Math.abs(normalizedDiff) <= fanWidth / 2) {
+            segment.hover = true;
+          } else {
+            segment.hover = false;
+          }
+        } else {
+          segment.hover = false;
+        }
+      }
+    }
+    
+    function checkRestartHover(mouseX, mouseY) {
+      if (!restartBtn.visible) return false;
+      
+      return mouseX >= restartBtn.x - restartBtn.width/2 &&
+             mouseX <= restartBtn.x + restartBtn.width/2 &&
+             mouseY >= restartBtn.y - restartBtn.height/2 &&
+             mouseY <= restartBtn.y + restartBtn.height/2;
+    }
+    
+    function handleAnswer(selected) {
+      if (gameOver) return;
+      
+      gameOver = true;
+      const correctAnswer = true; // Water boils at 100C at sea level is TRUE
+      correct = selected.value === correctAnswer;
+      
+      if (correct) {
+        playCorrectSound();
+      } else {
+        playIncorrectSound();
+      }
+      
+      // Show restart button after a delay
+      setTimeout(() => {
+        restartBtn.visible = true;
+      }, 1000);
+    }
+    
+    // Event listeners
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const mouseX = (e.clientX - rect.left) * scaleX;
+      const mouseY = (e.clientY - rect.top) * scaleY;
+      
+      checkSegmentHover(mouseX, mouseY);
+      
+      // Change cursor if hovering over restart button
+      if (checkRestartHover(mouseX, mouseY)) {
+        canvas.style.cursor = 'pointer';
+      } else {
+        for (const segment of fanSegments) {
+          if (segment.hover && !gameOver) {
+            canvas.style.cursor = 'pointer';
+            return;
+          }
+        }
+        canvas.style.cursor = 'default';
+      }
+    });
+    
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const mouseX = (e.clientX - rect.left) * scaleX;
+      const mouseY = (e.clientY - rect.top) * scaleY;
+      
+      // Check restart button
+      if (checkRestartHover(mouseX, mouseY) && restartBtn.visible) {
+        resetGame();
+        return;
+      }
+      
+      // Check segment clicks
+      checkSegmentHover(mouseX, mouseY);
+      for (const segment of fanSegments) {
+        if (segment.hover && !gameOver) {
+          playSelectSound();
+          handleAnswer(segment);
+          break;
+        }
+      }
+    });
+    
+    function resetGame() {
+      gameOver = false;
+      correct = null;
+      fanState = 0;
+      restartBtn.visible = false;
+      
+      // Reset hover states
+      for (const segment of fanSegments) {
+        segment.hover = false;
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      // Update
+      animation += 0.016; // ~60fps
+      if (fanState < 1) {
+        fanState += 0.05;
+      }
+      
+      // Draw
+      drawPixelated((ctx) => {
+        // Background
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw all game elements
+        drawQuestion(ctx);
+        
+        // Draw fan segments
+        let selectedSegment = null;
+        for (const segment of fanSegments) {
+          if (gameOver && segment.hover) {
+            selectedSegment = segment;
+          }
+          drawFanSegment(ctx, segment, segment.hover, selectedSegment);
+        }
+        
+        // Draw arrows
+        drawArrows(ctx);
+        
+        // Draw restart button
+        drawRestartButton(ctx);
+      }, 2); // Pixelation factor
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game
+    resetGame();
+    gameLoop();
+  </script>
+</body>
+</html>

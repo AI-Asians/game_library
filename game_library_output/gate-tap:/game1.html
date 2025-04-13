@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gate Tap Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        .restart-btn {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px 10px;
+            background-color: #555;
+            color: white;
+            border: 2px solid #777;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button class="restart-btn" id="restartBtn">Restart</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        const COLORS = {
+            bg: '#5B6EE1',
+            ground: '#3F6C45',
+            character: '#FF5555',
+            gateTrue: '#7BFF00',
+            gateFalse: '#FF0000',
+            gateFrame: '#965A00',
+            text: '#FFFFFF'
+        };
+        
+        // Character
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            width: 24,
+            height: 32,
+            speed: 1.5,
+            moving: true
+        };
+        
+        // Gates
+        const gateWidth = canvas.width * 0.35;
+        const gateHeight = 100;
+        const gateY = canvas.height * 0.3;
+        const gates = [
+            { x: canvas.width * 0.15, y: gateY, width: gateWidth, height: gateHeight, label: "TRUE" },
+            { x: canvas.width * 0.55, y: gateY, width: gateWidth, height: gateHeight, label: "FALSE" }
+        ];
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        const correctAnswer = "FALSE"; // The correct answer
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.3);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'move') {
+                oscillator.type = 'sine';
+                oscillator.frequency.value = 330;
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Draw pixel art character
+        function drawCharacter() {
+            ctx.fillStyle = COLORS.character;
+            
+            // Body
+            ctx.fillRect(player.x - player.width/2, player.y - player.height/2, player.width, player.height);
+            
+            // Eyes
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(player.x - 8, player.y - 10, 5, 5);
+            ctx.fillRect(player.x + 3, player.y - 10, 5, 5);
+            
+            // Pupils (add direction indication)
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(player.x - 6, player.y - 8, 2, 2);
+            ctx.fillRect(player.x + 5, player.y - 8, 2, 2);
+            
+            // Direction arrow above character
+            if (!gameOver) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.moveTo(player.x, player.y - player.height - 10);
+                ctx.lineTo(player.x - 10, player.y - player.height - 20);
+                ctx.lineTo(player.x + 10, player.y - player.height - 20);
+                ctx.fill();
+            }
+        }
+        
+        // Draw pixelated gate
+        function drawGate(gate) {
+            // Gate frame
+            ctx.fillStyle = COLORS.gateFrame;
+            ctx.fillRect(gate.x - 10, gate.y - 20, gate.width + 20, gate.height + 30);
+            
+            // Gate opening
+            ctx.fillStyle = gate.label === "TRUE" ? COLORS.gateTrue : COLORS.gateFalse;
+            ctx.fillRect(gate.x, gate.y, gate.width, gate.height);
+            
+            // Add pixel details to gate
+            ctx.fillStyle = '#000000';
+            for (let i = 0; i < 5; i++) {
+                ctx.fillRect(gate.x - 10, gate.y - 15 + (i * 20), 5, 5);
+                ctx.fillRect(gate.x + gate.width + 5, gate.y - 15 + (i * 20), 5, 5);
+            }
+            
+            // Gate label
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(gate.label, gate.x + gate.width/2, gate.y + gate.height/2 + 7);
+        }
+        
+        // Draw ground
+        function drawGround() {
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
+            
+            // Add pixel details to ground
+            ctx.fillStyle = '#2A4A2E';
+            for (let i = 0; i < canvas.width; i += 20) {
+                ctx.fillRect(i, canvas.height - 50, 10, 5);
+                ctx.fillRect(i + 10, canvas.height - 30, 10, 5);
+            }
+        }
+        
+        // Draw game screen
+        function draw() {
+            // Background
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Question text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw gates
+            gates.forEach(drawGate);
+            
+            // Draw ground
+            drawGround();
+            
+            // Draw character
+            drawCharacter();
+            
+            // Result text
+            if (gameOver) {
+                ctx.fillStyle = gameResult === 'correct' ? '#00FF00' : '#FF0000';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.fillText(
+                    gameResult === 'correct' ? 'CORRECT!' : 'WRONG!', 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+                
+                // Show restart button
+                document.getElementById('restartBtn').style.display = 'block';
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameOver && player.moving) {
+                player.y -= player.speed;
+                
+                // Play movement sound occasionally
+                if (Math.random() < 0.05) {
+                    playSound('move');
+                }
+                
+                // Check for collision with gates
+                gates.forEach(gate => {
+                    if (player.y - player.height/2 <= gate.y + gate.height &&
+                        player.x + player.width/2 >= gate.x &&
+                        player.x - player.width/2 <= gate.x + gate.width) {
+                        
+                        gameOver = true;
+                        player.moving = false;
+                        
+                        // Check if answer is correct
+                        if (gate.label === correctAnswer) {
+                            gameResult = 'correct';
+                            playSound('correct');
+                        } else {
+                            gameResult = 'wrong';
+                            playSound('wrong');
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks/taps on gates
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Check if a gate was clicked
+            gates.forEach(gate => {
+                if (clickX >= gate.x && clickX <= gate.x + gate.width &&
+                    clickY >= gate.y && clickY <= gate.y + gate.height) {
+                    
+                    gameOver = true;
+                    player.moving = false;
+                    
+                    // Teleport player to the gate
+                    player.x = gate.x + gate.width/2;
+                    player.y = gate.y + gate.height;
+                    
+                    // Check if answer is correct
+                    if (gate.label === correctAnswer) {
+                        gameResult = 'correct';
+                        playSound('correct');
+                    } else {
+                        gameResult = 'wrong';
+                        playSound('wrong');
+                    }
+                }
+            });
+        }
+        
+        // Restart game
+        function restartGame() {
+            gameOver = false;
+            player.x = canvas.width / 2;
+            player.y = canvas.height - 100;
+            player.moving = true;
+            document.getElementById('restartBtn').style.display = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        document.getElementById('restartBtn').addEventListener('click', restartGame);
+        
+        // Start game
+        let gameResult = '';
+        gameLoop();
+    </script>
+</body>
+</html>

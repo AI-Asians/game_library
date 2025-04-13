@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heartbeat Truth</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 3px solid #555;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">RESTART</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas dimensions based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game constants
+        const colors = {
+            background: '#111122',
+            heart: '#DD2222',
+            heartShadow: '#881111',
+            heartHighlight: '#FF5555',
+            textNormal: '#DDDDDD',
+            textHighlight: '#FFFF77',
+            true: '#55AA55',
+            false: '#AA5555',
+            pulseZone: '#FFFF00'
+        };
+        
+        // Game state
+        let state = {
+            heartSize: 0.5,
+            growing: true,
+            pulseSpeed: 0.03,
+            pulseCycles: 0,
+            maxCycles: 5,
+            gameOver: false,
+            correctAnswer: false, // The Great Wall is NOT visible from space
+            selectedAnswer: null,
+            pulsePhase: 0,
+            question: "The Great Wall of China is visible from space."
+        };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log('Web Audio API not supported.');
+        }
+        
+        // Sound effects
+        function playSound(frequency, type, duration) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Sound effects functions
+        function playPulseSound() {
+            playSound(220 + 110 * state.heartSize, 'square', 0.1);
+        }
+        
+        function playCorrectSound() {
+            playSound(660, 'square', 0.2);
+            setTimeout(() => playSound(880, 'square', 0.3), 200);
+        }
+        
+        function playWrongSound() {
+            playSound(220, 'sawtooth', 0.3);
+            setTimeout(() => playSound(110, 'sawtooth', 0.5), 300);
+        }
+        
+        // Draw pixelated heart
+        function drawHeart(x, y, size) {
+            const pixelSize = Math.max(2, Math.floor(size * 4)); // Ensure visible pixels
+            
+            ctx.save();
+            
+            // Base size calculations
+            const baseSize = size * 100;
+            const heartWidth = Math.floor(baseSize * 1.2);
+            const heartHeight = Math.floor(baseSize);
+            
+            // Calculate the starting position for drawing
+            const startX = Math.floor(x - heartWidth / 2);
+            const startY = Math.floor(y - heartHeight / 2);
+            
+            // Draw pixelated heart shape
+            const heartPixels = [
+                [0,0,1,1,0,0,1,1,0,0],
+                [0,1,1,1,1,1,1,1,1,0],
+                [1,1,1,1,1,1,1,1,1,1],
+                [1,1,1,1,1,1,1,1,1,1],
+                [1,1,1,1,1,1,1,1,1,1],
+                [0,1,1,1,1,1,1,1,1,0],
+                [0,0,1,1,1,1,1,1,0,0],
+                [0,0,0,1,1,1,1,0,0,0],
+                [0,0,0,0,1,1,0,0,0,0]
+            ];
+            
+            // Draw each pixel of the heart
+            for (let row = 0; row < heartPixels.length; row++) {
+                for (let col = 0; col < heartPixels[row].length; col++) {
+                    if (heartPixels[row][col]) {
+                        // Heart base color
+                        ctx.fillStyle = colors.heartShadow;
+                        ctx.fillRect(
+                            startX + col * pixelSize + 2,
+                            startY + row * pixelSize + 2,
+                            pixelSize,
+                            pixelSize
+                        );
+                        
+                        // Heart main color
+                        ctx.fillStyle = colors.heart;
+                        ctx.fillRect(
+                            startX + col * pixelSize,
+                            startY + row * pixelSize,
+                            pixelSize,
+                            pixelSize
+                        );
+                        
+                        // Add highlight effect if in the optimal zone
+                        if (state.heartSize > 0.85 || state.heartSize < 0.15) {
+                            ctx.fillStyle = colors.heartHighlight;
+                            ctx.fillRect(
+                                startX + col * pixelSize,
+                                startY + row * pixelSize,
+                                pixelSize / 2,
+                                pixelSize / 2
+                            );
+                        }
+                    }
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.textNormal;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(state.question, canvas.width / 2, 80);
+            
+            // Draw heart
+            const heartScale = 0.5 + 1.5 * state.heartSize;
+            drawHeart(canvas.width / 2, canvas.height / 2 - 50, heartScale);
+            
+            // Draw pulse zone indicator
+            if ((state.heartSize > 0.85 || state.heartSize < 0.15) && !state.gameOver) {
+                ctx.fillStyle = colors.pulseZone;
+                ctx.font = '16px Arial';
+                ctx.fillText('TAP NOW!', canvas.width / 2, canvas.height / 2 + 50);
+            }
+            
+            // Draw true/false options
+            const trueHighlight = state.heartSize < 0.2;
+            const falseHighlight = state.heartSize > 0.8;
+            
+            ctx.font = '24px Arial';
+            
+            // True option (highlighted when heart is small)
+            ctx.fillStyle = trueHighlight ? colors.true : colors.textNormal;
+            ctx.fillText('TRUE', canvas.width / 3, canvas.height - 100);
+            
+            // False option (highlighted when heart is big)
+            ctx.fillStyle = falseHighlight ? colors.false : colors.textNormal;
+            ctx.fillText('FALSE', canvas.width * 2 / 3, canvas.height - 100);
+            
+            // Draw game over text
+            if (state.gameOver) {
+                ctx.font = '32px Arial';
+                if (state.selectedAnswer === false) { // False is correct
+                    ctx.fillStyle = colors.false;
+                    ctx.fillText('CORRECT!', canvas.width / 2, canvas.height - 50);
+                } else {
+                    ctx.fillStyle = colors.true;
+                    ctx.fillText('INCORRECT!', canvas.width / 2, canvas.height - 50);
+                }
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (state.gameOver) return;
+            
+            // Update heart size based on direction
+            if (state.growing) {
+                state.heartSize += state.pulseSpeed;
+                if (state.heartSize >= 1) {
+                    state.heartSize = 1;
+                    state.growing = false;
+                    playPulseSound();
+                }
+            } else {
+                state.heartSize -= state.pulseSpeed;
+                if (state.heartSize <= 0) {
+                    state.heartSize = 0;
+                    state.growing = true;
+                    state.pulseCycles++;
+                    playPulseSound();
+                    
+                    // Increase difficulty
+                    state.pulseSpeed += 0.005;
+                }
+            }
+            
+            // Update pulse phase (0-1 range for a complete pulse)
+            state.pulsePhase = state.growing ? state.heartSize : 2 - state.heartSize;
+            
+            // End game if max cycles reached
+            if (state.pulseCycles >= state.maxCycles) {
+                endGame(null);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            
+            if (!state.gameOver) {
+                requestAnimationFrame(gameLoop);
+            } else {
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // End the game
+        function endGame(answer) {
+            state.gameOver = true;
+            state.selectedAnswer = answer;
+            
+            if (answer === false) { // False is correct
+                playCorrectSound();
+            } else {
+                playWrongSound();
+            }
+        }
+        
+        // Handle user input
+        canvas.addEventListener('click', function(e) {
+            if (state.gameOver) return;
+            
+            // Determine answer based on heart size
+            let answer;
+            if (state.heartSize < 0.5) {
+                answer = true; // True when heart is small
+            } else {
+                answer = false; // False when heart is big
+            }
+            
+            endGame(answer);
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            state = {
+                heartSize: 0.5,
+                growing: true,
+                pulseSpeed: 0.03,
+                pulseCycles: 0,
+                maxCycles: 5,
+                gameOver: false,
+                correctAnswer: false,
+                selectedAnswer: null,
+                pulsePhase: 0,
+                question: "The Great Wall of China is visible from space."
+            };
+            
+            restartBtn.style.display = 'none';
+            gameLoop();
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

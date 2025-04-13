@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bookshelf Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            background: #000;
+            display: block;
+            image-rendering: pixelated; /* Maintain pixel aesthetic */
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const colors = ['#D95B43', '#C02942', '#542437', '#53777A', '#69D2E7', '#FA6900', '#88C425'];
+        let restartButton = { x: 0, y: 0, width: 0, height: 0, visible: false };
+        let gameOver = false;
+        let correctAnswer = false;
+        let particles = [];
+        let audioContext;
+
+        // Book data
+        const bookWidth = isMobile ? 50 : 100;
+        const bookHeight = isMobile ? 150 : 200;
+        const shelfY = isMobile ? 400 : 350;
+        const books = [
+            { text: "Paris", x: isMobile ? 40 : 150, y: shelfY, width: bookWidth, height: bookHeight, color: colors[0], pattern: 0, correct: true, selected: false, pullOffset: 0 },
+            { text: "London", x: isMobile ? 110 : 280, y: shelfY, width: bookWidth, height: bookHeight, color: colors[1], pattern: 1, correct: false, selected: false, pullOffset: 0 },
+            { text: "Rome", x: isMobile ? 180 : 410, y: shelfY, width: bookWidth, height: bookHeight, color: colors[2], pattern: 2, correct: false, selected: false, pullOffset: 0 },
+            { text: "Berlin", x: isMobile ? 250 : 540, y: shelfY, width: bookWidth, height: bookHeight, color: colors[3], pattern: 3, correct: false, selected: false, pullOffset: 0 }
+        ];
+
+        // Initialize audio context on first user interaction
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // Play sound with different parameters for different events
+        function playSound(freq, type, duration, volume) {
+            if (!audioContext) return;
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
+            
+            gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+
+        // Create a particle effect
+        function createParticle(x, y, color) {
+            return {
+                x, y,
+                size: Math.random() * 5 + 3,
+                speedX: (Math.random() - 0.5) * 4,
+                speedY: (Math.random() - 0.5) * 4,
+                color,
+                life: 30
+            };
+        }
+
+        // Handle mouse move to check hovering
+        function handleMouseMove(e) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+            // Check if mouse is over restart button
+            if (restartButton.visible &&
+                mouseX >= restartButton.x && 
+                mouseX <= restartButton.x + restartButton.width && 
+                mouseY >= restartButton.y && 
+                mouseY <= restartButton.y + restartButton.height) {
+                canvas.style.cursor = 'pointer';
+                return;
+            }
+
+            // Check if mouse is over any book
+            let overBook = false;
+            books.forEach(book => {
+                if (mouseX >= book.x && 
+                    mouseX <= book.x + book.width && 
+                    mouseY >= book.y - book.pullOffset && 
+                    mouseY <= book.y + book.height - book.pullOffset) {
+                    canvas.style.cursor = 'pointer';
+                    overBook = true;
+                }
+            });
+            
+            if (!overBook) {
+                canvas.style.cursor = 'default';
+            }
+        }
+
+        // Handle mouse click for book selection
+        function handleMouseClick(e) {
+            initAudio();
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+            // Check if clicking restart button
+            if (restartButton.visible &&
+                mouseX >= restartButton.x && 
+                mouseX <= restartButton.x + restartButton.width && 
+                mouseY >= restartButton.y && 
+                mouseY <= restartButton.y + restartButton.height) {
+                resetGame();
+                return;
+            }
+
+            if (gameOver) return;
+
+            // Check if clicking a book
+            books.forEach(book => {
+                if (mouseX >= book.x && 
+                    mouseX <= book.x + book.width && 
+                    mouseY >= book.y - book.pullOffset && 
+                    mouseY <= book.y + book.height - book.pullOffset) {
+                    
+                    book.selected = true;
+                    playSound(220, 'square', 0.1, 0.3); // Book selection sound
+                    
+                    // Check if selected book is correct after animation delay
+                    setTimeout(() => {
+                        gameOver = true;
+                        correctAnswer = book.correct;
+                        
+                        if (book.correct) {
+                            // Create particles for correct answer
+                            for (let i = 0; i < 30; i++) {
+                                particles.push(createParticle(
+                                    book.x + book.width/2, 
+                                    book.y - book.pullOffset + book.height/2,
+                                    book.color
+                                ));
+                            }
+                            playSound(880, 'sine', 0.3, 0.4); // Correct sound
+                        } else {
+                            playSound(110, 'sawtooth', 0.4, 0.4); // Incorrect sound
+                        }
+                        
+                        // Show restart button
+                        restartButton = {
+                            x: canvas.width/2 - 60,
+                            y: canvas.height - 80,
+                            width: 120,
+                            height: 40,
+                            visible: true
+                        };
+                    }, 500);
+                }
+            });
+        }
+
+        // Reset game state
+        function resetGame() {
+            gameOver = false;
+            correctAnswer = false;
+            restartButton.visible = false;
+            particles = [];
+            
+            books.forEach(book => {
+                book.selected = false;
+                book.pullOffset = 0;
+            });
+            
+            playSound(440, 'square', 0.1, 0.3); // Reset sound
+        }
+
+        // Draw the 8-bit shelf and decorations
+        function drawShelf() {
+            // Main shelf
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(isMobile ? 20 : 120, shelfY + bookHeight, isMobile ? 320 : 560, 30);
+            
+            // Shelf support
+            ctx.fillStyle = '#6B3100';
+            ctx.fillRect(isMobile ? 30 : 130, shelfY + bookHeight + 30, 30, 100);
+            ctx.fillRect(isMobile ? 300 : 640, shelfY + bookHeight + 30, 30, 100);
+
+            // Shelf decorations - pixel patterns for wood grain
+            ctx.fillStyle = '#A0522D';
+            for (let i = 0; i < (isMobile ? 15 : 25); i++) {
+                ctx.fillRect(
+                    (isMobile ? 35 : 150) + i * 20, 
+                    shelfY + bookHeight + 10, 
+                    10, 
+                    5
+                );
+            }
+            
+            // Small plant decoration
+            drawPixelPlant(isMobile ? 290 : 620, shelfY + bookHeight - 35);
+            
+            // Bookend decoration
+            drawPixelBookend(isMobile ? 30 : 130, shelfY + bookHeight - 30);
+        }
+        
+        // Draw a small pixel plant
+        function drawPixelPlant(x, y) {
+            // Pot
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(x, y + 20, 20, 15);
+            ctx.fillStyle = '#CD853F';
+            ctx.fillRect(x + 2, y + 18, 16, 4);
+            
+            // Plant
+            ctx.fillStyle = '#228B22';
+            ctx.fillRect(x + 8, y, 4, 20);
+            ctx.fillRect(x + 4, y + 5, 12, 3);
+            ctx.fillRect(x + 6, y + 10, 8, 3);
+        }
+        
+        // Draw a pixel bookend
+        function drawPixelBookend(x, y) {
+            ctx.fillStyle = '#C0C0C0';
+            ctx.fillRect(x, y, 20, 30);
+            ctx.fillStyle = '#A0A0A0';
+            ctx.fillRect(x, y + 25, 20, 5);
+            ctx.fillRect(x + 15, y + 5, 5, 20);
+        }
+
+        // Draw a book with pattern based on book's pattern property
+        function drawBook(book) {
+            const y = book.y - book.pullOffset;
+            
+            // Book body
+            ctx.fillStyle = book.color;
+            ctx.fillRect(book.x, y, book.width, book.height);
+            
+            // Book spine detail 
+            ctx.fillStyle = "#FFF";
+            
+            // Different patterns for book spines
+            switch(book.pattern) {
+                case 0: // Horizontal stripes
+                    for (let i = 0; i < 5; i++) {
+                        ctx.fillRect(book.x + 10, y + 30 + i * 30, book.width - 20, 10);
+                    }
+                    break;
+                case 1: // Dots
+                    for (let i = 0; i < 3; i++) {
+                        for (let j = 0; j < 3; j++) {
+                            ctx.fillRect(book.x + 20 + j * 20, y + 40 + i * 40, 10, 10);
+                        }
+                    }
+                    break;
+                case 2: // Single stripe
+                    ctx.fillRect(book.x + 10, y + book.height/2, book.width - 20, 15);
+                    break;
+                case 3: // Checkered pattern
+                    for (let i = 0; i < 5; i++) {
+                        for (let j = 0; j < 2; j++) {
+                            if ((i + j) % 2 === 0) {
+                                ctx.fillRect(book.x + 15 + j * 35, y + 30 + i * 30, 25, 20);
+                            }
+                        }
+                    }
+                    break;
+            }
+            
+            // Draw book text
+            ctx.fillStyle = "#fff";
+            ctx.font = isMobile ? "12px Arial" : "16px Arial";
+            ctx.textAlign = "center";
+            
+            // Draw text vertically on book spine
+            const textX = book.x + book.width / 2;
+            const textY = y + book.height / 2;
+            
+            ctx.save();
+            ctx.translate(textX, textY);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillText(book.text, 0, 0);
+            ctx.restore();
+            
+            // Highlight effect for hovered/selected books
+            if (book.selected) {
+                ctx.strokeStyle = "#FFD700";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(book.x-2, y-2, book.width+4, book.height+4);
+            }
+        }
+
+        // Draw restart button
+        function drawRestartButton() {
+            if (!restartButton.visible) return;
+            
+            ctx.fillStyle = "#444";
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            
+            ctx.fillStyle = "#222";
+            ctx.fillRect(restartButton.x + 4, restartButton.y + 4, restartButton.width - 8, restartButton.height - 8);
+            
+            ctx.fillStyle = "#FFF";
+            ctx.font = "16px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("Restart", restartButton.x + restartButton.width/2, restartButton.y + restartButton.height/2);
+        }
+
+        // Update game logic
+        function update() {
+            // Update book pull animation
+            books.forEach(book => {
+                if (book.selected && book.pullOffset < 80) {
+                    book.pullOffset += 8;
+                }
+            });
+            
+            // Update particles
+            particles = particles.filter(p => p.life > 0);
+            particles.forEach(p => {
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                p.size *= 0.95;
+            });
+        }
+
+        // Draw everything
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = "#222";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = "#FFF";
+            ctx.font = isMobile ? "20px Arial" : "24px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("What is the capital of France?", canvas.width/2, isMobile ? 80 : 100);
+            
+            // Draw instructions
+            ctx.font = isMobile ? "14px Arial" : "16px Arial";
+            ctx.fillText("Select the book with the correct answer", canvas.width/2, isMobile ? 120 : 140);
+            
+            // Draw shelf
+            drawShelf();
+            
+            // Draw books
+            books.forEach(drawBook);
+            
+            // Draw feedback message if game is over
+            if (gameOver) {
+                ctx.font = isMobile ? "22px Arial" : "26px Arial";
+                ctx.textAlign = "center";
+                
+                if (correctAnswer) {
+                    ctx.fillStyle = "#5F5";
+                    ctx.fillText("Correct!", canvas.width/2, isMobile ? 200 : 220);
+                } else {
+                    ctx.fillStyle = "#F55";
+                    ctx.fillText("Incorrect!", canvas.width/2, isMobile ? 200 : 220);
+                }
+            }
+            
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            
+            // Draw restart button if game is over
+            drawRestartButton();
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('click', handleMouseClick);
+        
+        // Touch support for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const simulatedClick = new MouseEvent('click', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            handleMouseClick(simulatedClick);
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

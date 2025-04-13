@@ -1,0 +1,100 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ Which planet is known as the Red Planet?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: DJ-Scratch**  
+ Description of mechanic: 
+
+* Player uses a virtual turntable/record to "scratch" between different answer options
+* The turntable should have a record that spins and can be dragged left or right to scroll through options
+* As the player scratches, different answers should appear in a visible display area
+* The player must stop scratching when they reach the correct answer
+* Include appropriate scratching sound effects when the player drags the record
+* The record should have realistic rotation physics - it should slow down gradually when released
+* Player confirms their selection by clicking a "select" button when the desired answer is showing
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The turntable should have a pixelated look with visible "grooves" on the record
+Include a retro-style DJ arm/needle that moves with the record
+The answer display area should resemble an old-school LCD or LED display
+Use flashing pixel effects when the correct answer is selected
+The select button should look like a chunky arcade button
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The record should have some momentum when scratched, continuing to spin slightly after being released
+Include visual feedback when scratching in different directions
+The answer options should transition smoothly as the player scratches
+Add a small element of skill - make it slightly challenging to land precisely on the desired answer
+The select button should pulse or animate to encourage the player to make a choice
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

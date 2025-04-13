@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Network Node Game - Capital of France</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Check if mobile and resize accordingly
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game colors (limited 8-bit palette)
+        const COLORS = {
+            background: '#0a0a1a',
+            nodeFill: '#3050c8',
+            nodeStroke: '#80a0ff',
+            activeNode: '#50ff50',
+            wrongNode: '#ff5050',
+            connectionLine: '#2030a0',
+            activeConnection: '#50c0ff',
+            text: '#f0f0f0',
+            questionBox: '#202060'
+        };
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Game state
+        let gameState = {
+            nodes: [
+                { id: 0, x: canvas.width/2, y: canvas.height/2 - 40, text: "START", isStart: true, connections: [1, 2, 3] },
+                { id: 1, x: canvas.width/2 - 150, y: canvas.height/2 + 100, text: "Berlin", isCorrect: false, connections: [0, 4] },
+                { id: 2, x: canvas.width/2 + 150, y: canvas.height/2 + 100, text: "Paris", isCorrect: true, connections: [0, 4] },
+                { id: 3, x: canvas.width/2, y: canvas.height/2 + 170, text: "Rome", isCorrect: false, connections: [0, 4] },
+                { id: 4, x: canvas.width/2, y: canvas.height/2 + 260, text: "London", isCorrect: false, connections: [1, 2, 3] }
+            ],
+            activeNode: 0,
+            selectedNode: null,
+            gameOver: false,
+            correct: false,
+            restartButton: {
+                x: canvas.width/2,
+                y: canvas.height - 60,
+                width: 120,
+                height: 40
+            },
+            pulseTimer: 0,
+            connectionGlow: 0
+        };
+        
+        // Function to play a retro beep sound
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'select':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    }, 100);
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(550, audioCtx.currentTime);
+                    }, 200);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(180, audioCtx.currentTime);
+                    }, 100);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw a node
+        function drawNode(node, isActive, isHovered) {
+            const size = isActive ? 45 : 40;
+            const pulseSize = Math.sin(gameState.pulseTimer * 0.1) * 4;
+            
+            // Node fill
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, size + (isActive ? pulseSize : 0), 0, Math.PI * 2);
+            
+            if (gameState.gameOver) {
+                if (node.isCorrect && isActive) {
+                    ctx.fillStyle = COLORS.activeNode;
+                } else if (!node.isCorrect && isActive) {
+                    ctx.fillStyle = COLORS.wrongNode;
+                } else {
+                    ctx.fillStyle = COLORS.nodeFill;
+                }
+            } else {
+                ctx.fillStyle = isActive ? COLORS.activeNode : COLORS.nodeFill;
+            }
+            
+            ctx.fill();
+            
+            // Node border
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = COLORS.nodeStroke;
+            ctx.stroke();
+            
+            // Node text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.text, node.x, node.y);
+            
+            // Draw helper arrow for the active node
+            if (isActive && !gameState.gameOver && !node.isStart) {
+                const arrowSize = 15;
+                ctx.beginPath();
+                ctx.moveTo(node.x, node.y - size - 10);
+                ctx.lineTo(node.x - arrowSize/2, node.y - size - 20);
+                ctx.lineTo(node.x + arrowSize/2, node.y - size - 20);
+                ctx.closePath();
+                ctx.fillStyle = COLORS.activeNode;
+                ctx.fill();
+            }
+        }
+        
+        // Draw connections between nodes
+        function drawConnections() {
+            // Draw all connections first (background layer)
+            for (const node of gameState.nodes) {
+                for (const connectedId of node.connections) {
+                    const connectedNode = gameState.nodes.find(n => n.id === connectedId);
+                    
+                    // Don't draw duplicate connections
+                    if (node.id < connectedId) {
+                        ctx.beginPath();
+                        ctx.moveTo(node.x, node.y);
+                        ctx.lineTo(connectedNode.x, connectedNode.y);
+                        ctx.strokeStyle = COLORS.connectionLine;
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            // Draw active connections with glow effect
+            const activeNode = gameState.nodes[gameState.activeNode];
+            
+            for (const connectedId of activeNode.connections) {
+                const connectedNode = gameState.nodes.find(n => n.id === connectedId);
+                
+                ctx.beginPath();
+                ctx.moveTo(activeNode.x, activeNode.y);
+                ctx.lineTo(connectedNode.x, connectedNode.y);
+                
+                // Create a glowing effect with transparency based on the connection glow value
+                const glowAlpha = (Math.sin(gameState.connectionGlow * 0.1) + 1) / 2 * 0.8 + 0.2;
+                ctx.strokeStyle = `rgba(80, 192, 255, ${glowAlpha})`;
+                ctx.lineWidth = 5;
+                ctx.stroke();
+            }
+        }
+        
+        // Draw question box
+        function drawQuestion() {
+            const boxWidth = canvas.width - 100;
+            const boxHeight = 60;
+            const boxX = canvas.width / 2 - boxWidth / 2;
+            const boxY = 40;
+            
+            // Box background
+            ctx.fillStyle = COLORS.questionBox;
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            
+            // Box border
+            ctx.strokeStyle = COLORS.nodeStroke;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+            
+            // Question text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, boxY + boxHeight / 2);
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            if (!gameState.gameOver) return;
+            
+            const btn = gameState.restartButton;
+            
+            // Button background
+            ctx.fillStyle = COLORS.nodeFill;
+            ctx.fillRect(btn.x - btn.width/2, btn.y - btn.height/2, btn.width, btn.height);
+            
+            // Button border
+            ctx.strokeStyle = COLORS.nodeStroke;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(btn.x - btn.width/2, btn.y - btn.height/2, btn.width, btn.height);
+            
+            // Button text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("Restart", btn.x, btn.y);
+        }
+        
+        // Draw game result
+        function drawResult() {
+            if (!gameState.gameOver) return;
+            
+            // Result text
+            ctx.fillStyle = gameState.correct ? COLORS.activeNode : COLORS.wrongNode;
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(
+                gameState.correct ? "Correct!" : "Wrong!",
+                canvas.width / 2,
+                canvas.height / 2 - 150
+            );
+        }
+        
+        // Draw electronic circuit decorations
+        function drawDecorations() {
+            ctx.strokeStyle = COLORS.connectionLine;
+            ctx.lineWidth = 2;
+            
+            // Draw circuit patterns in corners
+            // Top left
+            ctx.beginPath();
+            ctx.moveTo(20, 20);
+            ctx.lineTo(80, 20);
+            ctx.lineTo(80, 80);
+            ctx.stroke();
+            
+            // Top right
+            ctx.beginPath();
+            ctx.moveTo(canvas.width - 20, 20);
+            ctx.lineTo(canvas.width - 80, 20);
+            ctx.lineTo(canvas.width - 80, 80);
+            ctx.stroke();
+            
+            // Bottom left
+            ctx.beginPath();
+            ctx.moveTo(20, canvas.height - 20);
+            ctx.lineTo(80, canvas.height - 20);
+            ctx.lineTo(80, canvas.height - 80);
+            ctx.stroke();
+            
+            // Bottom right
+            ctx.beginPath();
+            ctx.moveTo(canvas.width - 20, canvas.height - 20);
+            ctx.lineTo(canvas.width - 80, canvas.height - 20);
+            ctx.lineTo(canvas.width - 80, canvas.height - 80);
+            ctx.stroke();
+            
+            // Draw some circuit dots
+            const dotPositions = [
+                {x: 80, y: 80}, 
+                {x: canvas.width - 80, y: 80},
+                {x: 80, y: canvas.height - 80}, 
+                {x: canvas.width - 80, y: canvas.height - 80}
+            ];
+            
+            for (const pos of dotPositions) {
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = COLORS.nodeStroke;
+                ctx.fill();
+            }
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Update timers
+            gameState.pulseTimer++;
+            gameState.connectionGlow += 0.5;
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw decorations
+            drawDecorations();
+            
+            // Draw connections
+            drawConnections();
+            
+            // Draw nodes
+            for (let i = 0; i < gameState.nodes.length; i++) {
+                const isActive = i === gameState.activeNode;
+                drawNode(gameState.nodes[i], isActive, false);
+            }
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw result if game is over
+            drawResult();
+            
+            // Draw restart button if game is over
+            drawRestartButton();
+            
+            // Request next frame
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game loop
+        gameLoop();
+        
+        // Handle mouse and touch input
+        function handleClick(x, y) {
+            if (gameState.gameOver) {
+                // Check if restart button was clicked
+                const btn = gameState.restartButton;
+                if (x >= btn.x - btn.width/2 && 
+                    x <= btn.x + btn.width/2 && 
+                    y >= btn.y - btn.height/2 && 
+                    y <= btn.y + btn.height/2) {
+                    
+                    // Reset game
+                    gameState.activeNode = 0;
+                    gameState.gameOver = false;
+                    gameState.correct = false;
+                    playSound('select');
+                    return;
+                }
+            } else {
+                // Check if a connected node was clicked
+                const activeNode = gameState.nodes[gameState.activeNode];
+                
+                for (const connectedId of activeNode.connections) {
+                    const node = gameState.nodes.find(n => n.id === connectedId);
+                    const dx = x - node.x;
+                    const dy = y - node.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance <= 40) {
+                        // Node clicked
+                        gameState.activeNode = node.id;
+                        
+                        if (node.isCorrect) {
+                            gameState.gameOver = true;
+                            gameState.correct = true;
+                            playSound('correct');
+                        } else if (!node.isStart) {
+                            gameState.gameOver = true;
+                            gameState.correct = false;
+                            playSound('wrong');
+                        } else {
+                            playSound('select');
+                        }
+                        
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Mouse event handlers
+        canvas.addEventListener('click', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            handleClick(x, y);
+        });
+        
+        // Touch event handlers
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            handleClick(x, y);
+        });
+    </script>
+</body>
+</html>

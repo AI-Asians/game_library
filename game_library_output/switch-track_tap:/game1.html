@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Switch-Track Capitals Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            touch-action: manipulation;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            touch-action: manipulation;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set fixed canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited 8-bit palette
+        const COLORS = {
+            bg: '#0f380f',
+            track1: '#8bac0f',
+            track2: '#9bbc0f',
+            track3: '#306230',
+            track4: '#0f380f',
+            text: '#e0f8d0',
+            highlight: '#f8f8f8',
+            correct: '#9bbc0f',
+            incorrect: '#ac3232'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let selectedTrack = null;
+        let correctAnswer = "Paris";
+        let restartButton = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 40,
+            width: 120,
+            height: 40
+        };
+        
+        // Track configuration
+        const trackHeight = canvas.height / 6;
+        const trackGap = 10;
+        const trackOptions = [
+            { text: "Berlin", correct: false, x: -200 },
+            { text: "Paris", correct: true, x: -100 },
+            { text: "London", correct: false, x: -150 },
+            { text: "Rome", correct: false, x: -50 }
+        ];
+        
+        // Shuffle the options
+        trackOptions.sort(() => Math.random() - 0.5);
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = 220;
+                gainNode.gain.value = 0.2;
+                oscillator.start();
+                setTimeout(() => {
+                    oscillator.stop();
+                }, 100);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = 440;
+                gainNode.gain.value = 0.2;
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.value = 660;
+                }, 100);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, 200);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = 200;
+                gainNode.gain.value = 0.2;
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.value = 150;
+                }, 100);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, 200);
+            }
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(
+                Math.floor(x),
+                Math.floor(y),
+                Math.ceil(width),
+                Math.ceil(height)
+            );
+        }
+        
+        // Draw track
+        function drawTrack(y, color, borderColor, option) {
+            // Track background
+            drawPixelRect(0, y, canvas.width, trackHeight, color);
+            
+            // Track border - top
+            for (let x = 0; x < canvas.width; x += 8) {
+                drawPixelRect(x, y, 6, 4, borderColor);
+            }
+            
+            // Track border - bottom
+            for (let x = 0; x < canvas.width; x += 8) {
+                drawPixelRect(x, y + trackHeight - 4, 6, 4, borderColor);
+            }
+            
+            // Draw train car with option
+            const trainWidth = ctx.measureText(option.text).width + 50;
+            const trainX = option.x;
+            const trainY = y + trackHeight / 2 - 25;
+            
+            // Train body
+            drawPixelRect(trainX, trainY, trainWidth, 50, borderColor);
+            drawPixelRect(trainX + 5, trainY + 5, trainWidth - 10, 40, COLORS.text);
+            
+            // Train wheels
+            drawPixelRect(trainX + 10, trainY + 45, 10, 10, borderColor);
+            drawPixelRect(trainX + trainWidth - 20, trainY + 45, 10, 10, borderColor);
+            
+            // Answer text
+            ctx.fillStyle = '#000000';
+            ctx.font = isMobile ? '16px sans-serif' : '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(option.text, trainX + trainWidth / 2, trainY + 25);
+        }
+        
+        // Game loop
+        function update() {
+            // Move trains
+            if (!gameOver) {
+                trackOptions.forEach(option => {
+                    option.x += 2;
+                    if (option.x > canvas.width) {
+                        option.x = -200 - Math.random() * 300;
+                    }
+                });
+            }
+        }
+        
+        function render() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question at the top
+            ctx.fillStyle = COLORS.text;
+            ctx.font = isMobile ? '20px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 50);
+            
+            // Draw instruction
+            ctx.font = isMobile ? '14px sans-serif' : '16px sans-serif';
+            ctx.fillText('Tap the track with the correct answer', canvas.width / 2, 80);
+            
+            // Draw tracks with options
+            const trackColors = [COLORS.track1, COLORS.track2, COLORS.track3, COLORS.track4];
+            const trackTop = 120;
+            
+            trackOptions.forEach((option, index) => {
+                const y = trackTop + index * (trackHeight + trackGap);
+                const color = trackColors[index % trackColors.length];
+                const borderColor = selectedTrack === index ? COLORS.highlight : '#306230';
+                
+                drawTrack(y, color, borderColor, option);
+                
+                // Draw arrow indicator
+                ctx.fillStyle = COLORS.text;
+                const arrowX = 20;
+                const arrowY = y + trackHeight / 2;
+                
+                // Pixelated arrow
+                ctx.beginPath();
+                ctx.moveTo(arrowX, arrowY - 10);
+                ctx.lineTo(arrowX + 20, arrowY);
+                ctx.lineTo(arrowX, arrowY + 10);
+                ctx.fill();
+            });
+            
+            // Draw game over state
+            if (gameOver) {
+                // Overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Result text
+                ctx.fillStyle = selectedTrack !== null && trackOptions[selectedTrack].correct ? COLORS.correct : COLORS.incorrect;
+                ctx.font = isMobile ? '24px sans-serif' : '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    selectedTrack !== null && trackOptions[selectedTrack].correct ? 'Correct!' : 'Incorrect!',
+                    canvas.width / 2,
+                    canvas.height / 2 - 20
+                );
+                
+                // Restart button
+                drawPixelRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height, COLORS.track1);
+                ctx.fillStyle = COLORS.text;
+                ctx.font = isMobile ? '18px sans-serif' : '20px sans-serif';
+                ctx.fillText('Restart', canvas.width / 2, restartButton.y + restartButton.height / 2);
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle user input
+        function handleClick(e) {
+            if (gameOver) {
+                // Check if restart button is clicked
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                if (
+                    clickX > restartButton.x &&
+                    clickX < restartButton.x + restartButton.width &&
+                    clickY > restartButton.y &&
+                    clickY < restartButton.y + restartButton.height
+                ) {
+                    resetGame();
+                }
+            } else {
+                // Check which track was clicked
+                const rect = canvas.getBoundingClientRect();
+                const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                const trackTop = 120;
+                for (let i = 0; i < trackOptions.length; i++) {
+                    const y = trackTop + i * (trackHeight + trackGap);
+                    if (clickY > y && clickY < y + trackHeight) {
+                        selectedTrack = i;
+                        playSound('select');
+                        
+                        // Check answer
+                        setTimeout(() => {
+                            gameOver = true;
+                            if (trackOptions[selectedTrack].correct) {
+                                playSound('correct');
+                            } else {
+                                playSound('incorrect');
+                            }
+                        }, 300);
+                        break;
+                    }
+                }
+            }
+        }
+
+        function handleTouch(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            if (touch) {
+                const mockEvent = {
+                    clientX: touch.clientX,
+                    clientY: touch.clientY
+                };
+                handleClick(mockEvent);
+            }
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            selectedTrack = null;
+            trackOptions.sort(() => Math.random() - 0.5);
+            trackOptions.forEach(option => {
+                option.x = -200 - Math.random() * 300;
+            });
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', handleTouch);
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

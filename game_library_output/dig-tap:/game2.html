@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dig-Tap: Red Planet</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game constants
+        const CELL_SIZE = 80;
+        const GRID_COLS = 4;
+        const GRID_ROWS = 3;
+        const MAX_DIGS = 5;
+        
+        // Game state
+        let digsLeft = MAX_DIGS;
+        let gameOver = false;
+        let showRestart = false;
+        
+        // Colors - limited 8-bit palette
+        const COLORS = {
+            background: '#352879',
+            dirt1: '#6B4226',
+            dirt2: '#8B6B4C',
+            dirt3: '#AD8C6F',
+            correct: '#50C878',
+            wrong: '#D82800',
+            text: '#FFFFFF',
+            meter: '#FFCC00',
+            meterBg: '#444444'
+        };
+        
+        // Question data
+        const question = "Which planet is known as the Red Planet?";
+        const answers = [
+            { text: "Mars", correct: true },
+            { text: "Venus", correct: false },
+            { text: "Jupiter", correct: false },
+            { text: "Mercury", correct: false }
+        ];
+        
+        // Shuffle answers
+        const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+        
+        // Create grid cells with dirt layers
+        const cells = [];
+        for (let row = 0; row < GRID_ROWS; row++) {
+            for (let col = 0; col < GRID_COLS; col++) {
+                const index = row * GRID_COLS + col;
+                
+                // Only place answers in first 4 positions (one per answer)
+                const answer = index < 4 ? shuffledAnswers[index] : null;
+                
+                cells.push({
+                    x: (canvas.width - CELL_SIZE * GRID_COLS) / 2 + col * CELL_SIZE,
+                    y: 180 + row * CELL_SIZE,
+                    width: CELL_SIZE - 10,
+                    height: CELL_SIZE - 10,
+                    layers: Math.floor(Math.random() * 2) + 1, // 1-2 layers of dirt
+                    answer: answer,
+                    revealed: false,
+                    cracking: false,
+                    crackLevel: 0,
+                    particles: []
+                });
+            }
+        }
+        
+        // Particle effects
+        function createDigParticles(x, y) {
+            const particleCount = 10;
+            const particles = [];
+            
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6 - 2,
+                    size: Math.random() * 6 + 3,
+                    color: Math.random() > 0.5 ? COLORS.dirt1 : COLORS.dirt2,
+                    life: 20 + Math.random() * 20
+                });
+            }
+            
+            return particles;
+        }
+        
+        // Audio
+        function playDigSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+            oscillator.frequency.linearRampToValueAtTime(50, audioContext.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+        
+        function playCorrectSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+            oscillator.frequency.setValueAtTime(392, audioContext.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(523, audioContext.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+        
+        function playWrongSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+            oscillator.frequency.setValueAtTime(150, audioContext.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(100, audioContext.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+
+        // Shovel cursor
+        const shovelCursor = {
+            x: 0,
+            y: 0,
+            digging: false,
+            frame: 0,
+            maxFrames: 3,
+            frameCount: 0,
+            frameDelay: 3
+        };
+        
+        // Draw shovel cursor
+        function drawShovel(x, y, digging) {
+            ctx.save();
+            
+            // Draw shovel handle (brown rectangle)
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(x - 4, y - 20, 8, 20);
+            
+            // Draw shovel head (gray rectangle)
+            ctx.fillStyle = '#A9A9A9';
+            ctx.fillRect(x - 10, y, 20, 12);
+            
+            // Add some details
+            if (digging) {
+                // Draw digging animation
+                ctx.rotate(Math.PI / 8);
+                ctx.fillStyle = '#A9A9A9';
+                ctx.fillRect(x - 5 + shovelCursor.frame * 2, y + 5 - shovelCursor.frame * 3, 15, 10);
+            }
+            
+            ctx.restore();
+        }
+        
+        // Draw functions
+        function drawCell(cell) {
+            if (cell.revealed) {
+                if (cell.answer) {
+                    // Draw revealed answer
+                    ctx.fillStyle = cell.answer.correct ? COLORS.correct : COLORS.wrong;
+                    ctx.fillRect(cell.x, cell.y, cell.width, cell.height);
+                    
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = '16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(cell.answer.text, cell.x + cell.width / 2, cell.y + cell.height / 2);
+                } else {
+                    // Empty revealed cell
+                    ctx.fillStyle = COLORS.dirt3;
+                    ctx.fillRect(cell.x, cell.y, cell.width, cell.height);
+                }
+            } else {
+                // Dirt layer with pixelated texture
+                let color = COLORS.dirt1;
+                if (cell.cracking) {
+                    // Show cracking animation
+                    color = COLORS.dirt2;
+                    
+                    // Draw cracks
+                    ctx.fillStyle = color;
+                    ctx.fillRect(cell.x, cell.y, cell.width, cell.height);
+                    
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    
+                    // Draw random cracks based on crack level
+                    for (let i = 0; i < cell.crackLevel; i++) {
+                        const startX = cell.x + Math.random() * cell.width;
+                        const startY = cell.y + Math.random() * cell.height;
+                        ctx.moveTo(startX, startY);
+                        ctx.lineTo(startX + (Math.random() - 0.5) * 30, startY + (Math.random() - 0.5) * 30);
+                    }
+                    
+                    ctx.stroke();
+                } else {
+                    // Normal dirt texture
+                    ctx.fillStyle = color;
+                    ctx.fillRect(cell.x, cell.y, cell.width, cell.height);
+                    
+                    // Add pixelated texture
+                    for (let i = 0; i < 20; i++) {
+                        const pixelX = cell.x + Math.random() * cell.width;
+                        const pixelY = cell.y + Math.random() * cell.height;
+                        const pixelSize = Math.floor(Math.random() * 4) + 2;
+                        
+                        ctx.fillStyle = Math.random() > 0.5 ? COLORS.dirt2 : COLORS.dirt3;
+                        ctx.fillRect(
+                            Math.floor(pixelX / 4) * 4, 
+                            Math.floor(pixelY / 4) * 4, 
+                            pixelSize, pixelSize
+                        );
+                    }
+                }
+            }
+            
+            // Draw particles
+            cell.particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    Math.floor(particle.x / 2) * 2, 
+                    Math.floor(particle.y / 2) * 2, 
+                    particle.size, particle.size
+                );
+            });
+        }
+        
+        function drawUI() {
+            // Draw background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, 80);
+            
+            // Draw dig meter background
+            const meterWidth = 200;
+            const meterHeight = 20;
+            const meterX = (canvas.width - meterWidth) / 2;
+            const meterY = 130;
+            
+            ctx.fillStyle = COLORS.meterBg;
+            ctx.fillRect(meterX, meterY, meterWidth, meterHeight);
+            
+            // Draw dig meter fill
+            const fillWidth = (digsLeft / MAX_DIGS) * meterWidth;
+            ctx.fillStyle = COLORS.meter;
+            ctx.fillRect(meterX, meterY, fillWidth, meterHeight);
+            
+            // Draw dig meter text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Digs Left: ${digsLeft}`, canvas.width / 2, meterY + meterHeight / 2);
+            
+            // Draw all cells
+            cells.forEach(drawCell);
+            
+            // Draw restart button if game is over
+            if (showRestart) {
+                ctx.fillStyle = '#444';
+                ctx.fillRect(canvas.width / 2 - 60, 500, 120, 40);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Restart', canvas.width / 2, 520);
+            }
+            
+            // Draw shovel cursor
+            drawShovel(shovelCursor.x, shovelCursor.y, shovelCursor.digging);
+        }
+        
+        // Game loop
+        function update() {
+            // Update particles
+            cells.forEach(cell => {
+                cell.particles = cell.particles.filter(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.2; // gravity
+                    p.life--;
+                    return p.life > 0;
+                });
+                
+                // Update cracking animation
+                if (cell.cracking) {
+                    cell.crackLevel += 0.5;
+                    if (cell.crackLevel >= 5) {
+                        cell.revealed = true;
+                        cell.cracking = false;
+                        
+                        // Check if answer cell was revealed
+                        if (cell.answer) {
+                            gameOver = true;
+                            setTimeout(() => {
+                                showRestart = true;
+                            }, 1000);
+                            
+                            if (cell.answer.correct) {
+                                playCorrectSound();
+                            } else {
+                                playWrongSound();
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Update shovel animation
+            if (shovelCursor.digging) {
+                shovelCursor.frameCount++;
+                if (shovelCursor.frameCount >= shovelCursor.frameDelay) {
+                    shovelCursor.frame = (shovelCursor.frame + 1) % shovelCursor.maxFrames;
+                    shovelCursor.frameCount = 0;
+                    
+                    if (shovelCursor.frame === 0) {
+                        shovelCursor.digging = false;
+                    }
+                }
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            drawUI();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+        
+        // Handle mouse/touch
+        function getCursorPosition(event) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let clientX, clientY;
+            
+            if (event.type.includes('touch')) {
+                clientX = event.touches[0].clientX;
+                clientY = event.touches[0].clientY;
+            } else {
+                clientX = event.clientX;
+                clientY = event.clientY;
+            }
+            
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+        
+        function handleClick(event) {
+            const pos = getCursorPosition(event);
+            
+            // Check for restart button click
+            if (showRestart && 
+                pos.x > canvas.width / 2 - 60 && 
+                pos.x < canvas.width / 2 + 60 && 
+                pos.y > 500 && 
+                pos.y < 540) {
+                // Reset game
+                digsLeft = MAX_DIGS;
+                gameOver = false;
+                showRestart = false;
+                
+                // Reset cells
+                cells.forEach(cell => {
+                    cell.revealed = false;
+                    cell.cracking = false;
+                    cell.crackLevel = 0;
+                    cell.particles = [];
+                });
+                
+                return;
+            }
+            
+            // Handle cell clicks
+            if (!gameOver && digsLeft > 0) {
+                cells.forEach(cell => {
+                    if (!cell.revealed && !cell.cracking &&
+                        pos.x > cell.x && 
+                        pos.x < cell.x + cell.width && 
+                        pos.y > cell.y && 
+                        pos.y < cell.y + cell.height) {
+                        
+                        // Start cracking animation
+                        cell.cracking = true;
+                        cell.crackLevel = 1;
+                        
+                        // Create particles
+                        cell.particles = cell.particles.concat(
+                            createDigParticles(pos.x, pos.y)
+                        );
+                        
+                        // Decrement digs
+                        digsLeft--;
+                        
+                        // Play dig sound
+                        playDigSound();
+                        
+                        // Animate shovel
+                        shovelCursor.digging = true;
+                        shovelCursor.frame = 0;
+                    }
+                });
+            }
+        }
+        
+        function updateCursor(event) {
+            const pos = getCursorPosition(event);
+            shovelCursor.x = pos.x;
+            shovelCursor.y = pos.y;
+            
+            // Hide default cursor
+            canvas.style.cursor = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handleClick);
+        canvas.addEventListener('touchstart', handleClick);
+        canvas.addEventListener('mousemove', updateCursor);
+        canvas.addEventListener('touchmove', updateCursor);
+        
+        // Handle cursor leaving canvas
+        canvas.addEventListener('mouseout', () => {
+            canvas.style.cursor = 'default';
+        });
+    </script>
+</body>
+</html>

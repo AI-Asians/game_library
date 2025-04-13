@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Balance-Tap: Capital of France</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 4px solid #333;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // 8-bit color palette
+    const COLORS = {
+      background: '#2d2d2d',
+      beam: '#825e34',
+      beamDark: '#5a3d1d',
+      platform: '#a77c46',
+      pivot: '#3f3f3f',
+      answerBox: '#4a90e2',
+      answerBoxWrong: '#e24a4a',
+      answerBoxCorrect: '#4ae24a',
+      answerBoxOutline: '#2d2d2d',
+      target: '#e2cb4a',
+      targetActive: '#e2e24a',
+      text: '#ffffff',
+      questionBox: '#333333',
+      restartBtn: '#e24a4a'
+    };
+
+    // Game state
+    let gameState = {
+      question: "What is the capital of France?",
+      answers: [
+        { text: "Berlin", correct: false, x: 200, y: 300, width: 120, height: 60, selected: false },
+        { text: "London", correct: false, x: 400, y: 300, width: 120, height: 60, selected: false },
+        { text: "Paris", correct: true, x: 600, y: 300, width: 120, height: 60, selected: false }
+      ],
+      beam: {
+        x: 400,
+        y: 450,
+        width: 500,
+        height: 20,
+        angle: 0,
+        targetAngle: 0
+      },
+      pivot: {
+        x: 400,
+        y: 470,
+        width: 40,
+        height: 30
+      },
+      targetZone: {
+        x: 400,
+        y: 380,
+        width: 120,
+        height: 20,
+        active: false
+      },
+      gameOver: false,
+      success: false,
+      draggedAnswer: null,
+      balanceTimer: 0,
+      balanceRequired: 60 // frames of stable balance required
+    };
+
+    // Sound effects using AudioContext
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(frequency, duration, type = 'square') {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+
+    function playCorrectSound() {
+      playSound(523.25, 0.1); // C5
+      setTimeout(() => playSound(659.25, 0.1), 100); // E5
+      setTimeout(() => playSound(783.99, 0.2), 200); // G5
+    }
+
+    function playWrongSound() {
+      playSound(311.13, 0.2, 'sawtooth'); // E♭4
+      setTimeout(() => playSound(233.08, 0.3, 'sawtooth'), 200); // B♭3
+    }
+
+    function playClickSound() {
+      playSound(440, 0.05); // A4
+    }
+
+    function playBalanceSound() {
+      playSound(523.25, 0.05); // C5
+    }
+
+    // Get mouse position
+    function getMousePos(canvas, evt) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      return {
+        x: (evt.clientX - rect.left) * scaleX,
+        y: (evt.clientY - rect.top) * scaleY
+      };
+    }
+
+    // Check if mouse is over an answer box
+    function isMouseOverAnswer(mousePos, answer) {
+      return mousePos.x >= answer.x && 
+             mousePos.x <= answer.x + answer.width && 
+             mousePos.y >= answer.y && 
+             mousePos.y <= answer.y + answer.height;
+    }
+
+    // Check if mouse is over restart button
+    function isMouseOverRestart(mousePos) {
+      const btn = { x: canvas.width / 2 - 60, y: 500, width: 120, height: 40 };
+      return mousePos.x >= btn.x && 
+             mousePos.x <= btn.x + btn.width && 
+             mousePos.y >= btn.y && 
+             mousePos.y <= btn.y + btn.height;
+    }
+
+    // Check if an answer is in the target zone
+    function isAnswerInTarget(answer) {
+      const answerCenter = { x: answer.x + answer.width / 2, y: answer.y + answer.height / 2 };
+      const targetCenter = { 
+        x: gameState.targetZone.x + gameState.targetZone.width / 2, 
+        y: gameState.targetZone.y + gameState.targetZone.height / 2 
+      };
+      
+      const distance = Math.sqrt(
+        Math.pow(answerCenter.x - targetCenter.x, 2) + 
+        Math.pow(answerCenter.y - targetCenter.y, 2)
+      );
+      
+      return distance < 50;
+    }
+
+    // Calculate beam angle based on answer positions
+    function calculateBeamAngle() {
+      let leftWeight = 0;
+      let rightWeight = 0;
+      const pivotX = gameState.beam.x;
+      
+      gameState.answers.forEach(answer => {
+        const answerCenterX = answer.x + answer.width / 2;
+        const distance = Math.abs(answerCenterX - pivotX);
+        const weight = 1;
+        
+        if (answerCenterX < pivotX) {
+          leftWeight += weight * distance / 100;
+        } else {
+          rightWeight += weight * distance / 100;
+        }
+      });
+      
+      // Calculate target angle (max 15 degrees)
+      const maxAngle = 15 * Math.PI / 180;
+      let targetAngle = (rightWeight - leftWeight) * 0.1;
+      
+      // Limit angle
+      if (targetAngle > maxAngle) targetAngle = maxAngle;
+      if (targetAngle < -maxAngle) targetAngle = -maxAngle;
+      
+      return targetAngle;
+    }
+
+    // Draw pixelated rectangle
+    function drawPixelRect(x, y, width, height, color) {
+      ctx.fillStyle = color;
+      
+      // Draw with 4x4 pixel blocks for pixelated look
+      for (let px = 0; px < width; px += 4) {
+        for (let py = 0; py < height; py += 4) {
+          ctx.fillRect(
+            Math.floor(x) + px, 
+            Math.floor(y) + py, 
+            4, 4
+          );
+        }
+      }
+    }
+
+    // Draw the beam with rotation
+    function drawBeam() {
+      ctx.save();
+      ctx.translate(gameState.beam.x, gameState.beam.y);
+      ctx.rotate(gameState.beam.angle);
+      
+      // Draw beam shadow
+      drawPixelRect(-gameState.beam.width / 2 + 4, 4, gameState.beam.width, gameState.beam.height, COLORS.beamDark);
+      
+      // Draw beam
+      drawPixelRect(-gameState.beam.width / 2, 0, gameState.beam.width, gameState.beam.height, COLORS.beam);
+      
+      // Draw pixelated beam details
+      for (let i = -gameState.beam.width / 2 + 20; i < gameState.beam.width / 2; i += 40) {
+        drawPixelRect(i, -2, 20, 4, COLORS.beamDark);
+      }
+      
+      ctx.restore();
+    }
+
+    // Draw the pivot
+    function drawPivot() {
+      drawPixelRect(
+        gameState.pivot.x - gameState.pivot.width / 2,
+        gameState.pivot.y - gameState.pivot.height / 2,
+        gameState.pivot.width,
+        gameState.pivot.height,
+        COLORS.pivot
+      );
+      
+      // Draw pixelated highlights
+      drawPixelRect(
+        gameState.pivot.x - gameState.pivot.width / 2 + 4,
+        gameState.pivot.y - gameState.pivot.height / 2 + 4,
+        8, 4,
+        '#5f5f5f'
+      );
+    }
+
+    // Draw an answer box
+    function drawAnswer(answer) {
+      let color = COLORS.answerBox;
+      
+      if (gameState.gameOver) {
+        color = answer.correct ? COLORS.answerBoxCorrect : COLORS.answerBoxWrong;
+      } else if (answer.selected) {
+        color = '#6aadf5';
+      }
+      
+      // Apply beam rotation to answer position if it's on the beam
+      if (answer.y > gameState.beam.y - answer.height - 10 && 
+          answer.y < gameState.beam.y) {
+        
+        ctx.save();
+        ctx.translate(gameState.beam.x, gameState.beam.y);
+        ctx.rotate(gameState.beam.angle);
+        
+        // Calculate rotated position
+        const relX = answer.x - gameState.beam.x;
+        const relY = answer.y - gameState.beam.y;
+        
+        // Draw pixel box with 8-bit look
+        drawPixelRect(relX, relY - answer.height, answer.width, answer.height, color);
+        
+        // Draw pixelated outline
+        ctx.strokeStyle = COLORS.answerBoxOutline;
+        ctx.lineWidth = 4;
+        for (let i = 0; i < 4; i++) {
+          ctx.strokeRect(
+            relX + i, 
+            relY - answer.height + i, 
+            answer.width - i * 2, 
+            answer.height - i * 2
+          );
+        }
+        
+        // Draw text
+        ctx.fillStyle = COLORS.text;
+        ctx.font = '18px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(answer.text, relX + answer.width / 2, relY - answer.height / 2);
+        
+        ctx.restore();
+      } else {
+        // Draw the answer normally when not on the beam
+        drawPixelRect(answer.x, answer.y - answer.height, answer.width, answer.height, color);
+        
+        // Draw pixelated outline
+        ctx.strokeStyle = COLORS.answerBoxOutline;
+        ctx.lineWidth = 4;
+        for (let i = 0; i < 4; i++) {
+          ctx.strokeRect(
+            answer.x + i, 
+            answer.y - answer.height + i, 
+            answer.width - i * 2, 
+            answer.height - i * 2
+          );
+        }
+        
+        // Draw text
+        ctx.fillStyle = COLORS.text;
+        ctx.font = '18px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(answer.text, answer.x + answer.width / 2, answer.y - answer.height / 2);
+      }
+    }
+
+    // Draw the target zone
+    function drawTargetZone() {
+      const color = gameState.targetZone.active ? COLORS.targetActive : COLORS.target;
+      
+      // Draw as a platform with pixelated 8-bit look
+      drawPixelRect(
+        gameState.targetZone.x,
+        gameState.targetZone.y,
+        gameState.targetZone.width,
+        gameState.targetZone.height,
+        color
+      );
+      
+      // Add pixel details
+      for (let i = 0; i < gameState.targetZone.width; i += 8) {
+        drawPixelRect(
+          gameState.targetZone.x + i,
+          gameState.targetZone.y + gameState.targetZone.height - 4,
+          4, 4,
+          '#aa9933'
+        );
+      }
+      
+      // Draw target indicator text
+      ctx.fillStyle = '#2d2d2d';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        "TARGET", 
+        gameState.targetZone.x + gameState.targetZone.width / 2, 
+        gameState.targetZone.y + gameState.targetZone.height / 2
+      );
+    }
+
+    // Draw the question
+    function drawQuestion() {
+      // Draw question box with 8-bit look
+      drawPixelRect(150, 100, 500, 80, COLORS.questionBox);
+      
+      // Draw pixelated details on the box
+      for (let i = 0; i < 500; i += 20) {
+        drawPixelRect(150 + i, 100, 10, 4, '#444444');
+        drawPixelRect(150 + i + 10, 176, 10, 4, '#444444');
+      }
+      
+      // Draw question text
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '22px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(gameState.question, canvas.width / 2, 140);
+    }
+
+    // Draw restart button
+    function drawRestartButton() {
+      if (gameState.gameOver) {
+        const btnX = canvas.width / 2 - 60;
+        const btnY = 500;
+        const btnWidth = 120;
+        const btnHeight = 40;
+        
+        // Draw button with 8-bit look
+        drawPixelRect(btnX, btnY, btnWidth, btnHeight, COLORS.restartBtn);
+        
+        // Draw pixelated button details
+        drawPixelRect(btnX + 4, btnY + 4, btnWidth - 8, 4, '#f27272');
+        drawPixelRect(btnX + 4, btnY + btnHeight - 8, btnWidth - 8, 4, '#c13a3a');
+        
+        // Draw text
+        ctx.fillStyle = COLORS.text;
+        ctx.font = '18px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText("RESTART", btnX + btnWidth / 2, btnY + btnHeight / 2);
+      }
+    }
+
+    // Draw game over message
+    function drawGameOverMessage() {
+      if (gameState.gameOver) {
+        ctx.fillStyle = gameState.success ? '#4ae24a' : '#e24a4a';
+        ctx.font = '28px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+          gameState.success ? "CORRECT!" : "WRONG!",
+          canvas.width / 2,
+          220
+        );
+      }
+    }
+
+    // Update balance status
+    function updateBalance() {
+      // Check if there's a correct answer in the target zone
+      let correctInTarget = false;
+      let anyInTarget = false;
+      
+      gameState.answers.forEach(answer => {
+        if (isAnswerInTarget(answer)) {
+          anyInTarget = true;
+          if (answer.correct) {
+            correctInTarget = true;
+          }
+        }
+      });
+      
+      // Check if beam is balanced (angle close to 0)
+      const isBalanced = Math.abs(gameState.beam.angle) < 0.03;
+      
+      // Update target zone active state
+      gameState.targetZone.active = anyInTarget && isBalanced;
+      
+      // Balance timer logic
+      if (gameState.targetZone.active) {
+        if (gameState.balanceTimer % 10 === 0) {
+          playBalanceSound();
+        }
+        
+        gameState.balanceTimer++;
+        
+        // Check win/lose condition after maintaining balance
+        if (gameState.balanceTimer >= gameState.balanceRequired) {
+          gameState.gameOver = true;
+          gameState.success = correctInTarget;
+          
+          if (gameState.success) {
+            playCorrectSound();
+          } else {
+            playWrongSound();
+          }
+        }
+      } else {
+        gameState.balanceTimer = 0;
+      }
+    }
+
+    // Main update function
+    function update() {
+      if (!gameState.gameOver) {
+        // Calculate beam angle based on answer positions
+        gameState.beam.targetAngle = calculateBeamAngle();
+        
+        // Smoothly transition to target angle (physics-like)
+        gameState.beam.angle += (gameState.beam.targetAngle - gameState.beam.angle) * 0.1;
+        
+        // Update balance status
+        updateBalance();
+      }
+    }
+
+    // Main draw function
+    function draw() {
+      // Clear canvas with background color
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw target zone
+      drawTargetZone();
+      
+      // Draw question
+      drawQuestion();
+      
+      // Draw beam and pivot
+      drawBeam();
+      drawPivot();
+      
+      // Draw answers
+      gameState.answers.forEach(drawAnswer);
+      
+      // Draw game over message and restart button
+      drawGameOverMessage();
+      drawRestartButton();
+    }
+
+    // Main game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Initialize game
+    function init() {
+      // Randomize initial answer positions
+      gameState.answers.forEach((answer, index) => {
+        answer.x = 150 + (index * 250);
+        answer.y = 300;
+      });
+      
+      // Set up event listeners
+      canvas.addEventListener('mousedown', (evt) => {
+        const mousePos = getMousePos(canvas, evt);
+        
+        if (gameState.gameOver) {
+          if (isMouseOverRestart(mousePos)) {
+            // Reset game state
+            gameState.gameOver = false;
+            gameState.success = false;
+            gameState.balanceTimer = 0;
+            gameState.beam.angle = 0;
+            gameState.targetZone.active = false;
+            
+            // Randomize answer positions
+            gameState.answers.forEach((answer, index) => {
+              answer.x = 150 + (index * 250);
+              answer.y = 300;
+            });
+            
+            playClickSound();
+          }
+        } else {
+          // Check if clicked on an answer
+          gameState.answers.forEach(answer => {
+            if (isMouseOverAnswer(mousePos, answer)) {
+              gameState.draggedAnswer = answer;
+              answer.selected = true;
+              playClickSound();
+            }
+          });
+        }
+      });
+      
+      canvas.addEventListener('mousemove', (evt) => {
+        if (gameState.draggedAnswer && !gameState.gameOver) {
+          const mousePos = getMousePos(canvas, evt);
+          gameState.draggedAnswer.x = mousePos.x - gameState.draggedAnswer.width / 2;
+          gameState.draggedAnswer.y = mousePos.y;
+        }
+      });
+      
+      canvas.addEventListener('mouseup', () => {
+        if (gameState.draggedAnswer) {
+          gameState.draggedAnswer.selected = false;
+          gameState.draggedAnswer = null;
+        }
+      });
+      
+      // Handle touch events for mobile
+      canvas.addEventListener('touchstart', (evt) => {
+        evt.preventDefault();
+        const touch = evt.touches[0];
+        const mousePos = getMousePos(canvas, touch);
+        
+        if (gameState.gameOver) {
+          if (isMouseOverRestart(mousePos)) {
+            // Reset game state
+            gameState.gameOver = false;
+            gameState.success = false;
+            gameState.balanceTimer = 0;
+            gameState.beam.angle = 0;
+            gameState.targetZone.active = false;
+            
+            // Randomize answer positions
+            gameState.answers.forEach((answer, index) => {
+              answer.x = 150 + (index * 250);
+              answer.y = 300;
+            });
+            
+            playClickSound();
+          }
+        } else {
+          // Check if touched an answer
+          gameState.answers.forEach(answer => {
+            if (isMouseOverAnswer(mousePos, answer)) {
+              gameState.draggedAnswer = answer;
+              answer.selected = true;
+              playClickSound();
+            }
+          });
+        }
+      }, { passive: false });
+      
+      canvas.addEventListener('touchmove', (evt) => {
+        evt.preventDefault();
+        if (gameState.draggedAnswer && !gameState.gameOver) {
+          const touch = evt.touches[0];
+          const mousePos = getMousePos(canvas, touch);
+          gameState.draggedAnswer.x = mousePos.x - gameState.draggedAnswer.width / 2;
+          gameState.draggedAnswer.y = mousePos.y;
+        }
+      }, { passive: false });
+      
+      canvas.addEventListener('touchend', (evt) => {
+        evt.preventDefault();
+        if (gameState.draggedAnswer) {
+          gameState.draggedAnswer.selected = false;
+          gameState.draggedAnswer = null;
+        }
+      }, { passive: false });
+      
+      // Start game loop
+      gameLoop();
+    }
+
+    // Responsive canvas sizing
+    function resizeCanvas() {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      
+      if (isPortrait && window.innerWidth < 500) {
+        // Mobile portrait mode
+        canvas.width = 360;
+        canvas.height = 640;
+        
+        // Adjust game elements for mobile
+        gameState.beam.x = canvas.width / 2;
+        gameState.beam.width = canvas.width * 0.8;
+        gameState.pivot.x = canvas.width / 2;
+        gameState.targetZone.x = canvas.width / 2 - 60;
+        
+        // Resize answers for mobile
+        gameState.answers.forEach((answer, index) => {
+          answer.width = 80;
+          answer.x = 30 + (index * 110);
+        });
+      } else {
+        // Web mode
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Reset game elements to original positions
+        gameState.beam.x = 400;
+        gameState.beam.width = 500;
+        gameState.pivot.x = 400;
+        gameState.targetZone.x = 400 - 60;
+        
+        // Reset answer sizes
+        gameState.answers.forEach((answer, index) => {
+          answer.width = 120;
+          answer.x = 150 + (index * 250);
+        });
+      }
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', resizeCanvas);
+    
+    // Initialize canvas size and start game
+    resizeCanvas();
+    init();
+  </script>
+</body>
+</html>

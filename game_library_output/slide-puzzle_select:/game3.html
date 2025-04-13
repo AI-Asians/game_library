@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Puzzle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+            box-shadow: 0 0 10px #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive canvas setup - check if mobile
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // 8-bit color palette
+        const colors = {
+            background: '#0f380f',
+            border: '#8bac0f',
+            highlight: '#9bbc0f',
+            text: '#e0f8d0',
+            correct: '#306230',
+            wrong: '#882000',
+            tile: '#306230',
+            tileHighlight: '#8bac0f',
+            emptyTile: '#0f380f',
+            frame: '#8bac0f'
+        };
+        
+        // Game state
+        let gameState = {
+            size: 3, // 3x3 grid
+            tiles: [],
+            emptyPos: { row: 2, col: 2 },
+            solved: false,
+            selectedTile: null,
+            gameOver: false,
+            correct: false
+        };
+        
+        // Answers
+        const answers = [
+            'Paris',    // Correct
+            'London',
+            'Berlin',
+            'Madrid',
+            'Rome',
+            'Brussels',
+            'Amsterdam',
+            'Lisbon'
+        ];
+        
+        // Audio context for 8-bit sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'move':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime);
+                    }, 100);
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime);
+                    }, 200);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(196, audioCtx.currentTime);
+                    }, 100);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+            }
+        }
+        
+        // Initialize the game
+        function init() {
+            gameState = {
+                size: 3,
+                tiles: [],
+                emptyPos: { row: 2, col: 2 },
+                solved: false,
+                selectedTile: null,
+                gameOver: false,
+                correct: false
+            };
+            
+            // Shuffle answers (keeping track of correct answer)
+            const shuffledAnswers = [...answers];
+            for (let i = shuffledAnswers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledAnswers[i], shuffledAnswers[j]] = [shuffledAnswers[j], shuffledAnswers[i]];
+            }
+            
+            // Initialize tiles with answers
+            for (let row = 0; row < gameState.size; row++) {
+                for (let col = 0; col < gameState.size; col++) {
+                    const index = row * gameState.size + col;
+                    if (index < gameState.size * gameState.size - 1) {
+                        gameState.tiles.push({
+                            row: row,
+                            col: col,
+                            correctRow: row,
+                            correctCol: col,
+                            text: shuffledAnswers[index],
+                            isCorrect: shuffledAnswers[index] === 'Paris'
+                        });
+                    }
+                }
+            }
+            
+            // Shuffle tiles with solvable configuration
+            shuffleTiles(30); // Do 30 random valid moves
+        }
+        
+        // Shuffle tiles by making random valid moves
+        function shuffleTiles(moves) {
+            for (let i = 0; i < moves; i++) {
+                const possibleMoves = getValidMoves();
+                const move = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+                
+                const tileToMove = gameState.tiles.find(
+                    t => t.row === move.row && t.col === move.col
+                );
+                
+                if (tileToMove) {
+                    const tempRow = tileToMove.row;
+                    const tempCol = tileToMove.col;
+                    
+                    tileToMove.row = gameState.emptyPos.row;
+                    tileToMove.col = gameState.emptyPos.col;
+                    
+                    gameState.emptyPos.row = tempRow;
+                    gameState.emptyPos.col = tempCol;
+                }
+            }
+        }
+        
+        // Get valid moves (tiles adjacent to empty space)
+        function getValidMoves() {
+            const { row, col } = gameState.emptyPos;
+            const moves = [];
+            
+            if (row > 0) moves.push({ row: row - 1, col });
+            if (row < gameState.size - 1) moves.push({ row: row + 1, col });
+            if (col > 0) moves.push({ row, col: col - 1 });
+            if (col < gameState.size - 1) moves.push({ row, col: col + 1 });
+            
+            return moves;
+        }
+        
+        // Check if puzzle is solved
+        function checkIfSolved() {
+            return gameState.tiles.every(tile => 
+                tile.row === tile.correctRow && tile.col === tile.correctCol
+            );
+        }
+        
+        // Draw a pixel art bevel border
+        function drawBevelBorder(x, y, width, height, color, raised = true) {
+            const lightColor = '#9bcc0f';
+            const darkColor = '#0f380f';
+            
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Top and left edges (light for raised, dark for sunken)
+            ctx.fillStyle = raised ? lightColor : darkColor;
+            ctx.fillRect(x, y, width, 4);
+            ctx.fillRect(x, y, 4, height);
+            
+            // Bottom and right edges (dark for raised, light for sunken)
+            ctx.fillStyle = raised ? darkColor : lightColor;
+            ctx.fillRect(x, y + height - 4, width, 4);
+            ctx.fillRect(x + width - 4, y, 4, height);
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = '28px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 60);
+            
+            // Calculate puzzle dimensions
+            const puzzleSize = Math.min(canvas.width, canvas.height) * 0.7;
+            const tileSize = puzzleSize / gameState.size;
+            const puzzleX = (canvas.width - puzzleSize) / 2;
+            const puzzleY = (canvas.height - puzzleSize) / 2 + 20;
+            
+            // Draw puzzle frame
+            drawBevelBorder(
+                puzzleX - 10, 
+                puzzleY - 10, 
+                puzzleSize + 20, 
+                puzzleSize + 20, 
+                colors.frame
+            );
+            
+            // Draw tiles
+            gameState.tiles.forEach(tile => {
+                const x = puzzleX + tile.col * tileSize;
+                const y = puzzleY + tile.row * tileSize;
+                
+                // Skip drawing if it's in the empty position
+                if (tile.row === gameState.emptyPos.row && tile.col === gameState.emptyPos.col) {
+                    return;
+                }
+                
+                const isCorrectPosition = tile.row === tile.correctRow && tile.col === tile.correctCol;
+                // Darker color for correct position
+                let tileColor = isCorrectPosition ? colors.tileHighlight : colors.tile;
+                
+                // Highlight selected tile
+                if (gameState.selectedTile === tile) {
+                    tileColor = '#e0f8d0';
+                }
+                
+                // Draw tile with bevel effect
+                drawBevelBorder(x, y, tileSize, tileSize, tileColor);
+                
+                // Draw tile content
+                ctx.fillStyle = colors.text;
+                ctx.font = '18px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Adjust for long texts
+                if (tile.text.length > 8) {
+                    ctx.font = '16px Arial';
+                }
+                
+                ctx.fillText(tile.text, x + tileSize / 2, y + tileSize / 2);
+            });
+            
+            // Draw empty tile
+            const emptyX = puzzleX + gameState.emptyPos.col * tileSize;
+            const emptyY = puzzleY + gameState.emptyPos.row * tileSize;
+            ctx.fillStyle = colors.emptyTile;
+            ctx.fillRect(emptyX, emptyY, tileSize, tileSize);
+            
+            // Draw a subtle border for the empty tile
+            ctx.strokeStyle = '#306230';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(emptyX, emptyY, tileSize, tileSize);
+            
+            // Draw result if game is over
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.correct ? colors.correct : colors.wrong;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = '32px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    gameState.correct ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 40
+                );
+                
+                // Draw restart button
+                const btnWidth = 180;
+                const btnHeight = 60;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2 + 40;
+                
+                drawBevelBorder(btnX, btnY, btnWidth, btnHeight, colors.border);
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = '24px Arial';
+                ctx.fillText('Play Again', btnX + btnWidth / 2, btnY + btnHeight / 2);
+            }
+            
+            // Draw "solved" indication if puzzle is solved
+            if (gameState.solved && !gameState.gameOver) {
+                ctx.fillStyle = colors.text;
+                ctx.font = '24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Puzzle Solved! Select an answer.', canvas.width / 2, puzzleY + puzzleSize + 40);
+            }
+        }
+        
+        // Handle click events
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (gameState.gameOver) {
+                // Check if restart button is clicked
+                const btnWidth = 180;
+                const btnHeight = 60;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height / 2 + 40;
+                
+                if (
+                    x > btnX && x < btnX + btnWidth &&
+                    y > btnY && y < btnY + btnHeight
+                ) {
+                    init();
+                }
+                return;
+            }
+            
+            // Calculate puzzle dimensions
+            const puzzleSize = Math.min(canvas.width, canvas.height) * 0.7;
+            const tileSize = puzzleSize / gameState.size;
+            const puzzleX = (canvas.width - puzzleSize) / 2;
+            const puzzleY = (canvas.height - puzzleSize) / 2 + 20;
+            
+            // Convert click position to grid position
+            const col = Math.floor((x - puzzleX) / tileSize);
+            const row = Math.floor((y - puzzleY) / tileSize);
+            
+            // Check if click is inside the puzzle
+            if (
+                row >= 0 && row < gameState.size &&
+                col >= 0 && col < gameState.size
+            ) {
+                // Find clicked tile
+                const clickedTile = gameState.tiles.find(
+                    t => t.row === row && t.col === col
+                );
+                
+                if (gameState.solved) {
+                    // If puzzle is solved, check if answer is selected
+                    if (clickedTile) {
+                        gameState.selectedTile = clickedTile;
+                        
+                        // Check if correct answer
+                        gameState.correct = clickedTile.isCorrect;
+                        gameState.gameOver = true;
+                        
+                        // Play sound
+                        playSound(gameState.correct ? 'correct' : 'wrong');
+                    }
+                } else {
+                    // Check if clicked position is adjacent to empty space
+                    const validMoves = getValidMoves();
+                    const canMove = validMoves.some(move => move.row === row && move.col === col);
+                    
+                    if (canMove) {
+                        // Find the tile at the clicked position
+                        const tileToMove = gameState.tiles.find(
+                            t => t.row === row && t.col === col
+                        );
+                        
+                        if (tileToMove) {
+                            // Swap positions with empty space
+                            const tempRow = tileToMove.row;
+                            const tempCol = tileToMove.col;
+                            
+                            tileToMove.row = gameState.emptyPos.row;
+                            tileToMove.col = gameState.emptyPos.col;
+                            
+                            gameState.emptyPos.row = tempRow;
+                            gameState.emptyPos.col = tempCol;
+                            
+                            // Play movement sound
+                            playSound('move');
+                            
+                            // Check if puzzle is solved
+                            gameState.solved = checkIfSolved();
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('click', handleClick);
+        
+        // Game loop
+        function gameLoop() {
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

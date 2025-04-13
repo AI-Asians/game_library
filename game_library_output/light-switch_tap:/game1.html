@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Light Switch True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        let width = 800;
+        let height = 600;
+        
+        // Resize for mobile if needed
+        if (window.innerWidth <= 480) {
+            width = 360;
+            height = 640;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Game variables
+        const colors = {
+            dark: '#111',
+            panel: '#333',
+            metal: '#777',
+            metalDark: '#555',
+            metalLight: '#999',
+            screw: '#886622',
+            lightOff: '#442211',
+            lightOn: '#FFCC22',
+            switchOff: '#111',
+            switchOn: '#00CCFF',
+            textLight: '#EEE',
+            textDark: '#333',
+            buttonUp: '#CC2200',
+            buttonDown: '#AA1100',
+            correct: '#00FF66',
+            incorrect: '#FF3300'
+        };
+        
+        const question = "The Great Wall of China is visible from space.";
+        const correctAnswer = false;
+        
+        // Game state
+        let state = {
+            trueSelected: false,
+            falseSelected: false,
+            switchAnimating: false,
+            switchAngle: 0,
+            animatingSwitch: null,
+            buttonPressed: false,
+            gameOver: false,
+            isCorrect: null,
+            restartVisible: false
+        };
+        
+        // Sound generation
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'click':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'submit':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.4, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'correct':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioContext.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw functions
+        function drawPanel() {
+            // Background panel
+            ctx.fillStyle = colors.panel;
+            ctx.fillRect(0, 0, width, height);
+            
+            // Panel texture
+            ctx.fillStyle = colors.metalDark;
+            for (let x = 0; x < width; x += 40) {
+                for (let y = 0; y < height; y += 40) {
+                    if ((x + y) % 80 === 0) {
+                        ctx.fillRect(x, y, 20, 20);
+                        ctx.fillRect(x + 20, y + 20, 20, 20);
+                    }
+                }
+            }
+            
+            // Metal border
+            const borderWidth = 20;
+            ctx.fillStyle = colors.metal;
+            ctx.fillRect(0, 0, width, borderWidth);
+            ctx.fillRect(0, 0, borderWidth, height);
+            ctx.fillRect(width - borderWidth, 0, borderWidth, height);
+            ctx.fillRect(0, height - borderWidth, width, borderWidth);
+            
+            // Draw screws
+            drawScrew(borderWidth / 2, borderWidth / 2);
+            drawScrew(width - borderWidth / 2, borderWidth / 2);
+            drawScrew(borderWidth / 2, height - borderWidth / 2);
+            drawScrew(width - borderWidth / 2, height - borderWidth / 2);
+        }
+        
+        function drawScrew(x, y) {
+            ctx.fillStyle = colors.screw;
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.strokeStyle = colors.dark;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x - 4, y);
+            ctx.lineTo(x + 4, y);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(x, y - 4);
+            ctx.lineTo(x, y + 4);
+            ctx.stroke();
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, width / 2, 80);
+        }
+        
+        function drawSwitch(x, y, isTrue, isOn) {
+            const switchWidth = 100;
+            const switchHeight = 160;
+            
+            // Light fixture
+            ctx.fillStyle = colors.metal;
+            ctx.fillRect(x - 30, y - 80, 60, 60);
+            
+            // Light bulb
+            const bulbY = y - 50;
+            if (isOn) {
+                // Glow effect
+                const time = Date.now() / 200;
+                const flickerAmount = Math.sin(time) * 0.1 + 0.9;
+                
+                ctx.fillStyle = colors.lightOn;
+                ctx.beginPath();
+                ctx.arc(x, bulbY, 20 + Math.sin(time) * 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner glow
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(x, bulbY, 10 * flickerAmount, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.fillStyle = colors.lightOff;
+                ctx.beginPath();
+                ctx.arc(x, bulbY, 20, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Switch plate
+            ctx.fillStyle = colors.metal;
+            roundRect(ctx, x - switchWidth/2, y, switchWidth, switchHeight, 10, true);
+            
+            // Switch label
+            ctx.fillStyle = colors.textDark;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(isTrue ? 'TRUE' : 'FALSE', x, y + switchHeight - 20);
+            
+            // Switch toggle area
+            const toggleY = y + 70;
+            
+            ctx.fillStyle = colors.metalDark;
+            roundRect(ctx, x - 30, toggleY - 40, 60, 80, 5, true);
+            
+            // Switch animation
+            let switchAngle = 0;
+            if (state.animatingSwitch === (isTrue ? 'true' : 'false')) {
+                switchAngle = state.switchAngle;
+            } else {
+                switchAngle = isOn ? Math.PI/4 : -Math.PI/4;
+            }
+            
+            // Switch lever
+            ctx.save();
+            ctx.translate(x, toggleY);
+            ctx.rotate(switchAngle);
+            
+            // Draw the lever
+            ctx.fillStyle = colors.metalLight;
+            ctx.fillRect(-8, -5, 16, 50);
+            
+            // Lever handle
+            ctx.fillStyle = isOn ? colors.switchOn : colors.switchOff;
+            ctx.beginPath();
+            ctx.arc(0, 50, 15, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+            
+            // Screws on plate
+            drawScrew(x - switchWidth/2 + 15, y + 15);
+            drawScrew(x + switchWidth/2 - 15, y + 15);
+            drawScrew(x - switchWidth/2 + 15, y + switchHeight - 15);
+            drawScrew(x + switchWidth/2 - 15, y + switchHeight - 15);
+            
+            // Display state when game over
+            if (state.gameOver && state.isCorrect !== null) {
+                if ((isTrue && correctAnswer) || (!isTrue && !correctAnswer)) {
+                    // This switch shows the correct answer
+                    ctx.strokeStyle = colors.correct;
+                    ctx.lineWidth = 6;
+                    roundRect(ctx, x - switchWidth/2 - 10, y - 90, switchWidth + 20, switchHeight + 100, 15, false, true);
+                }
+            }
+        }
+        
+        function drawSubmitButton() {
+            const buttonX = width / 2;
+            const buttonY = height - 120;
+            const buttonWidth = 160;
+            const buttonHeight = 60;
+            
+            const pressed = state.buttonPressed;
+            
+            // Button base
+            ctx.fillStyle = colors.metalDark;
+            roundRect(ctx, buttonX - buttonWidth/2 - 5, buttonY - 5, buttonWidth + 10, buttonHeight + 10, 10, true);
+            
+            // Button
+            ctx.fillStyle = pressed ? colors.buttonDown : colors.buttonUp;
+            roundRect(ctx, buttonX - buttonWidth/2, buttonY + (pressed ? 5 : 0), buttonWidth, buttonHeight - (pressed ? 5 : 0), 8, true);
+            
+            // Button text
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('SUBMIT', buttonX, buttonY + 35);
+        }
+        
+        function drawRestartButton() {
+            if (!state.restartVisible) return;
+            
+            const buttonX = width / 2;
+            const buttonY = height - 50;
+            const buttonWidth = 160;
+            const buttonHeight = 40;
+            
+            // Button base
+            ctx.fillStyle = colors.metalDark;
+            roundRect(ctx, buttonX - buttonWidth/2 - 5, buttonY - 5, buttonWidth + 10, buttonHeight + 10, 10, true);
+            
+            // Button
+            ctx.fillStyle = colors.buttonUp;
+            roundRect(ctx, buttonX - buttonWidth/2, buttonY, buttonWidth, buttonHeight, 8, true);
+            
+            // Button text
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('RESTART', buttonX, buttonY + 25);
+        }
+        
+        function drawResultEffect() {
+            if (state.gameOver) {
+                if (state.isCorrect) {
+                    // Correct answer particles
+                    drawPixelParticles(colors.correct, 100);
+                } else {
+                    // Incorrect answer particles
+                    drawPixelParticles(colors.incorrect, 100);
+                }
+            }
+        }
+        
+        function drawPixelParticles(color, count) {
+            const time = Date.now() / 1000;
+            ctx.fillStyle = color;
+            
+            for (let i = 0; i < count; i++) {
+                const seed = i * 0.1;
+                const x = width / 2 + Math.sin(time + seed * 10) * width / 2;
+                const y = height / 2 + Math.cos(time + seed * 8) * height / 3;
+                const size = Math.sin(time + seed) * 3 + 3;
+                
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        // Helper function for rounded rectangles
+        function roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            if (fill) {
+                ctx.fill();
+            }
+            if (stroke) {
+                ctx.stroke();
+            }
+        }
+        
+        // Animation functions
+        function animateSwitch(switchType) {
+            if (state.switchAnimating) return;
+            
+            state.switchAnimating = true;
+            state.animatingSwitch = switchType;
+            
+            const targetAngle = (switchType === 'true' ? !state.trueSelected : !state.falseSelected) ? Math.PI/4 : -Math.PI/4;
+            const startAngle = (switchType === 'true' ? state.trueSelected : state.falseSelected) ? Math.PI/4 : -Math.PI/4;
+            
+            let startTime = null;
+            const duration = 200; // ms
+            
+            function step(timestamp) {
+                if (!startTime) startTime = timestamp;
+                const elapsed = timestamp - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                state.switchAngle = startAngle + (targetAngle - startAngle) * progress;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(step);
+                } else {
+                    // Animation complete
+                    if (switchType === 'true') {
+                        state.trueSelected = !state.trueSelected;
+                        if (state.trueSelected) state.falseSelected = false;
+                    } else {
+                        state.falseSelected = !state.falseSelected;
+                        if (state.falseSelected) state.trueSelected = false;
+                    }
+                    state.switchAnimating = false;
+                    state.animatingSwitch = null;
+                }
+            }
+            
+            playSound('click');
+            requestAnimationFrame(step);
+        }
+        
+        function submitAnswer() {
+            if (!state.trueSelected && !state.falseSelected) return;
+            
+            const playerAnswer = state.trueSelected;
+            state.gameOver = true;
+            state.isCorrect = (playerAnswer === correctAnswer);
+            state.buttonPressed = true;
+            
+            playSound(state.isCorrect ? 'correct' : 'incorrect');
+            
+            // Show restart button after a delay
+            setTimeout(() => {
+                state.restartVisible = true;
+            }, 1000);
+        }
+        
+        function restartGame() {
+            state = {
+                trueSelected: false,
+                falseSelected: false,
+                switchAnimating: false,
+                switchAngle: 0,
+                animatingSwitch: null,
+                buttonPressed: false,
+                gameOver: false,
+                isCorrect: null,
+                restartVisible: false
+            };
+        }
+        
+        // Main game loop
+        function update() {
+            // Clear canvas
+            ctx.clearRect(0, 0, width, height);
+            
+            // Draw elements
+            drawPanel();
+            drawQuestion();
+            drawSwitch(width / 3, height / 2 - 70, true, state.trueSelected);
+            drawSwitch(width * 2 / 3, height / 2 - 70, false, state.falseSelected);
+            
+            if (!state.gameOver) {
+                drawSubmitButton();
+            }
+            
+            drawRestartButton();
+            drawResultEffect();
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Input handling
+        canvas.addEventListener('click', function(event) {
+            if (state.gameOver && !state.restartVisible) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // True switch
+            const trueSwitchX = width / 3;
+            const switchY = height / 2 - 70;
+            
+            if (x > trueSwitchX - 50 && x < trueSwitchX + 50 && 
+                y > switchY && y < switchY + 160 && !state.gameOver) {
+                animateSwitch('true');
+            }
+            
+            // False switch
+            const falseSwitchX = width * 2 / 3;
+            
+            if (x > falseSwitchX - 50 && x < falseSwitchX + 50 && 
+                y > switchY && y < switchY + 160 && !state.gameOver) {
+                animateSwitch('false');
+            }
+            
+            // Submit button
+            const buttonX = width / 2;
+            const buttonY = height - 120;
+            const buttonWidth = 160;
+            const buttonHeight = 60;
+            
+            if (x > buttonX - buttonWidth/2 && x < buttonX + buttonWidth/2 &&
+                y > buttonY && y < buttonY + buttonHeight && !state.gameOver) {
+                submitAnswer();
+            }
+            
+            // Restart button
+            if (state.restartVisible) {
+                const restartY = height - 50;
+                const restartHeight = 40;
+                
+                if (x > buttonX - buttonWidth/2 && x < buttonX + buttonWidth/2 &&
+                    y > restartY && y < restartY + restartHeight) {
+                    restartGame();
+                }
+            }
+        });
+        
+        // Start the game
+        update();
+    </script>
+</body>
+</html>

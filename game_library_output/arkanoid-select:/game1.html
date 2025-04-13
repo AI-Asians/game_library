@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Arkanoid Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            box-shadow: 0 0 20px #000;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 2px solid #555;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restart');
+        
+        // Check if on mobile and resize if needed
+        if (window.innerWidth <= 600) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Colors - limited 8-bit style palette
+        const COLORS = {
+            background: '#0f0f3c',
+            border: '#44ff44',
+            paddle: '#ff5555',
+            ball: '#ffff44',
+            text: '#ffffff',
+            blockColors: ['#ff5555', '#55ff55', '#5555ff', '#ffff55']
+        };
+        
+        // Game objects
+        let ball = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 8,
+            dx: 4,
+            dy: -4,
+            baseSpeed: 4,
+            speedMultiplier: 1.0
+        };
+        
+        let paddle = {
+            width: 100,
+            height: 15,
+            x: canvas.width / 2 - 50,
+            y: canvas.height - 30,
+            speed: 8,
+            movingLeft: false,
+            movingRight: false
+        };
+        
+        // Question and answers
+        const question = "What is the capital of France?";
+        const answers = ["Paris", "London", "Berlin", "Madrid"];
+        const correctAnswerIndex = 0; // Paris is correct
+        
+        // Create blocks with answers
+        let blocks = [];
+        const blockRows = 2;
+        const blockCols = 2;
+        const blockWidth = canvas.width / 3;
+        const blockHeight = 60;
+        const blockPadding = 15;
+        
+        let gameOver = false;
+        let gameWon = null; // null = playing, true = won, false = lost
+        let screenShake = 0;
+        
+        // Particle system
+        let particles = [];
+        
+        // Sound effects
+        function playSound(type) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                switch(type) {
+                    case 'paddle':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.2);
+                        break;
+                    case 'block':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.3);
+                        break;
+                    case 'win':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        oscillator.start();
+                        
+                        setTimeout(() => {
+                            oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.2);
+                        }, 200);
+                        
+                        setTimeout(() => {
+                            oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.4);
+                        }, 400);
+                        
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6);
+                        oscillator.stop(audioContext.currentTime + 0.6);
+                        break;
+                    case 'lose':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        
+                        setTimeout(() => {
+                            oscillator.frequency.setValueAtTime(196, audioContext.currentTime + 0.2);
+                        }, 200);
+                        
+                        setTimeout(() => {
+                            oscillator.frequency.setValueAtTime(175, audioContext.currentTime + 0.4);
+                        }, 400);
+                        
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6);
+                        oscillator.start();
+                        oscillator.stop(audioContext.currentTime + 0.6);
+                        break;
+                }
+            } catch (e) {
+                console.log("Audio not supported");
+            }
+        }
+        
+        // Initialize blocks
+        function initBlocks() {
+            blocks = [];
+            let answerIndex = 0;
+            
+            for (let r = 0; r < blockRows; r++) {
+                for (let c = 0; c < blockCols; c++) {
+                    if (answerIndex < answers.length) {
+                        let block = {
+                            x: c * (blockWidth + blockPadding) + blockWidth/2,
+                            y: r * (blockHeight + blockPadding) + blockHeight + 80,
+                            width: blockWidth,
+                            height: blockHeight,
+                            answer: answers[answerIndex],
+                            isCorrect: answerIndex === correctAnswerIndex,
+                            color: COLORS.blockColors[answerIndex % COLORS.blockColors.length]
+                        };
+                        blocks.push(block);
+                        answerIndex++;
+                    }
+                }
+            }
+        }
+        
+        // Create particles
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    dx: (Math.random() - 0.5) * 8,
+                    dy: (Math.random() - 0.5) * 8,
+                    radius: Math.random() * 5 + 2,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Update particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].dx;
+                particles[i].y += particles[i].dy;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    Math.floor(particle.x), 
+                    Math.floor(particle.y), 
+                    Math.floor(particle.radius), 
+                    Math.floor(particle.radius)
+                );
+            });
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear the canvas with perspective for screen shake
+            ctx.save();
+            if (screenShake > 0) {
+                ctx.translate(
+                    Math.random() * screenShake - screenShake/2,
+                    Math.random() * screenShake - screenShake/2
+                );
+                screenShake *= 0.9;
+                if (screenShake < 0.5) screenShake = 0;
+            }
+            
+            // Background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Border
+            ctx.strokeStyle = COLORS.border;
+            ctx.lineWidth = 8;
+            ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 40);
+            
+            // Draw blocks
+            blocks.forEach(block => {
+                ctx.fillStyle = block.color;
+                ctx.fillRect(block.x - block.width/2, block.y - block.height/2, block.width, block.height);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(block.answer, block.x, block.y);
+            });
+            
+            // Draw paddle
+            ctx.fillStyle = COLORS.paddle;
+            ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+            
+            // Draw ball
+            ctx.fillStyle = COLORS.ball;
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw particles
+            drawParticles();
+            
+            // Game over text
+            if (gameOver) {
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                if (gameWon === true) {
+                    ctx.fillText("Correct!", canvas.width / 2, canvas.height / 2);
+                } else if (gameWon === false) {
+                    ctx.fillText("Wrong! Try again.", canvas.width / 2, canvas.height / 2);
+                } else {
+                    ctx.fillText("Game Over! Try again.", canvas.width / 2, canvas.height / 2);
+                }
+                
+                restartButton.style.display = 'block';
+            }
+            
+            ctx.restore();
+        }
+        
+        // Move paddle
+        function movePaddle() {
+            if (paddle.movingLeft && paddle.x > 0) {
+                paddle.x -= paddle.speed;
+            }
+            if (paddle.movingRight && paddle.x + paddle.width < canvas.width) {
+                paddle.x += paddle.speed;
+            }
+        }
+        
+        // Move ball
+        function moveBall() {
+            ball.x += ball.dx * ball.speedMultiplier;
+            ball.y += ball.dy * ball.speedMultiplier;
+            
+            // Wall collision
+            if (ball.x - ball.radius < 0 || ball.x + ball.radius > canvas.width) {
+                ball.dx = -ball.dx;
+            }
+            
+            if (ball.y - ball.radius < 0) {
+                ball.dy = -ball.dy;
+            }
+            
+            // Paddle collision
+            if (ball.y + ball.radius > paddle.y && 
+                ball.x > paddle.x && 
+                ball.x < paddle.x + paddle.width && 
+                ball.y < paddle.y + paddle.height) {
+                
+                // Calculate bounce angle based on where ball hit paddle
+                let hitPos = (ball.x - (paddle.x + paddle.width/2)) / (paddle.width/2);
+                
+                // Change direction based on hit position (-1 to 1)
+                ball.dx = ball.baseSpeed * hitPos * 1.5;
+                ball.dy = -ball.dy; // Reverse vertical direction
+                
+                playSound('paddle');
+                
+                // Ensure minimum horizontal movement
+                if (Math.abs(ball.dx) < 1) {
+                    ball.dx = ball.dx > 0 ? 1 : -1;
+                }
+                
+                // Slightly increase speed
+                ball.speedMultiplier += 0.05;
+                if (ball.speedMultiplier > 1.5) ball.speedMultiplier = 1.5;
+            }
+            
+            // Bottom collision (game over)
+            if (ball.y + ball.radius > canvas.height) {
+                gameOver = true;
+                gameWon = false;
+                playSound('lose');
+            }
+            
+            // Block collision
+            blocks.forEach((block, index) => {
+                if (ball.x + ball.radius > block.x - block.width/2 && 
+                    ball.x - ball.radius < block.x + block.width/2 && 
+                    ball.y + ball.radius > block.y - block.height/2 && 
+                    ball.y - ball.radius < block.y + block.height/2) {
+                    
+                    // Determine which side of the block was hit
+                    let dx = ball.x - block.x;
+                    let dy = ball.y - block.y;
+                    
+                    let absDx = Math.abs(dx);
+                    let absDy = Math.abs(dy);
+                    
+                    // Hit from left or right
+                    if (absDx > absDy) {
+                        ball.dx = -ball.dx;
+                    } else {
+                        ball.dy = -ball.dy;
+                    }
+                    
+                    // Create particles
+                    createParticles(ball.x, ball.y, block.color);
+                    
+                    // Screen shake effect
+                    screenShake = 10;
+                    
+                    // Check if answer is correct
+                    if (block.isCorrect) {
+                        gameWon = true;
+                        playSound('win');
+                    } else {
+                        gameWon = false;
+                        playSound('lose');
+                    }
+                    
+                    gameOver = true;
+                    blocks.splice(index, 1);
+                    playSound('block');
+                }
+            });
+        }
+        
+        // Game loop
+        function update() {
+            if (!gameOver) {
+                movePaddle();
+                moveBall();
+            }
+            
+            updateParticles();
+            draw();
+            
+            if (!gameOver) {
+                requestAnimationFrame(update);
+            }
+        }
+        
+        // Event listeners
+        function handleKeyDown(e) {
+            if (e.key === 'ArrowLeft' || e.key === 'Left') {
+                paddle.movingLeft = true;
+            } else if (e.key === 'ArrowRight' || e.key === 'Right') {
+                paddle.movingRight = true;
+            }
+        }
+        
+        function handleKeyUp(e) {
+            if (e.key === 'ArrowLeft' || e.key === 'Left') {
+                paddle.movingLeft = false;
+            } else if (e.key === 'ArrowRight' || e.key === 'Right') {
+                paddle.movingRight = false;
+            }
+        }
+        
+        function handleMouseMove(e) {
+            const relativeX = e.clientX - canvas.getBoundingClientRect().left;
+            if (relativeX > 0 && relativeX < canvas.width) {
+                paddle.x = relativeX - paddle.width / 2;
+            }
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const relativeX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+            if (relativeX > 0 && relativeX < canvas.width) {
+                paddle.x = relativeX - paddle.width / 2;
+            }
+        }
+        
+        // Restart game
+        function restart() {
+            gameOver = false;
+            gameWon = null;
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height / 2;
+            ball.dx = 4 * (Math.random() > 0.5 ? 1 : -1);
+            ball.dy = -4;
+            ball.speedMultiplier = 1.0;
+            paddle.x = canvas.width / 2 - paddle.width / 2;
+            particles = [];
+            initBlocks();
+            restartButton.style.display = 'none';
+            update();
+        }
+        
+        // Initialize game
+        document.addEventListener('keydown', handleKeyDown);
+        document.addEventListener('keyup', handleKeyUp);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        restartButton.addEventListener('click', restart);
+        
+        initBlocks();
+        update();
+    </script>
+</body>
+</html>

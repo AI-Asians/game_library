@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors
+        const COLORS = {
+            bg: '#222',
+            floor: '#444',
+            player: '#fff',
+            trueGate: '#0a0',
+            falseGate: '#a00',
+            truePlayer: '#0f0',
+            falsePlayer: '#f00',
+            text: '#fff'
+        };
+        
+        // Game state
+        let gameState = {
+            player: {
+                x: canvas.width / 4,
+                y: canvas.height / 2,
+                width: 24,
+                height: 32,
+                speed: 5,
+                isTrue: true,
+                hasWon: false,
+                hasLost: false
+            },
+            gates: {
+                true: {
+                    x: canvas.width * 0.75,
+                    y: canvas.height / 3,
+                    width: 50,
+                    height: 100
+                },
+                false: {
+                    x: canvas.width * 0.75,
+                    y: canvas.height * 2/3,
+                    width: 50,
+                    height: 100
+                }
+            },
+            keys: {
+                left: false,
+                right: false,
+                up: false,
+                down: false,
+                space: false
+            },
+            question: "The Great Wall of China is visible from space.",
+            // The correct answer is FALSE
+            correctAnswer: false
+        };
+        
+        // Sound effects
+        function beep(freq, duration, volume = 0.5) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        }
+        
+        function switchSound() {
+            beep(440, 100, 0.3);
+        }
+        
+        function correctSound() {
+            beep(660, 100, 0.4);
+            setTimeout(() => beep(880, 200, 0.4), 100);
+        }
+        
+        function wrongSound() {
+            beep(220, 200, 0.4);
+        }
+        
+        function blockSound() {
+            beep(110, 100, 0.3);
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), width, height);
+        }
+        
+        function drawPlayer() {
+            const player = gameState.player;
+            const color = player.isTrue ? COLORS.truePlayer : COLORS.falsePlayer;
+            
+            // Draw player body
+            drawPixelRect(player.x, player.y, player.width, player.height, color);
+            
+            // Draw player details (eyes and face)
+            ctx.fillStyle = '#000';
+            
+            // Eyes
+            drawPixelRect(player.x + 6, player.y + 8, 4, 4, '#000');
+            drawPixelRect(player.x + 14, player.y + 8, 4, 4, '#000');
+            
+            // Mouth
+            if (player.hasWon) {
+                // Happy mouth
+                drawPixelRect(player.x + 6, player.y + 18, 12, 2, '#000');
+                drawPixelRect(player.x + 6, player.y + 20, 2, 2, '#000');
+                drawPixelRect(player.x + 16, player.y + 20, 2, 2, '#000');
+            } else if (player.hasLost) {
+                // Sad mouth
+                drawPixelRect(player.x + 6, player.y + 22, 12, 2, '#000');
+                drawPixelRect(player.x + 6, player.y + 20, 2, 2, '#000');
+                drawPixelRect(player.x + 16, player.y + 20, 2, 2, '#000');
+            } else {
+                // Neutral mouth
+                drawPixelRect(player.x + 8, player.y + 20, 8, 2, '#000');
+            }
+        }
+        
+        function drawGates() {
+            const gates = gameState.gates;
+            
+            // True gate (green)
+            drawPixelRect(gates.true.x, gates.true.y, gates.true.width, gates.true.height, COLORS.trueGate);
+            // Gate pattern
+            for (let i = 0; i < 3; i++) {
+                drawPixelRect(gates.true.x + 10, gates.true.y + 20 + i * 20, 30, 4, '#0c0');
+            }
+            
+            // False gate (red)
+            drawPixelRect(gates.false.x, gates.false.y, gates.false.width, gates.false.height, COLORS.falseGate);
+            // Gate pattern
+            for (let i = 0; i < 3; i++) {
+                drawPixelRect(gates.false.x + 10, gates.false.y + 20 + i * 20, 30, 4, '#c00');
+            }
+        }
+        
+        function drawText() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '18px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            
+            // Draw question
+            const questionY = 50;
+            ctx.fillText(gameState.question, canvas.width / 2, questionY);
+            
+            // Draw control instructions
+            ctx.font = '16px Arial, sans-serif';
+            ctx.fillText('Press SPACE to switch between TRUE (green) and FALSE (red)', canvas.width / 2, questionY + 30);
+            ctx.fillText('Use ARROW KEYS to move', canvas.width / 2, questionY + 55);
+            
+            // Draw true/false labels
+            ctx.font = '18px Arial, sans-serif';
+            ctx.fillText('TRUE', gameState.gates.true.x + 25, gameState.gates.true.y - 10);
+            ctx.fillText('FALSE', gameState.gates.false.x + 25, gameState.gates.false.y - 10);
+            
+            // Draw result if game is over
+            if (gameState.player.hasWon || gameState.player.hasLost) {
+                ctx.font = '24px Arial, sans-serif';
+                ctx.fillStyle = gameState.player.hasWon ? '#0f0' : '#f00';
+                ctx.fillText(
+                    gameState.player.hasWon ? 'CORRECT!' : 'INCORRECT!', 
+                    canvas.width / 2, 
+                    canvas.height - 80
+                );
+                
+                // Draw restart button
+                ctx.fillStyle = '#444';
+                const buttonWidth = 150;
+                const buttonHeight = 40;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height - 60;
+                
+                drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, '#555');
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('RESTART', canvas.width / 2, buttonY + 25);
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw floor
+            drawPixelRect(0, canvas.height - 30, canvas.width, 30, COLORS.floor);
+            
+            // Draw gates and player
+            drawGates();
+            drawPlayer();
+            drawText();
+        }
+        
+        // Game logic
+        function update() {
+            if (gameState.player.hasWon || gameState.player.hasLost) return;
+            
+            const player = gameState.player;
+            
+            // Move player based on input
+            if (gameState.keys.left) player.x -= player.speed;
+            if (gameState.keys.right) player.x += player.speed;
+            if (gameState.keys.up) player.y -= player.speed;
+            if (gameState.keys.down) player.y += player.speed;
+            
+            // Keep player within canvas bounds
+            player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+            player.y = Math.max(0, Math.min(canvas.height - player.height - 30, player.y));
+            
+            // Check for collision with gates
+            const trueGate = gameState.gates.true;
+            const falseGate = gameState.gates.false;
+            
+            function checkCollision(player, gate) {
+                return player.x + player.width > gate.x &&
+                    player.x < gate.x + gate.width &&
+                    player.y + player.height > gate.y &&
+                    player.y < gate.y + gate.height;
+            }
+            
+            // Check true gate collision
+            if (checkCollision(player, trueGate)) {
+                if (player.isTrue) {
+                    // Player is green and hit the green gate
+                    if (gameState.correctAnswer === true) {
+                        player.hasWon = true;
+                        correctSound();
+                    } else {
+                        player.hasLost = true;
+                        wrongSound();
+                    }
+                } else {
+                    // Bounce back if wrong color
+                    player.x -= player.speed * 3;
+                    blockSound();
+                }
+            }
+            
+            // Check false gate collision
+            if (checkCollision(player, falseGate)) {
+                if (!player.isTrue) {
+                    // Player is red and hit the red gate
+                    if (gameState.correctAnswer === false) {
+                        player.hasWon = true;
+                        correctSound();
+                    } else {
+                        player.hasLost = true;
+                        wrongSound();
+                    }
+                } else {
+                    // Bounce back if wrong color
+                    player.x -= player.speed * 3;
+                    blockSound();
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handling
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowLeft') gameState.keys.left = true;
+            if (e.code === 'ArrowRight') gameState.keys.right = true;
+            if (e.code === 'ArrowUp') gameState.keys.up = true;
+            if (e.code === 'ArrowDown') gameState.keys.down = true;
+            
+            if (e.code === 'Space' && !gameState.player.hasWon && !gameState.player.hasLost) {
+                gameState.player.isTrue = !gameState.player.isTrue;
+                switchSound();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowLeft') gameState.keys.left = false;
+            if (e.code === 'ArrowRight') gameState.keys.right = false;
+            if (e.code === 'ArrowUp') gameState.keys.up = false;
+            if (e.code === 'ArrowDown') gameState.keys.down = false;
+        });
+        
+        // Handle restart button click
+        canvas.addEventListener('click', (e) => {
+            if (gameState.player.hasWon || gameState.player.hasLost) {
+                const buttonWidth = 150;
+                const buttonHeight = 40;
+                const buttonX = (canvas.width - buttonWidth) / 2;
+                const buttonY = canvas.height - 60;
+                
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                if (mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
+                    mouseY >= buttonY && mouseY <= buttonY + buttonHeight) {
+                    // Reset game state
+                    gameState.player.x = canvas.width / 4;
+                    gameState.player.y = canvas.height / 2;
+                    gameState.player.isTrue = true;
+                    gameState.player.hasWon = false;
+                    gameState.player.hasLost = false;
+                }
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+**UPDATED PROMPT:**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type TF.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ Water boils at 100 degrees Celsius at sea level.
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Quick-Sort: Drag a single falling object (mouse) into the correct True or False boxes before it hits bottom (inspired by Tetris but sorting-focused). [As provided]**  
+ Description of mechanic: 
+
+* A question appears at the top of the screen
+* A game object (styled as a mouse) falls from the top of the screen
+* Two containers labeled "TRUE" and "FALSE" are positioned at the bottom of the screen
+* Player must drag the falling mouse into the correct container before it hits the bottom
+* If the mouse hits the bottom without being sorted, it counts as a failure
+* The falling speed should create urgency but still be manageable
+* Clear visual feedback when the mouse is successfully placed in a container
+* Immediate game end after the player makes a choice or fails to sort in time
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The containers should have distinct pixel art styling with clear "TRUE" and "FALSE" labels
+The falling mouse should be a simple but recognizable pixel art character
+Use bright, contrasting colors for the containers to make targets clear
+Add a simple pixelated background that doesn't distract from gameplay
+When dragging, show a simple pixel-style trail behind the mouse object
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+The falling speed should increase slightly as the object gets closer to the bottom
+Provide clear visual feedback when the player grabs the falling object
+Make the dragging motion smooth but with pixel-aligned movement
+Include a subtle "gravity" effect if the player releases the mouse before placing it
+Add a small bounce animation when the mouse lands in a container
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

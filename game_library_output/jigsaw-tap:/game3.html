@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital of France - Jigsaw Tap Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background-color: #444;
+            color: white;
+            border: 3px solid #666;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 768;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (16-color palette)
+        const COLORS = {
+            bg: '#5A6988',
+            question: '#FFFFFF',
+            target: '#8BCC6C',
+            targetBorder: '#306850',
+            piece1: '#FF6B6B',
+            piece2: '#4ECDC4',
+            piece3: '#FFD166',
+            piece4: '#C38DFF',
+            correct: '#8BCC6C',
+            incorrect: '#FF6B6B',
+            textShadow: '#306850'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let pieces = [];
+        let targetArea = {
+            x: canvas.width / 2 - 80,
+            y: canvas.height / 2 + 60,
+            width: 160,
+            height: 80
+        };
+        
+        // Audio context for 8-bit sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound functions
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function correctSound() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2), 200); // G5
+        }
+        
+        function incorrectSound() {
+            playSound(277.18, 0.2, 'sawtooth'); // C#4
+            setTimeout(() => playSound(233.08, 0.3, 'sawtooth'), 200); // A#3
+        }
+        
+        // Generate jagged edges for puzzle pieces
+        function generateJaggedPath(x, y, width, height) {
+            const jagSize = 12;
+            const path = new Path2D();
+            
+            // Top edge with jag
+            path.moveTo(x, y);
+            path.lineTo(x + width * 0.4, y);
+            path.lineTo(x + width * 0.5, y - jagSize);
+            path.lineTo(x + width * 0.6, y);
+            path.lineTo(x + width, y);
+            
+            // Right edge with jag
+            path.lineTo(x + width, y + height * 0.4);
+            path.lineTo(x + width + jagSize, y + height * 0.5);
+            path.lineTo(x + width, y + height * 0.6);
+            path.lineTo(x + width, y + height);
+            
+            // Bottom edge with jag
+            path.lineTo(x + width * 0.6, y + height);
+            path.lineTo(x + width * 0.5, y + height + jagSize);
+            path.lineTo(x + width * 0.4, y + height);
+            path.lineTo(x, y + height);
+            
+            // Left edge with jag
+            path.lineTo(x, y + height * 0.6);
+            path.lineTo(x - jagSize, y + height * 0.5);
+            path.lineTo(x, y + height * 0.4);
+            path.closePath();
+            
+            return path;
+        }
+        
+        // Initialize game pieces
+        function initGame() {
+            gameOver = false;
+            restartBtn.style.display = 'none';
+            
+            const pieceWidth = 120;
+            const pieceHeight = 60;
+            const answers = ['Paris', 'London', 'Berlin', 'Madrid'];
+            const correctIndex = 0; // Paris is correct
+            
+            pieces = [];
+            
+            // Create puzzle pieces with answers
+            for (let i = 0; i < answers.length; i++) {
+                const padding = 60;
+                let x, y;
+                
+                // Position pieces around the canvas
+                if (isMobile) {
+                    // Mobile layout (stacked)
+                    x = canvas.width / 2 - pieceWidth / 2 + (Math.random() * 40 - 20);
+                    y = 120 + i * 100 + (Math.random() * 30 - 15);
+                } else {
+                    // Desktop layout (spread out)
+                    x = padding + (Math.random() * (canvas.width - padding * 2 - pieceWidth));
+                    y = padding + (Math.random() * (canvas.height - padding * 2 - pieceHeight));
+                    
+                    // Ensure pieces don't overlap with target area
+                    if (x > targetArea.x - pieceWidth && x < targetArea.x + targetArea.width &&
+                        y > targetArea.y - pieceHeight && y < targetArea.y + targetArea.height) {
+                        x = x < targetArea.x ? x - 100 : x + 100;
+                    }
+                }
+                
+                const colorKey = `piece${i+1}`;
+                
+                pieces.push({
+                    x,
+                    y,
+                    width: pieceWidth,
+                    height: pieceHeight,
+                    color: COLORS[colorKey],
+                    text: answers[i],
+                    correct: i === correctIndex,
+                    shaking: false,
+                    shakeTime: 0,
+                    angle: 0,
+                    selected: false,
+                    dx: Math.random() * 0.6 - 0.3,
+                    dy: Math.random() * 0.6 - 0.3,
+                    path: generateJaggedPath(0, 0, pieceWidth, pieceHeight)
+                });
+            }
+        }
+        
+        // Draw target area
+        function drawTargetArea() {
+            ctx.save();
+            
+            // Draw pixelated outline
+            ctx.strokeStyle = COLORS.targetBorder;
+            ctx.lineWidth = 6;
+            ctx.setLineDash([8, 4]);
+            
+            const targetPath = generateJaggedPath(
+                targetArea.x, 
+                targetArea.y, 
+                targetArea.width, 
+                targetArea.height
+            );
+            
+            ctx.stroke(targetPath);
+            ctx.restore();
+        }
+        
+        // Draw a single puzzle piece
+        function drawPiece(piece) {
+            ctx.save();
+            
+            // Apply shaking effect if needed
+            let x = piece.x;
+            let y = piece.y;
+            
+            if (piece.shaking) {
+                const shakeMagnitude = 5 * (1 - piece.shakeTime / 30);
+                x += Math.random() * shakeMagnitude * 2 - shakeMagnitude;
+                y += Math.random() * shakeMagnitude * 2 - shakeMagnitude;
+            }
+            
+            // Draw piece with transformation
+            ctx.translate(x + piece.width / 2, y + piece.height / 2);
+            ctx.rotate(piece.angle * Math.PI / 180);
+            
+            // Create jagged piece
+            const piecePath = generateJaggedPath(
+                -piece.width / 2, 
+                -piece.height / 2, 
+                piece.width, 
+                piece.height
+            );
+            
+            // Fill piece
+            ctx.fillStyle = piece.color;
+            ctx.fill(piecePath);
+            
+            // Draw pixelated border
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 3;
+            ctx.stroke(piecePath);
+            
+            // Add speckle texture for 8-bit look
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            for (let i = 0; i < 10; i++) {
+                const speckleX = Math.random() * piece.width - piece.width / 2;
+                const speckleY = Math.random() * piece.height - piece.height / 2;
+                ctx.fillRect(speckleX, speckleY, 3, 3);
+            }
+            
+            // Draw text
+            ctx.fillStyle = '#fff';
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Text shadow for 8-bit look
+            ctx.fillStyle = COLORS.textShadow;
+            ctx.fillText(piece.text, 2, 2);
+            
+            ctx.fillStyle = '#fff';
+            ctx.fillText(piece.text, 0, 0);
+            
+            ctx.restore();
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas with background
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated background pattern
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            const gridSize = 20;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                for (let y = 0; y < canvas.height; y += gridSize) {
+                    if ((x + y) % (gridSize * 2) === 0) {
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    }
+                }
+            }
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Text shadow for 8-bit look
+            ctx.fillStyle = '#000';
+            ctx.fillText("What is the capital of France?", canvas.width / 2 + 2, 70 + 2);
+            
+            ctx.fillStyle = COLORS.question;
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 70);
+            
+            // Draw target area
+            drawTargetArea();
+            
+            // Draw each piece
+            pieces.forEach(drawPiece);
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) return;
+            
+            // Update piece positions and effects
+            pieces.forEach(piece => {
+                // Add floating animation
+                piece.angle = Math.sin(Date.now() / 1000 * piece.dx) * 2;
+                
+                if (!piece.selected) {
+                    piece.x += piece.dx;
+                    piece.y += piece.dy;
+                    
+                    // Bounce off edges
+                    if (piece.x < 0 || piece.x > canvas.width - piece.width) {
+                        piece.dx *= -1;
+                    }
+                    if (piece.y < 0 || piece.y > canvas.height - piece.height) {
+                        piece.dy *= -1;
+                    }
+                }
+                
+                // Update shaking effect
+                if (piece.shaking) {
+                    piece.shakeTime--;
+                    if (piece.shakeTime <= 0) {
+                        piece.shaking = false;
+                    }
+                }
+                
+                // Animation for correct piece to target
+                if (piece.selected) {
+                    // Move towards target
+                    const targetX = targetArea.x + (targetArea.width - piece.width) / 2;
+                    const targetY = targetArea.y + (targetArea.height - piece.height) / 2;
+                    
+                    piece.x += (targetX - piece.x) * 0.2;
+                    piece.y += (targetY - piece.y) * 0.2;
+                    
+                    const dist = Math.sqrt(
+                        Math.pow(piece.x - targetX, 2) + 
+                        Math.pow(piece.y - targetY, 2)
+                    );
+                    
+                    if (dist < 2) {
+                        piece.x = targetX;
+                        piece.y = targetY;
+                    }
+                }
+            });
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle click/tap on pieces
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Check if a piece was clicked
+            for (const piece of pieces) {
+                // Simplified check based on rectangular bounds
+                if (clickX >= piece.x && clickX <= piece.x + piece.width &&
+                    clickY >= piece.y && clickY <= piece.y + piece.height) {
+                    
+                    if (piece.correct) {
+                        // Correct answer
+                        piece.selected = true;
+                        piece.color = COLORS.correct;
+                        correctSound();
+                        gameOver = true;
+                        
+                        // Show restart button after a delay
+                        setTimeout(() => {
+                            restartBtn.style.display = 'block';
+                        }, 1000);
+                    } else {
+                        // Incorrect answer
+                        piece.shaking = true;
+                        piece.shakeTime = 30; // frames
+                        incorrectSound();
+                    }
+                    
+                    break;
+                }
+            }
+        }
+        
+        // Start the game
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', initGame);
+        
+        // Initialize and start game loop
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

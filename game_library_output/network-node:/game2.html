@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Network Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Play Again</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // 8-bit color palette
+        const colors = {
+            background: '#0f380f',  // dark green (Game Boy style)
+            text: '#8bac0f',        // light green
+            lines: '#306230',       // mid green
+            node: '#9bbc0f',        // pale green
+            nodeHover: '#e0f8cf',   // lightest green
+            nodeBorder: '#0f380f',  // dark green
+            correct: '#30d040',     // bright green
+            incorrect: '#d03030',   // red
+            question: '#e0f8cf'     // lightest green
+        };
+        
+        // Node setup
+        let nodes = [
+            { x: 400, y: 200, text: "Mars", correct: true },
+            { x: 200, y: 300, text: "Venus", correct: false },
+            { x: 600, y: 300, text: "Jupiter", correct: false },
+            { x: 300, y: 450, text: "Mercury", correct: false },
+            { x: 500, y: 450, text: "Saturn", correct: false }
+        ];
+        
+        // Define connections between nodes
+        const connections = [
+            [0, 1], [0, 2], [1, 3], [2, 4], [1, 2], [3, 4]
+        ];
+        
+        let selectedNode = null;
+        let gameOver = false;
+        let hoveredNode = null;
+        let pulseValue = 0;
+        let pulseDirection = 1;
+        
+        // Sound generation
+        function playSound(frequency, duration, type = 'square') {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        }
+        
+        function playHoverSound() {
+            playSound(220, 50);
+        }
+        
+        function playCorrectSound() {
+            playSound(660, 100);
+            setTimeout(() => playSound(880, 200), 100);
+        }
+        
+        function playIncorrectSound() {
+            playSound(150, 200, 'sawtooth');
+        }
+        
+        // Check if point is inside a node
+        function isInsideNode(x, y, node) {
+            const radius = 40;
+            return Math.sqrt((x - node.x) ** 2 + (y - node.y) ** 2) <= radius;
+        }
+        
+        // Handle mouse movement
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const prevHovered = hoveredNode;
+            hoveredNode = null;
+            
+            for (const node of nodes) {
+                if (isInsideNode(x, y, node)) {
+                    hoveredNode = node;
+                    break;
+                }
+            }
+            
+            if (hoveredNode !== prevHovered && hoveredNode !== null) {
+                playHoverSound();
+            }
+        });
+        
+        // Handle mouse click
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            for (const node of nodes) {
+                if (isInsideNode(x, y, node)) {
+                    selectedNode = node;
+                    gameOver = true;
+                    
+                    if (node.correct) {
+                        playCorrectSound();
+                    } else {
+                        playIncorrectSound();
+                    }
+                    
+                    restartBtn.style.display = 'block';
+                    break;
+                }
+            }
+        });
+        
+        // Restart button
+        restartBtn.addEventListener('click', () => {
+            selectedNode = null;
+            gameOver = false;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Draw dotted line with 8-bit aesthetic
+        function drawDottedLine(x1, y1, x2, y2) {
+            const segmentLength = 8;
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const segments = Math.floor(distance / segmentLength);
+            
+            for (let i = 0; i < segments; i += 2) {
+                const startRatio = i * segmentLength / distance;
+                const startX = x1 + dx * startRatio;
+                const startY = y1 + dy * startRatio;
+                
+                const endRatio = Math.min((i + 1) * segmentLength / distance, 1);
+                const endX = x1 + dx * endRatio;
+                const endY = y1 + dy * endRatio;
+                
+                ctx.beginPath();
+                ctx.moveTo(Math.round(startX), Math.round(startY));
+                ctx.lineTo(Math.round(endX), Math.round(endY));
+                ctx.stroke();
+            }
+        }
+        
+        // Render function
+        function render() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            ctx.fillStyle = colors.question;
+            ctx.font = "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 80);
+            
+            // Draw connections between nodes
+            ctx.strokeStyle = colors.lines;
+            ctx.lineWidth = 3;
+            for (const [i, j] of connections) {
+                drawDottedLine(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y);
+            }
+            
+            // Update pulse animation
+            pulseValue += 0.1 * pulseDirection;
+            if (pulseValue > 1) {
+                pulseValue = 1;
+                pulseDirection = -1;
+            } else if (pulseValue < 0) {
+                pulseValue = 0;
+                pulseDirection = 1;
+            }
+            
+            // Draw nodes
+            for (const node of nodes) {
+                // Node background
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 40, 0, Math.PI * 2);
+                
+                if (gameOver && node === selectedNode) {
+                    ctx.fillStyle = node.correct ? colors.correct : colors.incorrect;
+                } else if (node === hoveredNode) {
+                    // Apply pulsing effect to hovered node
+                    const pulseColor = `rgb(${14 + 209 * pulseValue}, ${174 + 70 * pulseValue}, ${14 + 193 * pulseValue})`;
+                    ctx.fillStyle = pulseColor;
+                } else {
+                    ctx.fillStyle = colors.node;
+                }
+                ctx.fill();
+                
+                // Node border (pixelated effect)
+                ctx.strokeStyle = colors.nodeBorder;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                // Node text
+                ctx.fillStyle = colors.text;
+                ctx.font = "18px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(node.text, node.x, node.y);
+            }
+            
+            // Game result text
+            if (gameOver) {
+                ctx.fillStyle = selectedNode.correct ? colors.correct : colors.incorrect;
+                ctx.font = "32px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    selectedNode.correct ? "Correct!" : "Incorrect!",
+                    canvas.width / 2,
+                    550
+                );
+            }
+            
+            requestAnimationFrame(render);
+        }
+        
+        // Start the game
+        render();
+    </script>
+</body>
+</html>

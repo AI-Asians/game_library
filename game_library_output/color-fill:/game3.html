@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Color-Fill Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas dimensions
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors - retro palette
+        const colors = {
+            background: '#0f380f',
+            text: '#8bac0f',
+            border: '#306230',
+            option: '#306230',
+            hover: '#4e9a41',
+            filling: '#8bac0f',
+            correct: '#9bbc0f',
+            incorrect: '#e83f6f',
+            restart: '#9bbc0f'
+        };
+
+        // Game state
+        let gameState = {
+            options: [
+                { text: 'London', correct: false, x: 0, y: 0, width: 0, height: 0, filled: 0, filling: false },
+                { text: 'Paris', correct: true, x: 0, y: 0, width: 0, height: 0, filled: 0, filling: false },
+                { text: 'Berlin', correct: false, x: 0, y: 0, width: 0, height: 0, filled: 0, filling: false },
+                { text: 'Rome', correct: false, x: 0, y: 0, width: 0, height: 0, filled: 0, filling: false }
+            ],
+            gameOver: false,
+            result: null,
+            mouseX: 0,
+            mouseY: 0,
+            pixelSize: isMobile ? 3 : 5,
+            pixels: [],
+            restart: { x: 0, y: 0, width: 0, height: 0 }
+        };
+
+        // Initialize option positions
+        function initializeOptions() {
+            const optionWidth = canvas.width * 0.8;
+            const optionHeight = canvas.height * 0.15;
+            const startY = canvas.height * 0.3;
+            const gap = canvas.height * 0.05;
+            
+            gameState.options.forEach((option, index) => {
+                option.x = (canvas.width - optionWidth) / 2;
+                option.y = startY + (optionHeight + gap) * index;
+                option.width = optionWidth;
+                option.height = optionHeight;
+                option.filled = 0;
+                option.filling = false;
+            });
+            
+            // Setup restart button
+            const restartWidth = canvas.width * 0.4;
+            const restartHeight = canvas.height * 0.1;
+            gameState.restart.x = (canvas.width - restartWidth) / 2;
+            gameState.restart.y = canvas.height * 0.8;
+            gameState.restart.width = restartWidth;
+            gameState.restart.height = restartHeight;
+        }
+
+        // Audio context for sound effects
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        function playSound(frequency, type, duration) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        function playSoundCorrect() {
+            playSound(440, 'square', 0.1);
+            setTimeout(() => playSound(880, 'square', 0.2), 100);
+        }
+        
+        function playSoundIncorrect() {
+            playSound(200, 'sawtooth', 0.3);
+        }
+        
+        function playSoundClick() {
+            playSound(330, 'square', 0.05);
+        }
+
+        // Drawing functions
+        function drawPixelatedRect(x, y, width, height, color, pixelSize) {
+            const pixelsX = Math.floor(width / pixelSize);
+            const pixelsY = Math.floor(height / pixelSize);
+            
+            for (let i = 0; i < pixelsX; i++) {
+                for (let j = 0; j < pixelsY; j++) {
+                    const px = x + i * pixelSize;
+                    const py = y + j * pixelSize;
+                    
+                    // Add a small random variance to pixelate the edges
+                    if (Math.random() > 0.95 && (i === 0 || i === pixelsX - 1 || j === 0 || j === pixelsY - 1)) {
+                        continue;
+                    }
+                    
+                    ctx.fillStyle = color;
+                    ctx.fillRect(px, py, pixelSize, pixelSize);
+                }
+            }
+        }
+
+        function drawPixelatedBorder(x, y, width, height, color, pixelSize, thickness = 2) {
+            // Top
+            drawPixelatedRect(x, y, width, thickness * pixelSize, color, pixelSize);
+            // Bottom
+            drawPixelatedRect(x, y + height - thickness * pixelSize, width, thickness * pixelSize, color, pixelSize);
+            // Left
+            drawPixelatedRect(x, y, thickness * pixelSize, height, color, pixelSize);
+            // Right
+            drawPixelatedRect(x + width - thickness * pixelSize, y, thickness * pixelSize, height, color, pixelSize);
+        }
+
+        function drawQuestion() {
+            ctx.font = `${Math.floor(canvas.width * 0.05)}px sans-serif`;
+            ctx.fillStyle = colors.text;
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, canvas.height * 0.15);
+        }
+
+        function drawOption(option) {
+            // Draw option background
+            drawPixelatedRect(option.x, option.y, option.width, option.height, colors.option, gameState.pixelSize);
+            
+            // Draw option border
+            drawPixelatedBorder(option.x, option.y, option.width, option.height, colors.border, gameState.pixelSize);
+            
+            // Draw option text
+            ctx.font = `${Math.floor(canvas.width * 0.04)}px sans-serif`;
+            ctx.fillStyle = colors.text;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(option.text, option.x + option.width / 2, option.y + option.height / 2);
+            
+            // If option is being filled
+            if (option.filling && option.filled < 1) {
+                fillOption(option);
+            }
+            
+            // If option is filled, draw the filled pixels
+            if (option.filled > 0) {
+                gameState.pixels.forEach(pixel => {
+                    if (pixel.option === option && Math.random() < option.filled) {
+                        ctx.fillStyle = option.correct ? colors.correct : colors.incorrect;
+                        ctx.fillRect(pixel.x, pixel.y, gameState.pixelSize, gameState.pixelSize);
+                    }
+                });
+            }
+        }
+
+        function fillOption(option) {
+            if (option.filled === 0) {
+                // Generate pixels for fill animation
+                gameState.pixels = [];
+                const pixelsX = Math.floor(option.width / gameState.pixelSize);
+                const pixelsY = Math.floor(option.height / gameState.pixelSize);
+                
+                for (let i = 0; i < pixelsX; i++) {
+                    for (let j = 0; j < pixelsY; j++) {
+                        const px = option.x + i * gameState.pixelSize;
+                        const py = option.y + j * gameState.pixelSize;
+                        
+                        gameState.pixels.push({
+                            x: px,
+                            y: py,
+                            option: option
+                        });
+                    }
+                }
+                
+                // Start fill animation
+                playSoundClick();
+            }
+            
+            option.filled += 0.05;
+            
+            if (option.filled >= 1) {
+                option.filled = 1;
+                option.filling = false;
+                gameState.gameOver = true;
+                gameState.result = option.correct;
+                
+                // Play sound after a slight delay
+                setTimeout(() => {
+                    if (option.correct) {
+                        playSoundCorrect();
+                    } else {
+                        playSoundIncorrect();
+                    }
+                }, 300);
+            }
+        }
+
+        function drawRestartButton() {
+            const button = gameState.restart;
+            
+            // Draw button background
+            drawPixelatedRect(button.x, button.y, button.width, button.height, colors.option, gameState.pixelSize);
+            
+            // Draw button border
+            drawPixelatedBorder(button.x, button.y, button.width, button.height, colors.border, gameState.pixelSize);
+            
+            // Draw button text
+            ctx.font = `${Math.floor(canvas.width * 0.04)}px sans-serif`;
+            ctx.fillStyle = colors.text;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', button.x + button.width / 2, button.y + button.height / 2);
+        }
+
+        function drawResult() {
+            ctx.font = `${Math.floor(canvas.width * 0.06)}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            if (gameState.result) {
+                ctx.fillStyle = colors.correct;
+                ctx.fillText('Correct!', canvas.width / 2, canvas.height * 0.7);
+            } else {
+                ctx.fillStyle = colors.incorrect;
+                ctx.fillText('Incorrect!', canvas.width / 2, canvas.height * 0.7);
+            }
+        }
+
+        function draw() {
+            // Clear the canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            drawQuestion();
+            
+            // Draw the options
+            gameState.options.forEach(drawOption);
+            
+            // If game is over, draw the result and restart button
+            if (gameState.gameOver) {
+                drawResult();
+                drawRestartButton();
+            }
+            
+            // Custom cursor for options
+            if (!gameState.gameOver) {
+                let hovering = false;
+                gameState.options.forEach(option => {
+                    if (isPointInRect(gameState.mouseX, gameState.mouseY, option) && !option.filling && option.filled === 0) {
+                        hovering = true;
+                        // Draw paint bucket cursor
+                        ctx.fillStyle = colors.hover;
+                        
+                        // Draw pixel bucket
+                        const bucketSize = gameState.pixelSize * 4;
+                        const x = gameState.mouseX;
+                        const y = gameState.mouseY;
+                        
+                        // Draw bucket handle (simplified pixel art)
+                        for (let i = 0; i < 3; i++) {
+                            ctx.fillRect(x + bucketSize/2 - gameState.pixelSize/2, 
+                                        y - (i+1) * gameState.pixelSize, 
+                                        gameState.pixelSize, gameState.pixelSize);
+                        }
+                        
+                        // Draw bucket body
+                        drawPixelatedRect(x - bucketSize/2, y, bucketSize, bucketSize/2, colors.hover, gameState.pixelSize);
+                        
+                        // Draw dripping paint
+                        if (Math.random() > 0.7) {
+                            ctx.fillRect(x, y + bucketSize/2, gameState.pixelSize, gameState.pixelSize * 2);
+                        }
+                    }
+                });
+                
+                if (!hovering) {
+                    canvas.style.cursor = 'default';
+                } else {
+                    canvas.style.cursor = 'none';
+                }
+            } else {
+                canvas.style.cursor = 'default';
+            }
+            
+            requestAnimationFrame(draw);
+        }
+
+        // Helper functions
+        function isPointInRect(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+
+        // Event handlers
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (!gameState.gameOver) {
+                gameState.options.forEach(option => {
+                    if (isPointInRect(x, y, option) && !option.filling && option.filled === 0) {
+                        option.filling = true;
+                    }
+                });
+            } else {
+                if (isPointInRect(x, y, gameState.restart)) {
+                    resetGame();
+                    playSoundClick();
+                }
+            }
+        }
+
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            gameState.mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            gameState.mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        }
+
+        function resetGame() {
+            gameState.gameOver = false;
+            gameState.result = null;
+            gameState.pixels = [];
+            
+            gameState.options.forEach(option => {
+                option.filled = 0;
+                option.filling = false;
+            });
+            
+            initializeOptions();
+        }
+
+        // Initialize and start the game
+        function init() {
+            initializeOptions();
+            
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            
+            // Touch support
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                const mouseEvent = new MouseEvent('click', {
+                    clientX: touch.clientX,
+                    clientY: touch.clientY
+                });
+                canvas.dispatchEvent(mouseEvent);
+            });
+            
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                const mouseEvent = new MouseEvent('mousemove', {
+                    clientX: touch.clientX,
+                    clientY: touch.clientY
+                });
+                canvas.dispatchEvent(mouseEvent);
+            });
+            
+            draw();
+        }
+
+        // Start the game when the page loads
+        window.onload = init;
+    </script>
+</body>
+</html>

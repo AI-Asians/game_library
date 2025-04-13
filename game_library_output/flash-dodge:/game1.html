@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flash-Dodge: True or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #fff;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #ff4040;
+            color: white;
+            border: none;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restart');
+
+        // Check if we need to adapt for mobile
+        if (window.innerWidth <= 600) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+
+        // Colors (limited 8-bit palette)
+        const COLORS = {
+            background: '#0a0a2a',
+            gridLines: '#1a1a4a',
+            player: '#3cff00',
+            true: '#00ffff',
+            false: '#ff5555',
+            text: '#ffffff',
+            particles: ['#ffff00', '#ff00ff', '#00ffaa', '#ff8800']
+        };
+
+        // Game state
+        let gameOver = false;
+        let win = false;
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            size: 20,
+            speed: 4,
+            dx: 0,
+            dy: 0
+        };
+
+        const question = "The Great Wall of China is visible from space.";
+        // Answer is False
+        
+        // Answers (obstacles)
+        let answers = [];
+        
+        // Particles
+        let particles = [];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Init game
+        function init() {
+            // Reset game state
+            gameOver = false;
+            win = false;
+            restartButton.style.display = 'none';
+            
+            // Reset player
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.dx = 0;
+            player.dy = 0;
+            
+            // Create answers
+            answers = [];
+            
+            // "True" answers (incorrect)
+            for (let i = 0; i < 4; i++) {
+                answers.push({
+                    text: "True",
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: 30,
+                    dx: (Math.random() * 2 - 1) * 2,
+                    dy: (Math.random() * 2 - 1) * 2,
+                    correct: false,
+                    color: COLORS.true
+                });
+            }
+            
+            // "False" answer (correct)
+            answers.push({
+                text: "False",
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: 30,
+                dx: (Math.random() * 2 - 1) * 1.5,
+                dy: (Math.random() * 2 - 1) * 1.5,
+                correct: true,
+                color: COLORS.false
+            });
+            
+            particles = [];
+        }
+        
+        // Draw player (8-bit style)
+        function drawPlayer() {
+            ctx.fillStyle = COLORS.player;
+            
+            // Draw pixelated player (spaceship-like)
+            ctx.fillRect(player.x - 10, player.y, 20, 20);
+            ctx.fillRect(player.x - 5, player.y - 5, 10, 5);
+            ctx.fillRect(player.x - 15, player.y + 10, 5, 5);
+            ctx.fillRect(player.x + 10, player.y + 10, 5, 5);
+        }
+        
+        // Draw the grid background
+        function drawBackground() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = COLORS.gridLines;
+            ctx.lineWidth = 1;
+            
+            const gridSize = 40;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+        
+        // Draw answers
+        function drawAnswers() {
+            answers.forEach(answer => {
+                // Draw pixelated answer boxes
+                ctx.fillStyle = answer.color;
+                
+                // Main box
+                ctx.fillRect(answer.x - answer.size/2, answer.y - answer.size/2, 
+                             answer.size, answer.size);
+                
+                // 8-bit style border pixels
+                ctx.fillRect(answer.x - answer.size/2 - 4, answer.y - answer.size/2, 4, answer.size);
+                ctx.fillRect(answer.x + answer.size/2, answer.y - answer.size/2, 4, answer.size);
+                ctx.fillRect(answer.x - answer.size/2, answer.y - answer.size/2 - 4, answer.size, 4);
+                ctx.fillRect(answer.x - answer.size/2, answer.y + answer.size/2, answer.size, 4);
+                
+                // Text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(answer.text, answer.x, answer.y);
+            });
+        }
+        
+        // Draw question
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(question, canvas.width / 2, 20);
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            particles.forEach((p, index) => {
+                p.life--;
+                if (p.life <= 0) {
+                    particles.splice(index, 1);
+                    return;
+                }
+                
+                p.x += p.dx;
+                p.y += p.dy;
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+        }
+        
+        // Move player
+        function movePlayer() {
+            player.x += player.dx;
+            player.y += player.dy;
+            
+            // Boundary checks
+            if (player.x - player.size/2 < 0) player.x = player.size/2;
+            if (player.x + player.size/2 > canvas.width) player.x = canvas.width - player.size/2;
+            if (player.y - player.size/2 < 0) player.y = player.size/2;
+            if (player.y + player.size/2 > canvas.height) player.y = canvas.height - player.size/2;
+        }
+        
+        // Move answers
+        function moveAnswers() {
+            answers.forEach(answer => {
+                answer.x += answer.dx;
+                answer.y += answer.dy;
+                
+                // Bounce off walls
+                if (answer.x - answer.size/2 < 0 || answer.x + answer.size/2 > canvas.width) {
+                    answer.dx *= -1;
+                    playSound('bounce', 200);
+                }
+                if (answer.y - answer.size/2 < 0 || answer.y + answer.size/2 > canvas.height) {
+                    answer.dy *= -1;
+                    playSound('bounce', 200);
+                }
+                
+                // Gradually increase speed
+                answer.dx *= 1.0005;
+                answer.dy *= 1.0005;
+            });
+        }
+        
+        // Check collisions
+        function checkCollisions() {
+            answers.forEach(answer => {
+                const dx = player.x - answer.x;
+                const dy = player.y - answer.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < player.size/2 + answer.size/2) {
+                    gameOver = true;
+                    win = answer.correct;
+                    
+                    // Create explosion particles
+                    for (let i = 0; i < 20; i++) {
+                        particles.push({
+                            x: player.x + (Math.random() * 20 - 10),
+                            y: player.y + (Math.random() * 20 - 10),
+                            dx: (Math.random() * 4 - 2),
+                            dy: (Math.random() * 4 - 2),
+                            size: Math.random() * 6 + 2,
+                            color: COLORS.particles[Math.floor(Math.random() * COLORS.particles.length)],
+                            life: 30
+                        });
+                    }
+                    
+                    // Play sound
+                    if (win) {
+                        playSound('win', 800);
+                    } else {
+                        playSound('lose', 300);
+                    }
+                    
+                    // Show restart button
+                    restartButton.style.display = 'block';
+                }
+            });
+        }
+        
+        // Draw game over message
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = win ? '#00ff00' : '#ff0000';
+            ctx.font = '30px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (win) {
+                ctx.fillText('CORRECT!', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.fillText('The Great Wall is NOT visible from space', canvas.width / 2, canvas.height / 2 + 20);
+            } else {
+                ctx.fillText('WRONG!', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.fillText('The Great Wall is NOT visible from space', canvas.width / 2, canvas.height / 2 + 20);
+            }
+        }
+        
+        // Sound effects
+        function playSound(type, freq) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'win') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(freq * 2, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.5);
+            } else if (type === 'lose') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(freq / 2, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'bounce') {
+                oscillator.type = 'square';
+                oscillator.frequency.value = freq;
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Game loop
+        function update() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            drawBackground();
+            
+            if (!gameOver) {
+                // Move elements
+                movePlayer();
+                moveAnswers();
+                
+                // Check for collisions
+                checkCollisions();
+            }
+            
+            // Draw everything
+            drawQuestion();
+            drawAnswers();
+            drawPlayer();
+            drawParticles();
+            
+            if (gameOver) {
+                drawGameOver();
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Key handlers
+        function keyDown(e) {
+            if (gameOver) return;
+            
+            if (e.key === 'ArrowRight' || e.key === 'd') {
+                player.dx = player.speed;
+            } else if (e.key === 'ArrowLeft' || e.key === 'a') {
+                player.dx = -player.speed;
+            } else if (e.key === 'ArrowUp' || e.key === 'w') {
+                player.dy = -player.speed;
+            } else if (e.key === 'ArrowDown' || e.key === 's') {
+                player.dy = player.speed;
+            }
+        }
+        
+        function keyUp(e) {
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'ArrowLeft' || e.key === 'a') {
+                player.dx = 0;
+            } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'ArrowDown' || e.key === 's') {
+                player.dy = 0;
+            }
+        }
+
+        // Touch controls for mobile
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        function handleTouchStart(e) {
+            if (gameOver) return;
+            
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }
+
+        function handleTouchMove(e) {
+            if (gameOver) return;
+            
+            e.preventDefault();
+            const touch = e.touches[0];
+            
+            // Calculate direction and distance
+            const diffX = touch.clientX - touchStartX;
+            const diffY = touch.clientY - touchStartY;
+            
+            // Update player position directly
+            player.x += diffX * 0.5;
+            player.y += diffY * 0.5;
+            
+            // Update touch reference
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', keyDown);
+        document.addEventListener('keyup', keyUp);
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        restartButton.addEventListener('click', init);
+        
+        // Start game
+        init();
+        update();
+    </script>
+</body>
+</html>

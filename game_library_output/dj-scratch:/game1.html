@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJ Scratch Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #ff4757;
+            color: white;
+            border: 4px solid #ff6b81;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Game Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Determine if we're on mobile
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game colors (limited 8-bit palette)
+        const COLORS = {
+            background: '#111122',
+            recordBlack: '#222222',
+            recordGroove: '#333333',
+            recordLabel: '#cc9944',
+            recordLabelInner: '#ffcc66',
+            text: '#ffffff',
+            marker: '#ff4444',
+            correct: '#44ff44',
+            incorrect: '#ff4444',
+            djArm: '#aaaaaa',
+            djArmShadow: '#777777'
+        };
+        
+        // Game variables
+        let record = {
+            x: canvas.width / 2,
+            y: canvas.height / 2 + 20,
+            radius: isMobile ? 140 : 200,
+            rotation: 0,
+            velocity: 0,
+            friction: 0.98,
+            dragging: false,
+            lastMouseAngle: 0,
+            labelRadius: isMobile ? 70 : 100
+        };
+        
+        const question = "What is the capital of France?";
+        const options = ["Paris", "London", "Berlin", "Madrid"];
+        const correctAnswer = 0; // Index of correct answer (Paris)
+        
+        let gameOver = false;
+        let gameResult = null; // 'correct' or 'incorrect'
+        let scratch = { active: false, speed: 0 };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize the audio context on first user interaction
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+        
+        // Simple sound effects
+        function playTone(freq, duration, type = 'sine', volume = 0.3) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.value = volume;
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playScratchSound(speed) {
+            if (!audioCtx) return;
+            const absSpeed = Math.abs(speed);
+            const freq = 100 + absSpeed * 200;
+            playTone(freq, 0.05, 'sawtooth', 0.1);
+        }
+        
+        function playWinSound() {
+            if (!audioCtx) return;
+            playTone(660, 0.1, 'square');
+            setTimeout(() => playTone(880, 0.1, 'square'), 100);
+            setTimeout(() => playTone(1100, 0.3, 'square'), 200);
+        }
+        
+        function playLoseSound() {
+            if (!audioCtx) return;
+            playTone(440, 0.1, 'square');
+            setTimeout(() => playTone(330, 0.1, 'square'), 100);
+            setTimeout(() => playTone(220, 0.3, 'square'), 200);
+        }
+        
+        // Event Listeners
+        function getInputPosition(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            if (e.type.includes('touch')) {
+                return {
+                    x: (e.touches[0].clientX - rect.left) * scaleX,
+                    y: (e.touches[0].clientY - rect.top) * scaleY
+                };
+            } else {
+                return {
+                    x: (e.clientX - rect.left) * scaleX,
+                    y: (e.clientY - rect.top) * scaleY
+                };
+            }
+        }
+        
+        function getAngle(p1, p2) {
+            return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        }
+        
+        function pointerDown(e) {
+            if (gameOver) return;
+            initAudio();
+            
+            const pos = getInputPosition(e);
+            const dx = pos.x - record.x;
+            const dy = pos.y - record.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < record.radius) {
+                record.dragging = true;
+                record.lastMouseAngle = getAngle(record, pos);
+                scratch.active = true;
+            }
+        }
+        
+        function pointerMove(e) {
+            if (gameOver || !record.dragging) return;
+            
+            const pos = getInputPosition(e);
+            const currentAngle = getAngle(record, pos);
+            let deltaAngle = currentAngle - record.lastMouseAngle;
+            
+            // Handle angle wrap-around
+            if (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+            if (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+            
+            record.rotation += deltaAngle;
+            record.velocity = deltaAngle * 10;
+            record.lastMouseAngle = currentAngle;
+            
+            // Play scratch sound based on velocity
+            scratch.speed = record.velocity;
+            if (Math.abs(scratch.speed) > 0.05) {
+                playScratchSound(scratch.speed);
+            }
+        }
+        
+        function pointerUp() {
+            record.dragging = false;
+            scratch.active = false;
+            
+            if (gameOver) return;
+            
+            // Check answer when player stops scratching
+            checkAnswer();
+        }
+        
+        function checkAnswer() {
+            // Normalize rotation to 0-2π
+            let normalizedRotation = record.rotation % (Math.PI * 2);
+            if (normalizedRotation < 0) normalizedRotation += Math.PI * 2;
+            
+            // Calculate which option is at the top
+            const optionAngle = Math.PI * 2 / options.length;
+            const selectedOption = Math.floor(((normalizedRotation + Math.PI / 2) % (Math.PI * 2)) / optionAngle);
+            
+            // Check if correct answer is aligned with the marker (top position)
+            const isCorrect = selectedOption === correctAnswer;
+            
+            // If velocity is low enough, consider it a selection
+            if (Math.abs(record.velocity) < 0.03) {
+                gameOver = true;
+                gameResult = isCorrect ? 'correct' : 'incorrect';
+                restartBtn.style.display = 'block';
+                
+                if (isCorrect) {
+                    playWinSound();
+                } else {
+                    playLoseSound();
+                }
+            }
+        }
+        
+        canvas.addEventListener('mousedown', pointerDown);
+        canvas.addEventListener('touchstart', pointerDown);
+        
+        canvas.addEventListener('mousemove', pointerMove);
+        canvas.addEventListener('touchmove', pointerMove);
+        
+        canvas.addEventListener('mouseup', pointerUp);
+        canvas.addEventListener('touchend', pointerUp);
+        canvas.addEventListener('mouseout', pointerUp);
+        
+        restartBtn.addEventListener('click', function() {
+            record.rotation = 0;
+            record.velocity = 0;
+            gameOver = false;
+            gameResult = null;
+            restartBtn.style.display = 'none';
+        });
+        
+        // Drawing functions
+        function drawPixelatedCircle(x, y, radius, color) {
+            // Draw a pixelated circle for 8-bit feel
+            ctx.fillStyle = color;
+            
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < radius) {
+                        // Round to nearest pixel for chunky feel
+                        const px = Math.round(x + dx);
+                        const py = Math.round(y + dy);
+                        ctx.fillRect(px, py, 1, 1);
+                    }
+                }
+            }
+        }
+        
+        function drawRecord() {
+            ctx.save();
+            ctx.translate(record.x, record.y);
+            ctx.rotate(record.rotation);
+            
+            // Draw record base
+            drawPixelatedCircle(0, 0, record.radius, COLORS.recordBlack);
+            
+            // Draw record grooves (concentric circles)
+            for (let r = record.radius - 10; r > record.labelRadius + 5; r -= 7) {
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.strokeStyle = COLORS.recordGroove;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+            
+            // Draw record label
+            drawPixelatedCircle(0, 0, record.labelRadius, COLORS.recordLabel);
+            drawPixelatedCircle(0, 0, record.labelRadius * 0.3, COLORS.recordLabelInner);
+            
+            // Draw answer options on the record
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const optionRadius = record.labelRadius * 1.5;
+            const optionAngle = Math.PI * 2 / options.length;
+            
+            options.forEach((option, index) => {
+                const angle = index * optionAngle;
+                const x = Math.cos(angle) * optionRadius;
+                const y = Math.sin(angle) * optionRadius;
+                
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(angle + Math.PI / 2); // Rotate text to be readable
+                ctx.fillText(option, 0, 0);
+                ctx.restore();
+            });
+            
+            ctx.restore();
+        }
+        
+        function drawMarker() {
+            // Draw a marker at the top of the record
+            const markerX = record.x;
+            const markerY = record.y - record.radius - 10;
+            
+            ctx.fillStyle = COLORS.marker;
+            ctx.beginPath();
+            ctx.moveTo(markerX, markerY);
+            ctx.lineTo(markerX - 10, markerY - 10);
+            ctx.lineTo(markerX + 10, markerY - 10);
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        function drawDJArm() {
+            const armLength = record.radius * 1.2;
+            const armWidth = 15;
+            
+            // Position based on where the user would interact
+            const baseX = record.x + record.radius * 0.7;
+            const baseY = record.y - record.radius * 0.5;
+            
+            // Draw the arm with shadow for depth
+            ctx.fillStyle = COLORS.djArmShadow;
+            ctx.fillRect(baseX + 2, baseY + 2, armWidth, armLength);
+            
+            ctx.fillStyle = COLORS.djArm;
+            ctx.fillRect(baseX, baseY, armWidth, armLength);
+            
+            // Draw the needle/stylus
+            ctx.fillStyle = scratch.active ? COLORS.correct : COLORS.text;
+            ctx.beginPath();
+            ctx.arc(baseX + armWidth/2, baseY + armLength - 5, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 20 : 28}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, isMobile ? 80 : 100);
+            
+            // Draw instruction
+            ctx.font = `${isMobile ? 14 : 18}px sans-serif`;
+            ctx.fillText("Scratch to rotate and align the correct answer", canvas.width / 2, isMobile ? 110 : 140);
+        }
+        
+        function drawResult() {
+            if (!gameResult) return;
+            
+            ctx.fillStyle = gameResult === 'correct' ? COLORS.correct : COLORS.incorrect;
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                gameResult === 'correct' ? 'Correct!' : 'Wrong!', 
+                canvas.width / 2, 
+                record.y + record.radius + (isMobile ? 80 : 120)
+            );
+        }
+        
+        function drawScratchEffect() {
+            if (!scratch.active) return;
+            
+            // Draw scratch direction indicator
+            const direction = record.velocity > 0 ? "→" : "←";
+            const size = Math.min(Math.abs(record.velocity) * 50, 40);
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                direction, 
+                record.x, 
+                record.y - record.radius - 40
+            );
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Update record rotation based on velocity
+                if (!record.dragging) {
+                    record.rotation += record.velocity;
+                    record.velocity *= record.friction;
+                    
+                    // Play slower scratch sound when spinning freely
+                    if (Math.abs(record.velocity) > 0.05) {
+                        if (Math.random() < 0.2) { // Only play occasionally for a better effect
+                            playScratchSound(record.velocity * 0.5);
+                        }
+                    }
+                }
+            }
+        }
+        
+        function render() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawQuestion();
+            drawRecord();
+            drawMarker();
+            drawDJArm();
+            drawScratchEffect();
+            drawResult();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>

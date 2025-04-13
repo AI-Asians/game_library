@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tap-Pop Planet Quiz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #fff;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #ff5555;
+            color: #fff;
+            border: 4px solid #fff;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 16px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Detect if on mobile
+        const isMobile = window.innerWidth <= 600;
+        
+        // Set canvas size
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        const restartBtn = document.getElementById('restart');
+        const bubbles = [];
+        const colors = ['#ff5555', '#55ff55', '#5555ff', '#ffff55', '#ff55ff'];
+        const answers = ['Mars', 'Venus', 'Jupiter', 'Earth', 'Saturn'];
+        const correctAnswer = 'Mars';
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioContext = new AudioContext();
+        
+        // Create bubble objects
+        function createBubbles() {
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                const radius = isMobile ? 35 : 50;
+                bubbles.push({
+                    x: Math.random() * (canvas.width - radius * 2) + radius,
+                    y: Math.random() * (canvas.height - radius * 2) + radius,
+                    radius: radius,
+                    dx: (Math.random() - 0.5) * 2,
+                    dy: (Math.random() - 0.5) * 2,
+                    color: colors[i],
+                    text: shuffledAnswers[i],
+                    alive: true,
+                    bobOffset: Math.random() * Math.PI * 2,
+                    changeDirectionCounter: 0
+                });
+            }
+        }
+        
+        // Play sound
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'pop') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.exponentialRampToValueAtTime(130.81, audioContext.currentTime + 0.1); // C3
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.1);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime); // E5
+                }, 100);
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime); // G5
+                }, 200);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(311.13, audioContext.currentTime); // Eb4
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(233.08, audioContext.currentTime); // Bb3
+                }, 150);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        }
+        
+        // Draw functions
+        function drawBubble(bubble) {
+            if (!bubble.alive) return;
+            
+            // Bobbing effect
+            const bobY = Math.sin(bubble.bobOffset + Date.now() / 500) * 3;
+            
+            // Pixelated bubble
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#ffffff';
+            ctx.fillStyle = bubble.color;
+            
+            // Draw pixelated circle
+            ctx.beginPath();
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                const x = bubble.x + Math.cos(angle) * bubble.radius;
+                const y = bubble.y + bobY + Math.sin(angle) * bubble.radius;
+                if (i === 0) {
+                    ctx.moveTo(Math.floor(x), Math.floor(y));
+                } else {
+                    ctx.lineTo(Math.floor(x), Math.floor(y));
+                }
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            
+            // Text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = (isMobile ? '16px' : '20px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(bubble.text, bubble.x, bubble.y + bobY);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = (isMobile ? '18px' : '24px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 40);
+        }
+        
+        function drawPopAnimation(bubble, frame) {
+            if (frame > 5) return;
+            
+            const size = bubble.radius * (1 + frame * 0.2);
+            const opacity = 1 - frame * 0.2;
+            
+            ctx.globalAlpha = opacity;
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#ffffff';
+            ctx.beginPath();
+            
+            // Pixelated exploding circle
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                const x = bubble.x + Math.cos(angle) * size;
+                const y = bubble.y + Math.sin(angle) * size;
+                if (i === 0) {
+                    ctx.moveTo(Math.floor(x), Math.floor(y));
+                } else {
+                    ctx.lineTo(Math.floor(x), Math.floor(y));
+                }
+            }
+            
+            ctx.closePath();
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+        
+        // Update game state
+        function update() {
+            for (const bubble of bubbles) {
+                if (!bubble.alive) continue;
+                
+                // Move bubbles
+                bubble.x += bubble.dx;
+                bubble.y += bubble.dy;
+                
+                // Bounce off walls
+                if (bubble.x - bubble.radius < 0 || bubble.x + bubble.radius > canvas.width) {
+                    bubble.dx = -bubble.dx;
+                }
+                if (bubble.y - bubble.radius < 0 || bubble.y + bubble.radius > canvas.height) {
+                    bubble.dy = -bubble.dy;
+                }
+                
+                // Randomly change direction occasionally
+                bubble.changeDirectionCounter++;
+                if (bubble.changeDirectionCounter > 120) {
+                    if (Math.random() < 0.1) {
+                        bubble.dx = (Math.random() - 0.5) * 2;
+                        bubble.dy = (Math.random() - 0.5) * 2;
+                    }
+                    bubble.changeDirectionCounter = 0;
+                }
+            }
+        }
+        
+        // Handle click/tap
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            // Check if a bubble was clicked
+            for (const bubble of bubbles) {
+                if (!bubble.alive) continue;
+                
+                const distance = Math.sqrt(
+                    Math.pow(clickX - bubble.x, 2) + Math.pow(clickY - bubble.y, 2)
+                );
+                
+                if (distance < bubble.radius) {
+                    bubble.alive = false;
+                    
+                    // Pop animation and sound
+                    playSound('pop');
+                    
+                    // Handle game end
+                    gameOver = true;
+                    
+                    if (bubble.text === correctAnswer) {
+                        setTimeout(() => {
+                            playSound('correct');
+                        }, 100);
+                    } else {
+                        setTimeout(() => {
+                            playSound('wrong');
+                        }, 100);
+                    }
+                    
+                    // Show restart button after a short delay
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 500);
+                    
+                    // Create pop animation
+                    let frame = 0;
+                    const popInterval = setInterval(() => {
+                        if (frame > 5) {
+                            clearInterval(popInterval);
+                        }
+                        frame++;
+                    }, 50);
+                    
+                    bubble.popAnimation = {
+                        active: true,
+                        frame: 0,
+                        x: bubble.x,
+                        y: bubble.y,
+                        interval: popInterval
+                    };
+                    
+                    break;
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw retro background - pixelated grid
+            ctx.fillStyle = '#000022';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = '#333366';
+            ctx.lineWidth = 1;
+            const gridSize = 20;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Update game state if game is active
+            if (!gameOver) {
+                update();
+            }
+            
+            // Draw bubbles
+            bubbles.forEach(bubble => {
+                if (bubble.alive) {
+                    drawBubble(bubble);
+                } else if (bubble.popAnimation && bubble.popAnimation.active) {
+                    drawPopAnimation(bubble, bubble.popAnimation.frame);
+                    bubble.popAnimation.frame++;
+                    if (bubble.popAnimation.frame > 5) {
+                        bubble.popAnimation.active = false;
+                    }
+                }
+            });
+            
+            // Draw question
+            drawQuestion();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        function initGame() {
+            gameOver = false;
+            bubbles.length = 0;
+            restartBtn.style.display = 'none';
+            
+            // Create bubbles
+            createBubbles();
+            
+            // If first time, set up event listeners
+            if (!canvas.onclick) {
+                canvas.addEventListener('click', handleClick);
+                restartBtn.addEventListener('click', initGame);
+            }
+        }
+        
+        // Start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

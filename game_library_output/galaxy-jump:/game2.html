@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaxy-Jump</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            background: #444;
+            color: white;
+            border: 3px solid #888;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Colors
+        const colors = {
+            background: '#0a0a2a',
+            stars: ['#ffffff', '#ccccff', '#aaaaff'],
+            player: '#55ffff',
+            playerOutline: '#0088ff',
+            platformOutlines: ['#ff4444', '#44ff44', '#4444ff', '#ffff44'],
+            platforms: ['#ee2222', '#22ee22', '#2222ee', '#eeee22']
+        };
+        
+        // Stars
+        const stars = [];
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 3 + 1,
+                color: colors.stars[Math.floor(Math.random() * colors.stars.length)],
+                twinkle: Math.random() * 0.05
+            });
+        }
+        
+        // Platforms (answer choices)
+        const answers = ['Mars', 'Venus', 'Jupiter', 'Mercury'];
+        const correctAnswer = 'Mars';
+        const platforms = [];
+        
+        // Create platforms based on screen size
+        const platformWidth = isMobile ? 80 : 120;
+        const platformHeight = isMobile ? 40 : 60;
+        const platformY = canvas.height - 150;
+        
+        for (let i = 0; i < answers.length; i++) {
+            platforms.push({
+                x: (i * (platformWidth + 40)) + (canvas.width - ((platformWidth + 40) * answers.length - 40)) / 2,
+                y: platformY + (i % 2 === 0 ? -40 : 40),
+                width: platformWidth,
+                height: platformHeight,
+                answer: answers[i],
+                correct: answers[i] === correctAnswer,
+                color: colors.platforms[i],
+                outlineColor: colors.platformOutlines[i],
+                hovered: false,
+                moveDirection: i % 2 === 0 ? 1 : -1,
+                moveSpeed: 0.5 + Math.random()
+            });
+        }
+        
+        // Player
+        const player = {
+            x: canvas.width / 2,
+            y: 100,
+            width: 30,
+            height: 30,
+            velocityY: 0,
+            velocityX: 0,
+            jumping: false,
+            gravity: 0.5,
+            jumpPower: -12
+        };
+        
+        // Control variables
+        let selectedPlatform = null;
+        let lastClick = {x: 0, y: 0};
+        
+        // Sound generators
+        function jumpSound() {
+            try {
+                const audio = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audio.createOscillator();
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(300, audio.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(600, audio.currentTime + 0.1);
+                const gain = audio.createGain();
+                gain.gain.setValueAtTime(0.5, audio.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audio.currentTime + 0.3);
+                oscillator.connect(gain);
+                gain.connect(audio.destination);
+                oscillator.start();
+                oscillator.stop(audio.currentTime + 0.3);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function correctSound() {
+            try {
+                const audio = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audio.createOscillator();
+                oscillator.type = 'square';
+                
+                // Play cheerful ascending notes
+                const gain = audio.createGain();
+                gain.gain.setValueAtTime(0.5, audio.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audio.currentTime + 0.8);
+                
+                oscillator.frequency.setValueAtTime(330, audio.currentTime);
+                oscillator.frequency.setValueAtTime(392, audio.currentTime + 0.2);
+                oscillator.frequency.setValueAtTime(494, audio.currentTime + 0.4);
+                
+                oscillator.connect(gain);
+                gain.connect(audio.destination);
+                oscillator.start();
+                oscillator.stop(audio.currentTime + 0.8);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function wrongSound() {
+            try {
+                const audio = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audio.createOscillator();
+                oscillator.type = 'square';
+                
+                // Play descending notes
+                const gain = audio.createGain();
+                gain.gain.setValueAtTime(0.5, audio.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audio.currentTime + 0.6);
+                
+                oscillator.frequency.setValueAtTime(220, audio.currentTime);
+                oscillator.frequency.setValueAtTime(110, audio.currentTime + 0.3);
+                
+                oscillator.connect(gain);
+                gain.connect(audio.destination);
+                oscillator.start();
+                oscillator.stop(audio.currentTime + 0.6);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        // Draw functions
+        function drawStars() {
+            stars.forEach(star => {
+                star.size += Math.sin(Date.now() / 300) * star.twinkle;
+                ctx.fillStyle = star.color;
+                ctx.fillRect(
+                    Math.floor(star.x), 
+                    Math.floor(star.y), 
+                    Math.floor(star.size), 
+                    Math.floor(star.size)
+                );
+            });
+        }
+        
+        function drawPlatforms() {
+            platforms.forEach(platform => {
+                // Draw platform with pixelated outline
+                ctx.fillStyle = platform.outlineColor;
+                ctx.fillRect(
+                    Math.floor(platform.x - 4), 
+                    Math.floor(platform.y - 4), 
+                    Math.floor(platform.width + 8), 
+                    Math.floor(platform.height + 8)
+                );
+                
+                ctx.fillStyle = platform.color;
+                ctx.fillRect(
+                    Math.floor(platform.x), 
+                    Math.floor(platform.y), 
+                    Math.floor(platform.width), 
+                    Math.floor(platform.height)
+                );
+                
+                // Draw answer text
+                ctx.fillStyle = "#000";
+                ctx.font = isMobile ? "16px sans-serif" : "20px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(
+                    platform.answer, 
+                    Math.floor(platform.x + platform.width / 2),
+                    Math.floor(platform.y + platform.height / 2)
+                );
+                
+                // Highlight if hovered
+                if (platform.hovered && !gameOver) {
+                    ctx.strokeStyle = "#fff";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(
+                        Math.floor(platform.x - 2), 
+                        Math.floor(platform.y - 2), 
+                        Math.floor(platform.width + 4), 
+                        Math.floor(platform.height + 4)
+                    );
+                }
+            });
+        }
+        
+        function drawPlayer() {
+            // Draw player (spaceship) with pixelated style
+            ctx.fillStyle = colors.playerOutline;
+            ctx.fillRect(
+                Math.floor(player.x - 2), 
+                Math.floor(player.y - 2), 
+                Math.floor(player.width + 4), 
+                Math.floor(player.height + 4)
+            );
+            
+            ctx.fillStyle = colors.player;
+            ctx.fillRect(
+                Math.floor(player.x), 
+                Math.floor(player.y), 
+                Math.floor(player.width), 
+                Math.floor(player.height)
+            );
+            
+            // Draw thruster
+            if (player.jumping) {
+                ctx.fillStyle = "#ff8844";
+                const thrusterHeight = 10 + Math.random() * 5;
+                ctx.fillRect(
+                    Math.floor(player.x + player.width / 2 - 6),
+                    Math.floor(player.y + player.height),
+                    12,
+                    thrusterHeight
+                );
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = "#ffffff";
+            ctx.font = isMobile ? "18px sans-serif" : "24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            ctx.fillText(
+                "Which planet is known as the Red Planet?", 
+                canvas.width / 2, 
+                30
+            );
+        }
+        
+        function drawGameResult() {
+            if (gameOver) {
+                ctx.fillStyle = gameWon ? "rgba(0, 255, 0, 0.3)" : "rgba(255, 0, 0, 0.3)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "30px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(
+                    gameWon ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+                
+                restartBtn.style.display = "block";
+            }
+        }
+        
+        // Game loop functions
+        function update() {
+            if (gameOver) return;
+            
+            // Update player position
+            player.velocityY += player.gravity;
+            player.y += player.velocityY;
+            player.x += player.velocityX;
+            
+            // Slow down horizontal movement
+            player.velocityX *= 0.95;
+            
+            // Keep player in bounds
+            if (player.x < 0) {
+                player.x = 0;
+                player.velocityX = 0;
+            }
+            if (player.x + player.width > canvas.width) {
+                player.x = canvas.width - player.width;
+                player.velocityX = 0;
+            }
+            
+            // Check platform collisions
+            let onPlatform = false;
+            platforms.forEach(platform => {
+                // Move platforms for challenge
+                platform.x += platform.moveDirection * platform.moveSpeed;
+                if (platform.x <= 0 || platform.x + platform.width >= canvas.width) {
+                    platform.moveDirection *= -1;
+                }
+                
+                // Check collision only when falling
+                if (player.velocityY > 0) {
+                    if (
+                        player.x < platform.x + platform.width &&
+                        player.x + player.width > platform.x &&
+                        player.y + player.height >= platform.y &&
+                        player.y + player.height <= platform.y + platform.height / 2
+                    ) {
+                        player.y = platform.y - player.height;
+                        player.velocityY = 0;
+                        player.jumping = false;
+                        onPlatform = true;
+                        
+                        // Check if player landed on a platform with an answer
+                        gameOver = true;
+                        gameWon = platform.correct;
+                        
+                        if (gameWon) {
+                            correctSound();
+                        } else {
+                            wrongSound();
+                        }
+                    }
+                }
+                
+                // Check hover state
+                platform.hovered = (
+                    lastClick.x >= platform.x &&
+                    lastClick.x <= platform.x + platform.width &&
+                    lastClick.y >= platform.y &&
+                    lastClick.y <= platform.y + platform.height
+                );
+            });
+            
+            // Check if player fell off screen
+            if (player.y > canvas.height) {
+                gameOver = true;
+                wrongSound();
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawStars();
+            drawPlatforms();
+            drawPlayer();
+            drawQuestion();
+            drawGameResult();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        function jump(targetX) {
+            if (!gameOver && !player.jumping) {
+                player.jumping = true;
+                player.velocityY = player.jumpPower;
+                
+                // Calculate horizontal velocity based on click position
+                const deltaX = targetX - (player.x + player.width / 2);
+                player.velocityX = deltaX * 0.05;
+                
+                jumpSound();
+            }
+        }
+        
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Store click position for hover detection
+            lastClick.x = clickX;
+            lastClick.y = clickY;
+            
+            jump(clickX);
+        });
+        
+        canvas.addEventListener('mousemove', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            lastClick.x = event.clientX - rect.left;
+            lastClick.y = event.clientY - rect.top;
+        });
+        
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'Space') {
+                jump(player.x + player.width / 2);
+            }
+        });
+        
+        restartBtn.addEventListener('click', () => {
+            // Reset game
+            gameOver = false;
+            gameWon = false;
+            player.x = canvas.width / 2;
+            player.y = 100;
+            player.velocityY = 0;
+            player.velocityX = 0;
+            player.jumping = false;
+            restartBtn.style.display = "none";
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

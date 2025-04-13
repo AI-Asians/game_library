@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Breaking News Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Colors (limited 8-bit palette)
+        const COLORS = {
+            BLACK: '#111111',
+            DARK_BLUE: '#1a1a5a',
+            RED: '#d13b27',
+            LIGHT_RED: '#e66951',
+            WHITE: '#ffffff',
+            GRAY: '#9badb7',
+            YELLOW: '#ffde40',
+            BLUE: '#2d5bc3'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let correctAnswerSelected = false;
+        let restartButton = { x: 300, y: 400, width: 200, height: 60 };
+        
+        // Question
+        const question = "What is the capital of France?";
+        
+        // Headlines (answers)
+        const headlines = [
+            { text: "PARIS", correct: true, x: canvas.width, y: 200, speed: 3, color: COLORS.RED },
+            { text: "LONDON", correct: false, x: canvas.width + 300, y: 300, speed: 4, color: COLORS.BLUE },
+            { text: "BERLIN", correct: false, x: canvas.width + 100, y: 400, speed: 2, color: COLORS.DARK_BLUE },
+            { text: "ROME", correct: false, x: canvas.width + 450, y: 500, speed: 3.5, color: COLORS.YELLOW }
+        ];
+        
+        // Scanlines effect
+        function drawScanlines() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            for (let i = 0; i < canvas.height; i += 4) {
+                ctx.fillRect(0, i, canvas.width, 2);
+            }
+        }
+        
+        // Generate simple sounds
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(349.23, audioContext.currentTime); // F4
+                oscillator.frequency.setValueAtTime(293.66, audioContext.currentTime + 0.1); // D4
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } else if (type === 'alert') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(587.33, audioContext.currentTime); // D5
+                oscillator.frequency.setValueAtTime(493.88, audioContext.currentTime + 0.1); // B4
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.15);
+            }
+        }
+        
+        // Draw TV frame
+        function drawTVFrame() {
+            // Outer TV frame
+            ctx.fillStyle = COLORS.BLACK;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // TV Screen area
+            ctx.fillStyle = COLORS.DARK_BLUE;
+            ctx.fillRect(40, 40, canvas.width - 80, canvas.height - 80);
+            
+            // TV Details
+            ctx.fillStyle = COLORS.GRAY;
+            ctx.fillRect(canvas.width - 100, 50, 40, 20); // Button
+            ctx.fillRect(canvas.width - 100, 80, 40, 20); // Button
+            
+            // Static effect (random pixels)
+            for (let i = 0; i < 200; i++) {
+                const x = Math.random() * (canvas.width - 100) + 50;
+                const y = Math.random() * (canvas.height - 100) + 50;
+                const size = Math.random() * 3 + 1;
+                ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.2})`;
+                ctx.fillRect(x, y, size, size);
+            }
+        }
+        
+        // Draw news desk
+        function drawNewsDesk() {
+            // News desk
+            ctx.fillStyle = COLORS.DARK_BLUE;
+            ctx.fillRect(60, 100, canvas.width - 120, 60);
+            
+            // News logo
+            ctx.fillStyle = COLORS.RED;
+            ctx.fillRect(80, 110, 100, 40);
+            
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = '20px sans-serif';
+            ctx.fillText("NEWS", 100, 138);
+            
+            // Question area
+            ctx.fillStyle = COLORS.BLUE;
+            ctx.fillRect(60, 170, canvas.width - 120, 40);
+            
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = 'bold 20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 197);
+            ctx.textAlign = 'left';
+        }
+        
+        // Draw headlines
+        function drawHeadlines() {
+            headlines.forEach(headline => {
+                if (headline.x < -400) return; // Don't draw if off-screen
+                
+                // News ticker background
+                ctx.fillStyle = headline.color;
+                ctx.fillRect(headline.x - 10, headline.y - 25, 220, 40);
+                
+                // BREAKING banner
+                ctx.fillStyle = COLORS.YELLOW;
+                ctx.fillRect(headline.x - 10, headline.y - 25, 220, 15);
+                
+                ctx.fillStyle = COLORS.BLACK;
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillText("BREAKING NEWS", headline.x, headline.y - 13);
+                
+                // Headline text
+                ctx.fillStyle = COLORS.WHITE;
+                ctx.font = 'bold 20px sans-serif';
+                ctx.fillText(headline.text, headline.x, headline.y);
+            });
+        }
+        
+        // Draw game over screen
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = 'bold 32px sans-serif';
+            ctx.textAlign = 'center';
+            
+            if (correctAnswerSelected) {
+                ctx.fillStyle = COLORS.YELLOW;
+                ctx.fillText("CORRECT!", canvas.width / 2, canvas.height / 2 - 50);
+            } else {
+                ctx.fillStyle = COLORS.RED;
+                ctx.fillText("INCORRECT!", canvas.width / 2, canvas.height / 2 - 50);
+            }
+            
+            // Draw restart button
+            ctx.fillStyle = COLORS.BLUE;
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            
+            ctx.fillStyle = COLORS.WHITE;
+            ctx.font = 'bold 24px sans-serif';
+            ctx.fillText("RESTART", canvas.width / 2, restartButton.y + 38);
+            ctx.textAlign = 'left';
+        }
+        
+        // Game update
+        function update() {
+            if (!gameOver) {
+                headlines.forEach(headline => {
+                    headline.x -= headline.speed;
+                    
+                    // Play alert sound when headline enters screen
+                    if (headline.x <= canvas.width && headline.x > canvas.width - headline.speed * 2) {
+                        playSound('alert');
+                    }
+                });
+            }
+        }
+        
+        // Game render
+        function render() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawTVFrame();
+            drawNewsDesk();
+            drawHeadlines();
+            drawScanlines();
+            
+            if (gameOver) {
+                drawGameOver();
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            correctAnswerSelected = false;
+            
+            // Reset headlines
+            headlines.forEach((headline, index) => {
+                headline.x = canvas.width + index * 200;
+            });
+            
+            gameLoop();
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            if (gameOver) {
+                // Check if restart button is clicked
+                if (x >= restartButton.x && 
+                    x <= restartButton.x + restartButton.width && 
+                    y >= restartButton.y && 
+                    y <= restartButton.y + restartButton.height) {
+                    init();
+                }
+            } else {
+                // Check if any headline is clicked
+                headlines.forEach(headline => {
+                    if (x >= headline.x - 10 && 
+                        x <= headline.x + 210 && 
+                        y >= headline.y - 25 && 
+                        y <= headline.y + 15) {
+                        
+                        gameOver = true;
+                        correctAnswerSelected = headline.correct;
+                        
+                        if (headline.correct) {
+                            playSound('correct');
+                        } else {
+                            playSound('wrong');
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Start the game
+        init();
+        
+        // Mobile optimization
+        function resizeCanvas() {
+            if (window.innerWidth <= 500) {
+                canvas.width = 360;
+                canvas.height = 640;
+                // Adjust headline positions for mobile
+                headlines.forEach((headline, index) => {
+                    headline.y = 200 + index * 90;
+                });
+                restartButton = { x: 80, y: 400, width: 200, height: 60 };
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+                headlines[0].y = 200;
+                headlines[1].y = 300;
+                headlines[2].y = 400;
+                headlines[3].y = 500;
+                restartButton = { x: 300, y: 400, width: 200, height: 60 };
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>

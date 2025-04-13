@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz - Code Entry</title>
+    <style>
+        body { 
+            margin: 0; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #222;
+            overflow: hidden;
+        }
+        canvas { 
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Initialize canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        let inputText = '';
+        const correctAnswer = 'Paris';
+        let gameState = 'playing'; // 'playing', 'correct', 'incorrect'
+        let restartButtonVisible = false;
+        
+        // Colors (limited palette)
+        const colors = {
+            background: '#0F380F',   // Dark green (Game Boy-ish)
+            border: '#8BAC0F',       // Light green
+            keyFill: '#306230',      // Medium green
+            keyPressed: '#9BBC0F',   // Lightest green
+            textDark: '#0F380F',     // Dark green
+            textLight: '#9BBC0F',    // Light green
+            inputBg: '#306230',      // Medium green
+            correct: '#8BAC0F',      // Light green for correct
+            incorrect: '#E33E3E'     // Red for incorrect
+        };
+        
+        // Keyboard configuration
+        const keys = [
+            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+            ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
+        ];
+        const spacing = 5;
+        const keySize = 50;
+        const keyboardStartY = 300;
+        const keyboardX = (canvas.width - (keys[0].length * (keySize + spacing) - spacing)) / 2;
+        
+        // Special keys
+        const backspaceKey = { text: '←', x: 0, y: 0, width: 100, height: keySize };
+        const enterKey = { text: 'ENTER', x: 0, y: 0, width: 120, height: keySize };
+        const spaceKey = { text: 'SPACE', x: 0, y: 0, width: 200, height: keySize };
+        
+        // Keep track of active key
+        let activeKey = null;
+        
+        // Sound generation
+        function playSound(freq, duration, type = 'square') {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = freq;
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch(e) {
+                console.log('Sound not supported');
+            }
+        }
+        
+        // Sound effects
+        function keyPressSound() { playSound(440, 0.1); }
+        function backspaceSound() { playSound(330, 0.1); }
+        function successSound() { 
+            playSound(523.25, 0.1); 
+            setTimeout(() => playSound(659.25, 0.1), 100);
+            setTimeout(() => playSound(783.99, 0.2), 200);
+        }
+        function failureSound() { 
+            playSound(493.88, 0.2); 
+            setTimeout(() => playSound(369.99, 0.3), 200);
+        }
+        
+        // Draw functions
+        function drawPixelatedRect(x, y, width, height, color, borderColor = null, borderWidth = 4) {
+            // Main fill
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Border if specified
+            if (borderColor) {
+                ctx.fillStyle = borderColor;
+                // Top border
+                ctx.fillRect(x, y, width, borderWidth);
+                // Left border
+                ctx.fillRect(x, y, borderWidth, height);
+                // Bottom border
+                ctx.fillRect(x, y + height - borderWidth, width, borderWidth);
+                // Right border
+                ctx.fillRect(x + width - borderWidth, y, borderWidth, height);
+            }
+        }
+        
+        function drawPixelatedText(text, x, y, color, size = 24) {
+            ctx.font = `${size}px sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+        
+        function drawKey(key, x, y, width, height, isActive = false) {
+            const keyColor = isActive ? colors.keyPressed : colors.keyFill;
+            drawPixelatedRect(x, y, width, height, keyColor, colors.border);
+            drawPixelatedText(key, x + width/2, y + height/2, isActive ? colors.textDark : colors.textLight);
+            return { key, x, y, width, height };
+        }
+        
+        function drawKeyboard() {
+            const keyPositions = [];
+            
+            // Regular alphabet keys
+            for (let row = 0; row < keys.length; row++) {
+                const rowKeys = keys[row];
+                const rowWidth = rowKeys.length * (keySize + spacing) - spacing;
+                const startX = (canvas.width - rowWidth) / 2;
+                
+                for (let i = 0; i < rowKeys.length; i++) {
+                    const x = startX + i * (keySize + spacing);
+                    const y = keyboardStartY + row * (keySize + spacing);
+                    const isActive = activeKey === rowKeys[i];
+                    
+                    keyPositions.push(drawKey(rowKeys[i], x, y, keySize, keySize, isActive));
+                }
+            }
+            
+            // Special keys
+            const bottomRowY = keyboardStartY + 3 * (keySize + spacing);
+            
+            // Backspace key (top right)
+            backspaceKey.x = canvas.width - backspaceKey.width - 20;
+            backspaceKey.y = keyboardStartY - keySize - spacing;
+            keyPositions.push(drawKey(backspaceKey.text, backspaceKey.x, backspaceKey.y, 
+                                      backspaceKey.width, backspaceKey.height, activeKey === 'BACKSPACE'));
+            
+            // Space key (center bottom)
+            spaceKey.x = (canvas.width - spaceKey.width) / 2;
+            spaceKey.y = bottomRowY;
+            keyPositions.push(drawKey(spaceKey.text, spaceKey.x, spaceKey.y, 
+                                     spaceKey.width, spaceKey.height, activeKey === 'SPACE'));
+            
+            // Enter key (bottom right)
+            enterKey.x = canvas.width - enterKey.width - 20;
+            enterKey.y = bottomRowY;
+            keyPositions.push(drawKey(enterKey.text, enterKey.x, enterKey.y, 
+                                     enterKey.width, enterKey.height, activeKey === 'ENTER'));
+            
+            return keyPositions;
+        }
+        
+        function drawInputArea() {
+            const width = 500;
+            const height = 60;
+            const x = (canvas.width - width) / 2;
+            const y = 220;
+            
+            // Draw the input box
+            drawPixelatedRect(x, y, width, height, colors.inputBg, colors.border);
+            
+            // Draw the input text
+            drawPixelatedText(inputText, x + width/2, y + height/2, colors.textLight, 32);
+            
+            // Blinking cursor effect if in playing state
+            if (gameState === 'playing' && Math.floor(Date.now() / 500) % 2 === 0) {
+                const textWidth = ctx.measureText(inputText).width;
+                const cursorX = x + width/2 + textWidth/2 + 5;
+                drawPixelatedRect(cursorX, y + 15, 5, height - 30, colors.textLight);
+            }
+        }
+        
+        function drawQuestion() {
+            drawPixelatedText("What is the capital of France?", canvas.width/2, 160, colors.textLight, 28);
+        }
+        
+        function drawGameOver() {
+            const isCorrect = gameState === 'correct';
+            const message = isCorrect ? "CORRECT!" : "INCORRECT!";
+            const color = isCorrect ? colors.correct : colors.incorrect;
+            
+            // Flash background for game over
+            if (Math.floor(Date.now() / 200) % 2 === 0) {
+                drawPixelatedRect(0, 0, canvas.width, canvas.height, 
+                                 isCorrect ? '#4a6c1c' : '#551c1c', null, 0);
+            }
+            
+            // Draw result message
+            drawPixelatedText(message, canvas.width/2, canvas.height/2, color, 48);
+            
+            // Draw restart button after short delay
+            if (restartButtonVisible) {
+                const btnWidth = 200;
+                const btnHeight = 60;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height/2 + 60;
+                
+                drawPixelatedRect(btnX, btnY, btnWidth, btnHeight, colors.keyFill, colors.border);
+                drawPixelatedText("RESTART", canvas.width/2, btnY + btnHeight/2, colors.textLight, 24);
+                
+                return { x: btnX, y: btnY, width: btnWidth, height: btnHeight };
+            }
+            
+            return null;
+        }
+        
+        function checkAnswer() {
+            if (inputText.toLowerCase() === correctAnswer.toLowerCase()) {
+                gameState = 'correct';
+                successSound();
+            } else {
+                gameState = 'incorrect';
+                failureSound();
+            }
+            
+            // Show restart button after 1 second
+            setTimeout(() => {
+                restartButtonVisible = true;
+            }, 1000);
+        }
+        
+        function handleKeyboardInput(key) {
+            if (gameState !== 'playing') return;
+            
+            switch(key) {
+                case 'ENTER':
+                    checkAnswer();
+                    break;
+                case 'BACKSPACE':
+                    if (inputText.length > 0) {
+                        inputText = inputText.slice(0, -1);
+                        backspaceSound();
+                    }
+                    break;
+                case 'SPACE':
+                    inputText += ' ';
+                    keyPressSound();
+                    break;
+                default:
+                    if (inputText.length < 15) {  // Limit input length
+                        inputText += key;
+                        keyPressSound();
+                    }
+                    break;
+            }
+        }
+        
+        // Handle mouse events
+        let keyPositions = [];
+        let restartBtn = null;
+        
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+            
+            if (gameState === 'playing') {
+                // Check keyboard keys
+                for (const key of keyPositions) {
+                    if (mouseX >= key.x && mouseX <= key.x + key.width &&
+                        mouseY >= key.y && mouseY <= key.y + key.height) {
+                        
+                        activeKey = key.key === 'ENTER' ? 'ENTER' : 
+                                   key.key === '←' ? 'BACKSPACE' :
+                                   key.key === 'SPACE' ? 'SPACE' : key.key;
+                        break;
+                    }
+                }
+            } else if (restartButtonVisible && restartBtn) {
+                // Check restart button
+                if (mouseX >= restartBtn.x && mouseX <= restartBtn.x + restartBtn.width &&
+                    mouseY >= restartBtn.y && mouseY <= restartBtn.y + restartBtn.height) {
+                    // Reset game
+                    gameState = 'playing';
+                    inputText = '';
+                    restartButtonVisible = false;
+                    keyPressSound();
+                }
+            }
+        });
+        
+        canvas.addEventListener('mouseup', (e) => {
+            if (activeKey) {
+                handleKeyboardInput(activeKey);
+                activeKey = null;
+            }
+        });
+        
+        // Handle touch events
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const touch = e.touches[0];
+            const touchX = (touch.clientX - rect.left) * scaleX;
+            const touchY = (touch.clientY - rect.top) * scaleY;
+            
+            if (gameState === 'playing') {
+                // Check keyboard keys
+                for (const key of keyPositions) {
+                    if (touchX >= key.x && touchX <= key.x + key.width &&
+                        touchY >= key.y && touchY <= key.y + key.height) {
+                        
+                        activeKey = key.key === 'ENTER' ? 'ENTER' : 
+                                   key.key === '←' ? 'BACKSPACE' :
+                                   key.key === 'SPACE' ? 'SPACE' : key.key;
+                        break;
+                    }
+                }
+            } else if (restartButtonVisible && restartBtn) {
+                // Check restart button
+                if (touchX >= restartBtn.x && touchX <= restartBtn.x + restartBtn.width &&
+                    touchY >= restartBtn.y && touchY <= restartBtn.y + restartBtn.height) {
+                    // Reset game
+                    gameState = 'playing';
+                    inputText = '';
+                    restartButtonVisible = false;
+                    keyPressSound();
+                }
+            }
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (activeKey) {
+                handleKeyboardInput(activeKey);
+                activeKey = null;
+            }
+        }, { passive: false });
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (gameState === 'playing') {
+                // Draw game elements
+                drawQuestion();
+                drawInputArea();
+                keyPositions = drawKeyboard();
+            } else {
+                // Draw game over state
+                restartBtn = drawGameOver();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>

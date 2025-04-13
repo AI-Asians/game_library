@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lock-Pick Truth Challenge</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background: #444;
+            color: #fff;
+            border: 4px solid #666;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Play Again</button>
+
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas dimensions
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const colors = {
+            background: '#1a1a2e',
+            lockBody: '#555566',
+            lockHighlight: '#888899',
+            lockShadow: '#333344',
+            trueSide: '#00aa44',
+            falseSide: '#dd2222',
+            pick: '#ccddff',
+            pickHandle: '#aa9955',
+            text: '#ffffff',
+            correct: '#55ff55',
+            incorrect: '#ff5555'
+        };
+        
+        // Game state
+        let gameState = {
+            pickPosition: 0,
+            pickDirection: 1,
+            pickSpeed: 5,
+            isGameOver: false,
+            lockOpen: false,
+            shakeLock: false,
+            shakeDuration: 0,
+            result: null, // null, 'correct', or 'incorrect'
+            
+            // The Great Wall of China is visible from space - False is correct
+            correctAnswer: 'false',
+            
+            // Lock dimensions
+            lockWidth: 0,
+            lockHeight: 0,
+            lockX: 0,
+            lockY: 0,
+            
+            // Animation frames
+            animationFrames: 0
+        };
+        
+        // Calculate dimensions
+        function setupDimensions() {
+            gameState.lockWidth = canvas.width * 0.8;
+            gameState.lockHeight = canvas.height * 0.2;
+            gameState.lockX = (canvas.width - gameState.lockWidth) / 2;
+            gameState.lockY = canvas.height * 0.4;
+        }
+        
+        // Audio context and sounds
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        function playSound(type) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'tick':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.05);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.2);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(180, audioCtx.currentTime + 0.2);
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw the lock mechanism
+        function drawLock() {
+            let lockX = gameState.lockX;
+            let lockY = gameState.lockY;
+            
+            // Shake effect
+            if (gameState.shakeLock) {
+                lockX += Math.random() * 8 - 4;
+                lockY += Math.random() * 4 - 2;
+                gameState.shakeDuration--;
+                if (gameState.shakeDuration <= 0) {
+                    gameState.shakeLock = false;
+                }
+            }
+            
+            // Lock body - main rectangle
+            ctx.fillStyle = colors.lockBody;
+            ctx.fillRect(lockX, lockY, gameState.lockWidth, gameState.lockHeight);
+            
+            // Lock detail - top highlight
+            ctx.fillStyle = colors.lockHighlight;
+            ctx.fillRect(lockX + 4, lockY + 4, gameState.lockWidth - 8, 8);
+            
+            // Lock detail - bottom shadow
+            ctx.fillStyle = colors.lockShadow;
+            ctx.fillRect(lockX + 4, lockY + gameState.lockHeight - 12, gameState.lockWidth - 8, 8);
+            
+            // Lock mechanism - truth zones
+            const halfWidth = gameState.lockWidth / 2;
+            
+            // True side
+            ctx.fillStyle = colors.trueSide;
+            ctx.fillRect(lockX, lockY, halfWidth, gameState.lockHeight);
+            
+            // False side
+            ctx.fillStyle = colors.falseSide;
+            ctx.fillRect(lockX + halfWidth, lockY, halfWidth, gameState.lockHeight);
+            
+            // Labels
+            ctx.fillStyle = colors.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("TRUE", lockX + halfWidth / 2, lockY + gameState.lockHeight / 2 + 6);
+            ctx.fillText("FALSE", lockX + halfWidth + halfWidth / 2, lockY + gameState.lockHeight / 2 + 6);
+            
+            // Lock markers
+            for (let i = 1; i < 10; i++) {
+                ctx.fillStyle = colors.lockShadow;
+                const markerX = lockX + (gameState.lockWidth / 10) * i;
+                ctx.fillRect(markerX - 2, lockY + 8, 4, gameState.lockHeight - 16);
+            }
+            
+            // If lock is open, draw it slightly differently
+            if (gameState.lockOpen) {
+                // Draw open lock indicator
+                ctx.fillStyle = colors.correct;
+                ctx.fillRect(lockX, lockY - 20, gameState.lockWidth, 12);
+                
+                // Draw simple keyhole
+                ctx.fillStyle = colors.lockShadow;
+                const keyholeX = gameState.correctAnswer === 'true' ? 
+                    lockX + halfWidth / 2 : 
+                    lockX + halfWidth + halfWidth / 2;
+                ctx.beginPath();
+                ctx.arc(keyholeX, lockY + gameState.lockHeight / 2, 15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = colors.background;
+                ctx.beginPath();
+                ctx.arc(keyholeX, lockY + gameState.lockHeight / 2, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // Draw the lock pick
+        function drawPick() {
+            const pickWidth = 12;
+            const pickHeight = gameState.lockHeight * 1.5;
+            const pickX = gameState.lockX + gameState.pickPosition * gameState.lockWidth;
+            const pickY = gameState.lockY - pickHeight / 2;
+            
+            // Pick handle
+            ctx.fillStyle = colors.pickHandle;
+            ctx.fillRect(pickX - pickWidth/2, pickY, pickWidth, pickHeight);
+            
+            // Pick tip
+            ctx.fillStyle = colors.pick;
+            ctx.fillRect(pickX - pickWidth/2, pickY + pickHeight - 40, pickWidth, 40);
+            
+            // Pick details
+            ctx.fillStyle = colors.lockShadow;
+            ctx.fillRect(pickX - pickWidth/2 + 2, pickY + 8, pickWidth - 4, 4);
+            ctx.fillRect(pickX - pickWidth/2 + 2, pickY + 20, pickWidth - 4, 4);
+            ctx.fillRect(pickX - pickWidth/2 + 2, pickY + 32, pickWidth - 4, 4);
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("The Great Wall of China is visible from space.", canvas.width / 2, canvas.height * 0.2);
+            
+            ctx.font = '14px sans-serif';
+            ctx.fillText("Tap/click when the pick is over your answer!", canvas.width / 2, canvas.height * 0.25);
+        }
+        
+        // Draw game over message
+        function drawResult() {
+            if (gameState.result === 'correct') {
+                ctx.fillStyle = colors.correct;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText("Correct! The Great Wall is NOT visible from space.", canvas.width / 2, canvas.height * 0.7);
+            } 
+            else if (gameState.result === 'incorrect') {
+                ctx.fillStyle = colors.incorrect;
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText("Incorrect! The Great Wall is NOT visible from space.", canvas.width / 2, canvas.height * 0.7);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameState.isGameOver) {
+                // Move the pick
+                gameState.pickPosition += gameState.pickDirection * (gameState.pickSpeed / 1000);
+                
+                // Random speed changes to add challenge
+                if (Math.random() < 0.02) {
+                    gameState.pickSpeed = 3 + Math.random() * 8;
+                }
+                
+                // Reverse direction at edges
+                if (gameState.pickPosition >= 1) {
+                    gameState.pickDirection = -1;
+                    playSound('tick');
+                } 
+                else if (gameState.pickPosition <= 0) {
+                    gameState.pickDirection = 1;
+                    playSound('tick');
+                }
+            }
+            
+            // Animation frames counting
+            gameState.animationFrames++;
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawLock();
+            drawQuestion();
+            
+            if (!gameState.isGameOver || gameState.animationFrames % 8 < 4) {
+                drawPick(); // Make pick blink when game is over
+            }
+            
+            drawResult();
+            
+            // Add pixel-art decorative elements
+            drawDecorativeElements();
+        }
+        
+        // Simple decorative elements
+        function drawDecorativeElements() {
+            // Draw pixelated border
+            ctx.fillStyle = '#444466';
+            for (let i = 0; i < canvas.width; i += 8) {
+                ctx.fillRect(i, 0, 4, 8);
+                ctx.fillRect(i, canvas.height - 8, 4, 8);
+            }
+            
+            for (let i = 0; i < canvas.height; i += 8) {
+                ctx.fillRect(0, i, 8, 4);
+                ctx.fillRect(canvas.width - 8, i, 8, 4);
+            }
+            
+            // Draw lock machine housing
+            ctx.fillStyle = '#334466';
+            ctx.fillRect(
+                gameState.lockX - 20, 
+                gameState.lockY - 40, 
+                gameState.lockWidth + 40, 
+                gameState.lockHeight + 80
+            );
+            
+            // Draw bolts on the corners
+            const boltPositions = [
+                {x: gameState.lockX - 10, y: gameState.lockY - 30},
+                {x: gameState.lockX + gameState.lockWidth + 10, y: gameState.lockY - 30},
+                {x: gameState.lockX - 10, y: gameState.lockY + gameState.lockHeight + 30},
+                {x: gameState.lockX + gameState.lockWidth + 10, y: gameState.lockY + gameState.lockHeight + 30}
+            ];
+            
+            ctx.fillStyle = '#aaaaaa';
+            boltPositions.forEach(pos => {
+                ctx.fillRect(pos.x - 5, pos.y - 5, 10, 10);
+                ctx.fillStyle = '#666677';
+                ctx.fillRect(pos.x - 2, pos.y - 2, 4, 4);
+                ctx.fillStyle = '#aaaaaa';
+            });
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle player input
+        function handleInput(e) {
+            e.preventDefault();
+            
+            if (gameState.isGameOver) {
+                // If game is over, the button handles restart
+                return;
+            }
+            
+            // Determine which side the pick is on
+            const halfWidth = gameState.lockWidth / 2;
+            const pickX = gameState.lockX + gameState.pickPosition * gameState.lockWidth;
+            let playerAnswer;
+            
+            if (pickX < gameState.lockX + halfWidth) {
+                playerAnswer = 'true';
+            } else {
+                playerAnswer = 'false';
+            }
+            
+            // Check if the answer is correct
+            if (playerAnswer === gameState.correctAnswer) {
+                gameState.result = 'correct';
+                gameState.lockOpen = true;
+                playSound('correct');
+            } else {
+                gameState.result = 'incorrect';
+                gameState.shakeLock = true;
+                gameState.shakeDuration = 20;
+                playSound('incorrect');
+            }
+            
+            // End the game
+            gameState.isGameOver = true;
+            document.getElementById('restartBtn').style.display = 'block';
+        }
+        
+        // Restart the game
+        function restartGame() {
+            gameState = {
+                pickPosition: 0,
+                pickDirection: 1,
+                pickSpeed: 5,
+                isGameOver: false,
+                lockOpen: false,
+                shakeLock: false,
+                shakeDuration: 0,
+                result: null,
+                correctAnswer: 'false',
+                lockWidth: gameState.lockWidth,
+                lockHeight: gameState.lockHeight,
+                lockX: gameState.lockX,
+                lockY: gameState.lockY,
+                animationFrames: 0
+            };
+            document.getElementById('restartBtn').style.display = 'none';
+        }
+        
+        // Initialize the game
+        function init() {
+            setupDimensions();
+            
+            // Set up event listeners
+            canvas.addEventListener('click', handleInput);
+            canvas.addEventListener('touchstart', handleInput);
+            document.getElementById('restartBtn').addEventListener('click', restartGame);
+            
+            // Start the game loop
+            gameLoop();
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

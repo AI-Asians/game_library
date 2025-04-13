@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Quiz Cannon Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            background-color: #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game variables
+        const colors = {
+            background: '#000022',
+            cannon: '#8888FF',
+            cannonBase: '#6666AA',
+            question: '#FFFFFF',
+            targets: ['#FF5555', '#55FF55', '#5555FF', '#FFFF55'],
+            correct: '#55FF55',
+            incorrect: '#FF5555',
+            aimLine: '#FFFFFF',
+            projectile: '#FFAA00',
+            projectileTrail: '#FF5500'
+        };
+
+        // Planet answers - correct one is Mars (index 0)
+        const answers = [
+            "Mars",
+            "Venus",
+            "Jupiter",
+            "Mercury"
+        ];
+        const correctAnswer = 0;
+
+        // Game state
+        let gameState = {
+            cannonAngle: Math.PI / 2, // pointing upward initially
+            cannonRotationSpeed: 0.03,
+            isRotatingLeft: false,
+            isRotatingRight: false,
+            isFiring: false,
+            projectile: null,
+            projectileSpeed: 10,
+            targets: [],
+            gameOver: false,
+            result: null, // 'correct' or 'incorrect'
+            restartButton: {
+                x: canvas.width / 2,
+                y: canvas.height / 2 + 100,
+                width: 120,
+                height: 40
+            }
+        };
+
+        // Sound effects
+        function createBeepSound(frequency, duration) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            gainNode.gain.value = 0.1;
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+        }
+
+        function playFireSound() {
+            createBeepSound(150, 100);
+        }
+
+        function playHitSound(correct) {
+            if (correct) {
+                createBeepSound(440, 200);
+                setTimeout(() => createBeepSound(880, 300), 200);
+            } else {
+                createBeepSound(200, 200);
+                setTimeout(() => createBeepSound(100, 300), 200);
+            }
+        }
+
+        // Initialize game
+        function initGame() {
+            gameState.cannonAngle = Math.PI / 2;
+            gameState.isFiring = false;
+            gameState.projectile = null;
+            gameState.gameOver = false;
+            gameState.result = null;
+            
+            // Position targets in a semicircle
+            gameState.targets = [];
+            const radius = canvas.height * 0.35;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height * 0.2;
+            
+            for (let i = 0; i < answers.length; i++) {
+                const angle = Math.PI * (i / (answers.length - 1));
+                const target = {
+                    x: centerX + radius * Math.cos(angle),
+                    y: centerY + radius * Math.sin(angle),
+                    width: 80,
+                    height: 50,
+                    text: answers[i],
+                    color: colors.targets[i]
+                };
+                gameState.targets.push(target);
+            }
+        }
+
+        // Draw functions
+        function drawPixelatedCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            
+            // Draw a pixelated circle by using small squares
+            for (let i = -radius; i <= radius; i += 3) {
+                for (let j = -radius; j <= radius; j += 3) {
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillRect(x + i, y + j, 3, 3);
+                    }
+                }
+            }
+        }
+        
+        function drawCannon() {
+            const cannonX = canvas.width / 2;
+            const cannonY = canvas.height - 80;
+            const cannonLength = 50;
+            
+            // Draw cannon base
+            drawPixelatedCircle(cannonX, cannonY, 20, colors.cannonBase);
+            
+            // Draw cannon barrel
+            ctx.save();
+            ctx.translate(cannonX, cannonY);
+            ctx.rotate(gameState.cannonAngle - Math.PI / 2);
+            
+            ctx.fillStyle = colors.cannon;
+            ctx.fillRect(-10, -5, cannonLength, 20);
+            
+            // Add pixelated details
+            ctx.fillStyle = colors.cannonBase;
+            for (let i = 0; i < cannonLength; i += 10) {
+                ctx.fillRect(-10 + i, -5, 5, 5);
+                ctx.fillRect(-10 + i, 10, 5, 5);
+            }
+            
+            ctx.restore();
+            
+            // Draw aim line if not firing
+            if (!gameState.isFiring && !gameState.gameOver) {
+                ctx.save();
+                ctx.translate(cannonX, cannonY);
+                ctx.rotate(gameState.cannonAngle - Math.PI / 2);
+                
+                ctx.strokeStyle = colors.aimLine;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(cannonLength, 0);
+                ctx.lineTo(cannonLength + 200, 0);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                ctx.restore();
+            }
+        }
+        
+        function drawProjectile() {
+            if (gameState.projectile) {
+                const p = gameState.projectile;
+                
+                // Draw trail (simple particle effect)
+                for (let i = 0; i < 5; i++) {
+                    const trailSize = 6 - i;
+                    const trailDist = i * 5;
+                    const trailX = p.x - trailDist * Math.cos(p.angle);
+                    const trailY = p.y - trailDist * Math.sin(p.angle);
+                    
+                    ctx.globalAlpha = 1 - (i / 5);
+                    drawPixelatedCircle(trailX, trailY, trailSize, colors.projectileTrail);
+                }
+                
+                ctx.globalAlpha = 1.0;
+                drawPixelatedCircle(p.x, p.y, 8, colors.projectile);
+            }
+        }
+        
+        function drawTargets() {
+            gameState.targets.forEach(target => {
+                // Draw target with pixelated edges
+                ctx.fillStyle = target.color;
+                
+                // Draw chunky pixelated border
+                for (let x = target.x - target.width/2 - 3; x <= target.x + target.width/2 + 3; x += 3) {
+                    for (let y = target.y - target.height/2 - 3; y <= target.y + target.height/2 + 3; y += 3) {
+                        // Only draw pixels at the border
+                        const isInside = 
+                            x > target.x - target.width/2 && 
+                            x < target.x + target.width/2 && 
+                            y > target.y - target.height/2 && 
+                            y < target.y + target.height/2;
+                        
+                        const isOutside = 
+                            x < target.x - target.width/2 - 3 || 
+                            x > target.x + target.width/2 + 3 || 
+                            y < target.y - target.height/2 - 3 || 
+                            y > target.y + target.height/2 + 3;
+                        
+                        if (!isInside && !isOutside) {
+                            ctx.fillRect(x, y, 3, 3);
+                        }
+                    }
+                }
+                
+                // Fill the inside with slightly darker color
+                const darkerColor = target.color.replace('FF', 'CC');
+                ctx.fillStyle = darkerColor;
+                ctx.fillRect(
+                    target.x - target.width/2 + 3, 
+                    target.y - target.height/2 + 3,
+                    target.width - 6,
+                    target.height - 6
+                );
+                
+                // Draw text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '18px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(target.text, target.x, target.y);
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.question;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, canvas.height - 20);
+        }
+        
+        function drawGameOver() {
+            if (gameState.gameOver) {
+                ctx.fillStyle = gameState.result === 'correct' ? 'rgba(0, 255, 0, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '36px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    gameState.result === 'correct' ? 'Correct!' : 'Incorrect!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 50
+                );
+                
+                // Draw restart button
+                const btn = gameState.restartButton;
+                ctx.fillStyle = '#555555';
+                ctx.fillRect(btn.x - btn.width/2, btn.y - btn.height/2, btn.width, btn.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '20px Arial';
+                ctx.fillText('Restart', btn.x, btn.y);
+            }
+        }
+        
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawTargets();
+            drawCannon();
+            drawProjectile();
+            drawQuestion();
+            drawGameOver();
+        }
+        
+        // Game logic
+        function fireProjectile() {
+            if (!gameState.isFiring && !gameState.gameOver) {
+                gameState.isFiring = true;
+                playFireSound();
+                
+                const cannonX = canvas.width / 2;
+                const cannonY = canvas.height - 80;
+                const cannonLength = 50;
+                
+                gameState.projectile = {
+                    x: cannonX + Math.cos(gameState.cannonAngle) * cannonLength,
+                    y: cannonY + Math.sin(gameState.cannonAngle) * cannonLength,
+                    angle: gameState.cannonAngle,
+                    speed: gameState.projectileSpeed
+                };
+            }
+        }
+        
+        function updateProjectile() {
+            if (gameState.projectile) {
+                const p = gameState.projectile;
+                
+                // Move projectile
+                p.x += Math.cos(p.angle) * p.speed;
+                p.y += Math.sin(p.angle) * p.speed;
+                
+                // Check if projectile is out of bounds
+                if (p.x < 0 || p.x > canvas.width || p.y < 0 || p.y > canvas.height) {
+                    gameState.projectile = null;
+                    gameState.isFiring = false;
+                    return;
+                }
+                
+                // Check collision with targets
+                for (let i = 0; i < gameState.targets.length; i++) {
+                    const target = gameState.targets[i];
+                    if (
+                        p.x > target.x - target.width/2 &&
+                        p.x < target.x + target.width/2 &&
+                        p.y > target.y - target.height/2 &&
+                        p.y < target.y + target.height/2
+                    ) {
+                        // Hit target
+                        if (i === correctAnswer) {
+                            gameState.result = 'correct';
+                            playHitSound(true);
+                        } else {
+                            gameState.result = 'incorrect';
+                            playHitSound(false);
+                        }
+                        
+                        gameState.gameOver = true;
+                        return;
+                    }
+                }
+            }
+        }
+        
+        function updateCannon() {
+            if (!gameState.gameOver) {
+                if (gameState.isRotatingLeft) {
+                    gameState.cannonAngle -= gameState.cannonRotationSpeed;
+                }
+                if (gameState.isRotatingRight) {
+                    gameState.cannonAngle += gameState.cannonRotationSpeed;
+                }
+                
+                // Limit cannon angle to upper half
+                gameState.cannonAngle = Math.max(0, Math.min(Math.PI, gameState.cannonAngle));
+            }
+        }
+        
+        function update() {
+            updateCannon();
+            updateProjectile();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') {
+                gameState.isRotatingLeft = true;
+            } else if (e.key === 'ArrowRight') {
+                gameState.isRotatingRight = true;
+            } else if (e.key === ' ' || e.key === 'Enter') {
+                fireProjectile();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft') {
+                gameState.isRotatingLeft = false;
+            } else if (e.key === 'ArrowRight') {
+                gameState.isRotatingRight = false;
+            }
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (gameState.gameOver) {
+                const btn = gameState.restartButton;
+                if (
+                    x > btn.x - btn.width/2 &&
+                    x < btn.x + btn.width/2 &&
+                    y > btn.y - btn.height/2 &&
+                    y < btn.y + btn.height/2
+                ) {
+                    initGame();
+                }
+            } else {
+                fireProjectile();
+            }
+        });
+        
+        // Touch controls for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            
+            if (gameState.gameOver) {
+                const btn = gameState.restartButton;
+                if (
+                    x > btn.x - btn.width/2 &&
+                    x < btn.x + btn.width/2 &&
+                    y > btn.y - btn.height/2 &&
+                    y < btn.y + btn.height/2
+                ) {
+                    initGame();
+                }
+            } else {
+                if (x < canvas.width / 2) {
+                    gameState.isRotatingLeft = true;
+                } else {
+                    gameState.isRotatingRight = true;
+                }
+            }
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            gameState.isRotatingLeft = false;
+            gameState.isRotatingRight = false;
+            
+            if (!gameState.gameOver) {
+                fireProjectile();
+            }
+        });
+
+        // Mobile check and resize
+        function checkMobile() {
+            if (window.innerWidth <= 600) {
+                canvas.width = 360;
+                canvas.height = 640;
+                gameState.restartButton.x = canvas.width / 2;
+                gameState.restartButton.y = canvas.height / 2 + 100;
+                initGame(); // Reinitialize game with new dimensions
+            }
+        }
+
+        window.addEventListener('resize', checkMobile);
+        
+        // Start the game
+        checkMobile();
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

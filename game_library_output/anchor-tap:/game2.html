@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Anchor Drop: True or False</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 10px;
+            padding: 5px 10px;
+            background: #333;
+            color: white;
+            border: 2px solid #555;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: '#0A2463',
+            water: '#247BA0',
+            waterWave: '#1B98E0',
+            ship: '#E8871E',
+            shipDark: '#D8751E',
+            anchor: '#E6E6E6',
+            anchorChain: '#BFBFBF',
+            true: '#3E8914',
+            false: '#D62828',
+            text: '#FFFFFF',
+            highlight: '#FBB13C'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let boatX = -60;
+        let boatSpeed = isMobile ? 2 : 3; // Slower on mobile
+        let anchorY = canvas.height / 2 - 80;
+        let anchorDropping = false;
+        let anchorX = canvas.width / 2;
+        let anchorCurrentY = anchorY;
+        let answer = null;
+        let answerCorrect = null;
+        
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const correct = true;
+        
+        // Zone definitions
+        const zoneWidth = canvas.width / 2 - 40;
+        const trueZone = {
+            x: 20,
+            y: canvas.height - 120,
+            width: zoneWidth,
+            height: 80
+        };
+        
+        const falseZone = {
+            x: canvas.width - zoneWidth - 20,
+            y: canvas.height - 120,
+            width: zoneWidth,
+            height: 80
+        };
+        
+        // Sound effects
+        function createBeepSound(freq, duration, volume = 0.2) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        }
+        
+        function playAnchorSound() {
+            createBeepSound(180, 0.2);
+        }
+        
+        function playCorrectSound() {
+            createBeepSound(440, 0.15);
+            setTimeout(() => createBeepSound(660, 0.2), 150);
+        }
+        
+        function playWrongSound() {
+            createBeepSound(220, 0.2);
+            setTimeout(() => createBeepSound(160, 0.3), 200);
+        }
+        
+        function playBoatSound() {
+            createBeepSound(110, 0.1, 0.05);
+        }
+        
+        // Draw functions
+        function drawWater() {
+            // Draw water
+            ctx.fillStyle = COLORS.water;
+            ctx.fillRect(0, canvas.height - 150, canvas.width, 150);
+            
+            // Draw pixelated waves
+            ctx.fillStyle = COLORS.waterWave;
+            const time = Date.now() / 500;
+            for (let x = 0; x < canvas.width; x += 12) {
+                const waveHeight = Math.sin(x / 20 + time) * 4;
+                ctx.fillRect(x, canvas.height - 150 + waveHeight, 8, 6);
+            }
+        }
+        
+        function drawBoat(x) {
+            // Draw boat body
+            ctx.fillStyle = COLORS.ship;
+            ctx.fillRect(x, canvas.height - 180, 60, 30);
+            
+            // Draw boat cabin
+            ctx.fillStyle = COLORS.shipDark;
+            ctx.fillRect(x + 10, canvas.height - 195, 25, 15);
+            
+            // Draw boat windows
+            ctx.fillStyle = COLORS.highlight;
+            ctx.fillRect(x + 15, canvas.height - 190, 5, 5);
+            ctx.fillRect(x + 25, canvas.height - 190, 5, 5);
+            
+            // Play boat movement sound occasionally
+            if (Math.random() < 0.01 && !gameOver) {
+                playBoatSound();
+            }
+        }
+        
+        function drawAnchor(x, y) {
+            // Draw anchor chain
+            ctx.strokeStyle = COLORS.anchorChain;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.setLineDash([4, 4]);
+            ctx.moveTo(anchorX, anchorY);
+            ctx.lineTo(x, y - 15);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw anchor
+            ctx.fillStyle = COLORS.anchor;
+            // Anchor top
+            ctx.fillRect(x - 4, y - 15, 8, 5);
+            // Anchor body
+            ctx.fillRect(x - 2, y - 10, 4, 20);
+            // Anchor arms
+            ctx.fillRect(x - 10, y, 20, 4);
+            // Anchor hooks
+            ctx.fillRect(x - 12, y + 4, 4, 4);
+            ctx.fillRect(x + 8, y + 4, 4, 4);
+        }
+        
+        function drawZones() {
+            // True zone
+            ctx.fillStyle = COLORS.true;
+            ctx.fillRect(trueZone.x, trueZone.y, trueZone.width, trueZone.height);
+            
+            // False zone
+            ctx.fillStyle = COLORS.false;
+            ctx.fillRect(falseZone.x, falseZone.y, falseZone.width, falseZone.height);
+            
+            // Zone text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 24 : 28}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText("TRUE", trueZone.x + trueZone.width / 2, trueZone.y + trueZone.height / 2 + 10);
+            ctx.fillText("FALSE", falseZone.x + falseZone.width / 2, falseZone.y + falseZone.height / 2 + 10);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            // Handle text wrapping for different screen sizes
+            const maxWidth = canvas.width - 40;
+            let words = question.split(' ');
+            let lines = [];
+            let currentLine = words[0];
+            
+            for (let i = 1; i < words.length; i++) {
+                let testLine = currentLine + ' ' + words[i];
+                let metrics = ctx.measureText(testLine);
+                
+                if (metrics.width > maxWidth) {
+                    lines.push(currentLine);
+                    currentLine = words[i];
+                } else {
+                    currentLine = testLine;
+                }
+            }
+            lines.push(currentLine);
+            
+            // Draw each line
+            let y = 40;
+            lines.forEach(line => {
+                ctx.fillText(line, canvas.width / 2, y);
+                y += 30;
+            });
+        }
+        
+        function drawInstructions() {
+            if (!anchorDropping && !gameOver) {
+                ctx.fillStyle = COLORS.highlight;
+                ctx.font = `${isMobile ? 14 : 16}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText("Click/Tap to drop the anchor on TRUE or FALSE", canvas.width / 2, canvas.height / 2 + 30);
+            }
+        }
+        
+        function drawResult() {
+            if (gameOver) {
+                ctx.fillStyle = answerCorrect ? COLORS.true : COLORS.false;
+                ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    answerCorrect ? "CORRECT!" : "WRONG!",
+                    canvas.width / 2,
+                    canvas.height / 2 - 30
+                );
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        function update() {
+            if (gameOver) return;
+            
+            // Move boat
+            boatX += boatSpeed;
+            if (boatX > canvas.width) {
+                boatX = -60;
+            }
+            
+            // Update anchor position if dropping
+            if (anchorDropping) {
+                anchorCurrentY += 8;
+                
+                // Check if anchor hit a zone
+                if (anchorCurrentY > canvas.height - 120) {
+                    // Determine which zone was hit
+                    if (anchorX < canvas.width / 2) {
+                        answer = true;
+                    } else {
+                        answer = false;
+                    }
+                    
+                    // Check if answer is correct
+                    answerCorrect = (answer === correct);
+                    
+                    // Play appropriate sound
+                    if (answerCorrect) {
+                        playCorrectSound();
+                    } else {
+                        playWrongSound();
+                    }
+                    
+                    gameOver = true;
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawQuestion();
+            drawWater();
+            drawZones();
+            drawBoat(boatX);
+            drawAnchor(anchorX, anchorCurrentY);
+            drawInstructions();
+            drawResult();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', function(event) {
+            if (gameOver) return;
+            
+            if (!anchorDropping) {
+                anchorDropping = true;
+                playAnchorSound();
+            }
+        });
+        
+        restartBtn.addEventListener('click', function() {
+            // Reset game state
+            gameOver = false;
+            boatX = -60;
+            anchorDropping = false;
+            anchorCurrentY = anchorY;
+            answer = null;
+            answerCorrect = null;
+            
+            // Hide restart button
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

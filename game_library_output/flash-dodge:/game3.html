@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Flash-Dodge Truth or False</title>
+  <style>
+    body { margin: 0; padding: 0; overflow: hidden; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    canvas { border: 4px solid #444; image-rendering: pixelated; }
+    #restart { position: absolute; padding: 10px; background: #333; color: #fff; border: 3px solid #555; cursor: pointer; display: none; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+  <script>
+    // Game setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    // Set canvas size based on device
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game colors - Limited 8-bit palette
+    const colors = {
+      bg: '#0f380f',       // Dark green background
+      player: '#8bac0f',   // Light green player
+      trueObj: '#9bbc0f',  // Pale green for TRUE
+      falseObj: '#306230', // Dark green for FALSE
+      text: '#0f380f',     // Dark green text
+      highlight: '#e0f8d0', // Light highlight
+      shadow: '#306230'    // Dark shadow
+    };
+    
+    // Game state
+    let player = {
+      x: canvas.width / 2,
+      y: canvas.height - 100,
+      width: 24,
+      height: 24,
+      speed: 5,
+      dx: 0,
+      dy: 0
+    };
+    
+    let gameOver = false;
+    let gameWon = false;
+    let flashObjects = [];
+    let keys = {};
+    
+    // Question
+    const question = "The Great Wall of China is visible from space.";
+    const answer = false; // Correct answer is FALSE
+    
+    // Audio context for simple beep sounds
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Generate simple beep sound
+    function beep(freq, duration, type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type || 'square';
+      oscillator.frequency.value = freq;
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      gainNode.gain.value = 0.1;
+      oscillator.start();
+      
+      setTimeout(() => {
+        oscillator.stop();
+      }, duration);
+    }
+    
+    // Generate flash objects
+    function generateFlashObjects() {
+      const numObjects = Math.floor(Math.random() * 3) + 3; // 3-5 objects
+      
+      for (let i = 0; i < numObjects; i++) {
+        let isTrue = Math.random() > 0.5;
+        flashObjects.push({
+          x: Math.random() * (canvas.width - 60),
+          y: Math.random() * (canvas.height / 2),
+          width: 80,
+          height: 40,
+          isTrue: isTrue,
+          visible: false,
+          flashTimer: Math.random() * 30,
+          flashRate: Math.random() * 20 + 20
+        });
+      }
+    }
+    
+    // Draw 8-bit style rectangle with shadow
+    function drawPixelRect(x, y, width, height, color) {
+      ctx.fillStyle = colors.shadow;
+      ctx.fillRect(x + 2, y + 2, width, height);
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, width, height);
+      
+      // Add pixelated highlight
+      ctx.fillStyle = colors.highlight;
+      ctx.fillRect(x, y, width - 2, 2);
+      ctx.fillRect(x, y, 2, height - 2);
+    }
+    
+    // Draw 8-bit style player
+    function drawPlayer() {
+      drawPixelRect(player.x, player.y, player.width, player.height, colors.player);
+      
+      // Draw simple face
+      ctx.fillStyle = '#000';
+      ctx.fillRect(player.x + 6, player.y + 8, 4, 4);
+      ctx.fillRect(player.x + 14, player.y + 8, 4, 4);
+      ctx.fillRect(player.x + 8, player.y + 16, 8, 2);
+    }
+    
+    // Draw flash objects
+    function drawFlashObjects() {
+      flashObjects.forEach(obj => {
+        obj.flashTimer--;
+        
+        if (obj.flashTimer <= 0) {
+          obj.visible = !obj.visible;
+          obj.flashTimer = obj.flashRate;
+          // Gradually increase difficulty by making flash rate faster
+          obj.flashRate = Math.max(10, obj.flashRate - 0.2);
+        }
+        
+        if (obj.visible) {
+          drawPixelRect(
+            obj.x, 
+            obj.y, 
+            obj.width, 
+            obj.height, 
+            obj.isTrue ? colors.trueObj : colors.falseObj
+          );
+          
+          // Draw text
+          ctx.fillStyle = '#000';
+          ctx.font = '16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            obj.isTrue ? 'TRUE' : 'FALSE', 
+            obj.x + obj.width / 2, 
+            obj.y + obj.height / 2 + 5
+          );
+        }
+      });
+    }
+    
+    // Draw game
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw question
+      ctx.fillStyle = '#fff';
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, 40);
+      
+      // Draw instruction
+      ctx.font = '16px sans-serif';
+      ctx.fillText('Navigate to the correct answer!', canvas.width / 2, 70);
+      
+      // Draw player
+      drawPlayer();
+      
+      // Draw flash objects
+      drawFlashObjects();
+      
+      // Draw game over text
+      if (gameOver) {
+        ctx.fillStyle = gameWon ? '#9bbc0f' : '#e76e55';
+        ctx.font = '24px sans-serif';
+        ctx.fillText(
+          gameWon ? 'Correct!' : 'Wrong!', 
+          canvas.width / 2, 
+          canvas.height / 2
+        );
+        
+        restartBtn.style.display = 'block';
+      }
+    }
+    
+    // Update game state
+    function update() {
+      if (gameOver) return;
+      
+      // Move player
+      if (keys.ArrowLeft || keys.a) player.dx = -player.speed;
+      else if (keys.ArrowRight || keys.d) player.dx = player.speed;
+      else player.dx = 0;
+      
+      if (keys.ArrowUp || keys.w) player.dy = -player.speed;
+      else if (keys.ArrowDown || keys.s) player.dy = player.speed;
+      else player.dy = 0;
+      
+      // Update player position
+      player.x += player.dx;
+      player.y += player.dy;
+      
+      // Keep player in bounds
+      player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+      player.y = Math.max(0, Math.min(canvas.height - player.height, player.y));
+      
+      // Check collision with flash objects
+      flashObjects.forEach(obj => {
+        if (
+          obj.visible &&
+          player.x < obj.x + obj.width &&
+          player.x + player.width > obj.x &&
+          player.y < obj.y + obj.height &&
+          player.y + player.height > obj.y
+        ) {
+          // Collision detected
+          gameOver = true;
+          gameWon = (obj.isTrue === answer);
+          
+          // Play sound
+          if (gameWon) {
+            beep(440, 100, 'square');
+            setTimeout(() => beep(880, 200, 'square'), 100);
+          } else {
+            beep(200, 300, 'sawtooth');
+          }
+        }
+      });
+    }
+    
+    // Game loop
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Event listeners
+    window.addEventListener('keydown', e => {
+      keys[e.key] = true;
+    });
+    
+    window.addEventListener('keyup', e => {
+      keys[e.key] = false;
+    });
+    
+    // Add touch controls for mobile
+    if (isMobile) {
+      let touchStartX = 0;
+      let touchStartY = 0;
+      
+      canvas.addEventListener('touchstart', e => {
+        e.preventDefault();
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+      });
+      
+      canvas.addEventListener('touchmove', e => {
+        e.preventDefault();
+        const touchX = e.touches[0].clientX;
+        const touchY = e.touches[0].clientY;
+        
+        // Calculate direction based on touch movement
+        const dx = touchX - touchStartX;
+        const dy = touchY - touchStartY;
+        
+        // Reset keys
+        keys.ArrowLeft = keys.ArrowRight = keys.ArrowUp = keys.ArrowDown = false;
+        
+        // Set movement based on dominant direction
+        if (Math.abs(dx) > Math.abs(dy)) {
+          keys.ArrowLeft = dx < -5;
+          keys.ArrowRight = dx > 5;
+        } else {
+          keys.ArrowUp = dy < -5;
+          keys.ArrowDown = dy > 5;
+        }
+        
+        touchStartX = touchX;
+        touchStartY = touchY;
+      });
+      
+      canvas.addEventListener('touchend', e => {
+        e.preventDefault();
+        keys.ArrowLeft = keys.ArrowRight = keys.ArrowUp = keys.ArrowDown = false;
+      });
+    }
+    
+    // Restart button
+    restartBtn.addEventListener('click', () => {
+      gameOver = false;
+      gameWon = false;
+      player.x = canvas.width / 2;
+      player.y = canvas.height - 100;
+      flashObjects = [];
+      generateFlashObjects();
+      restartBtn.style.display = 'none';
+    });
+    
+    // Start game
+    generateFlashObjects();
+    gameLoop();
+  </script>
+</body>
+</html>

@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Shape-Sorter</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            border: 4px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Color palette (16 colors)
+        const COLORS = {
+            background: '#000022',
+            text: '#FFFFFF',
+            question: '#AAFFFF',
+            correctOutline: '#44FF44',
+            incorrectFeedback: '#FF4444',
+            mars: '#DD3322',
+            marsDetail: '#AA2211',
+            jupiter: '#DDAA66',
+            jupiterDetail: '#BB8855',
+            earth: '#3366DD',
+            earthDetail: '#2244AA',
+            saturn: '#DDCC88',
+            saturnDetail: '#BBAA66',
+            button: '#6644FF',
+            buttonHover: '#8866FF'
+        };
+        
+        // Game state
+        let gameState = {
+            draggedShape: null,
+            shapes: [],
+            targetOutline: null,
+            gameOver: false,
+            result: null,
+            trailPositions: []
+        };
+        
+        // Sound effects using AudioContext
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(440, 0.1);
+            setTimeout(() => playSound(660, 0.1), 100);
+            setTimeout(() => playSound(880, 0.2), 200);
+        }
+        
+        function playIncorrectSound() {
+            playSound(220, 0.1);
+            setTimeout(() => playSound(180, 0.2), 100);
+        }
+        
+        function playDragSound() {
+            playSound(330, 0.05, 'sine');
+        }
+        
+        // Shape creation functions
+        function createMarsShape(x, y) {
+            return {
+                type: 'mars',
+                x: x,
+                y: y,
+                width: 80,
+                height: 80,
+                answer: 'Mars',
+                correct: true,
+                render() {
+                    // Mars circle (red planet)
+                    ctx.fillStyle = COLORS.mars;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    
+                    // Mars details (craters)
+                    ctx.fillStyle = COLORS.marsDetail;
+                    ctx.beginPath();
+                    ctx.arc(this.x - 15, this.y - 10, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(this.x + 20, this.y + 15, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Add label
+                    this.renderLabel();
+                },
+                renderLabel() {
+                    ctx.font = '16px Arial';
+                    ctx.fillStyle = COLORS.text;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.answer, this.x, this.y + this.height/2 + 20);
+                },
+                contains(mouseX, mouseY) {
+                    const distance = Math.sqrt((mouseX - this.x)**2 + (mouseY - this.y)**2);
+                    return distance <= this.width/2;
+                },
+                renderOutline(pulseAmount) {
+                    ctx.strokeStyle = COLORS.correctOutline;
+                    ctx.lineWidth = 3 + pulseAmount;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.width/2 + 5, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            };
+        }
+        
+        function createEarthShape(x, y) {
+            return {
+                type: 'earth',
+                x: x,
+                y: y,
+                width: 70,
+                height: 70,
+                answer: 'Earth',
+                correct: false,
+                render() {
+                    // Earth circle (blue planet)
+                    ctx.fillStyle = COLORS.earth;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    
+                    // Earth details (continents)
+                    ctx.fillStyle = COLORS.earthDetail;
+                    ctx.beginPath();
+                    ctx.ellipse(this.x - 10, this.y - 5, 20, 15, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(this.x + 15, this.y + 10, 10, 15, 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Add label
+                    this.renderLabel();
+                },
+                renderLabel() {
+                    ctx.font = '16px Arial';
+                    ctx.fillStyle = COLORS.text;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.answer, this.x, this.y + this.height/2 + 20);
+                },
+                contains(mouseX, mouseY) {
+                    const distance = Math.sqrt((mouseX - this.x)**2 + (mouseY - this.y)**2);
+                    return distance <= this.width/2;
+                }
+            };
+        }
+        
+        function createJupiterShape(x, y) {
+            return {
+                type: 'jupiter',
+                x: x,
+                y: y,
+                width: 90,
+                height: 90,
+                answer: 'Jupiter',
+                correct: false,
+                render() {
+                    // Jupiter circle (orange-ish planet)
+                    ctx.fillStyle = COLORS.jupiter;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    
+                    // Jupiter details (bands)
+                    ctx.fillStyle = COLORS.jupiterDetail;
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, this.y - 15, 40, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, this.y + 10, 40, 12, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Add label
+                    this.renderLabel();
+                },
+                renderLabel() {
+                    ctx.font = '16px Arial';
+                    ctx.fillStyle = COLORS.text;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.answer, this.x, this.y + this.height/2 + 20);
+                },
+                contains(mouseX, mouseY) {
+                    const distance = Math.sqrt((mouseX - this.x)**2 + (mouseY - this.y)**2);
+                    return distance <= this.width/2;
+                }
+            };
+        }
+        
+        function createSaturnShape(x, y) {
+            return {
+                type: 'saturn',
+                x: x,
+                y: y,
+                width: 85,
+                height: 85,
+                answer: 'Saturn',
+                correct: false,
+                render() {
+                    // Saturn circle (tan planet)
+                    ctx.fillStyle = COLORS.saturn;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    
+                    // Saturn rings
+                    ctx.strokeStyle = COLORS.saturnDetail;
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, this.y, this.width/2 + 25, 10, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Add label
+                    this.renderLabel();
+                },
+                renderLabel() {
+                    ctx.font = '16px Arial';
+                    ctx.fillStyle = COLORS.text;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.answer, this.x, this.y + this.height/2 + 30);
+                },
+                contains(mouseX, mouseY) {
+                    const distance = Math.sqrt((mouseX - this.x)**2 + (mouseY - this.y)**2);
+                    return distance <= this.width/2;
+                }
+            };
+        }
+        
+        function initializeGame() {
+            gameState = {
+                draggedShape: null,
+                shapes: [],
+                targetOutline: null,
+                gameOver: false,
+                result: null,
+                trailPositions: []
+            };
+            
+            // Determine positions based on canvas size
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Create target outline in the top part of the screen
+            gameState.targetOutline = createMarsShape(
+                centerX,
+                isMobile ? 150 : 150
+            );
+            
+            // Create shapes in the lower part of the screen
+            const shapesY = isMobile ? 450 : 400;
+            const spacingX = isMobile ? 80 : 150;
+            
+            gameState.shapes = [
+                createMarsShape(centerX - spacingX, shapesY),
+                createEarthShape(centerX - spacingX * 2, shapesY),
+                createJupiterShape(centerX + spacingX, shapesY),
+                createSaturnShape(centerX + spacingX * 2, shapesY)
+            ];
+            
+            // Shuffle shapes
+            for (let i = gameState.shapes.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [gameState.shapes[i], gameState.shapes[j]] = [gameState.shapes[j], gameState.shapes[i]];
+                
+                // Update positions after shuffle
+                gameState.shapes[i].x = centerX + (i - 1.5) * spacingX;
+            }
+        }
+        
+        function checkAnswer(shape) {
+            if (shape.correct) {
+                gameState.result = "correct";
+                playCorrectSound();
+            } else {
+                gameState.result = "incorrect";
+                playIncorrectSound();
+                
+                // Wiggle animation for wrong answer
+                let wiggleCount = 0;
+                const wiggleInterval = setInterval(() => {
+                    shape.x += (wiggleCount % 2 === 0) ? 5 : -5;
+                    wiggleCount++;
+                    if (wiggleCount > 5) {
+                        clearInterval(wiggleInterval);
+                    }
+                }, 50);
+            }
+            gameState.gameOver = true;
+        }
+        
+        // Event handlers
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            if (e.type.includes('touch')) {
+                return {
+                    x: (e.touches[0].clientX - rect.left) * scaleX,
+                    y: (e.touches[0].clientY - rect.top) * scaleY
+                };
+            }
+            
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+        
+        function handleStart(e) {
+            e.preventDefault();
+            const mousePos = getMousePos(e);
+            
+            if (gameState.gameOver) {
+                // Check if restart button is clicked
+                const buttonX = canvas.width / 2;
+                const buttonY = canvas.height - 70;
+                const buttonWidth = 150;
+                const buttonHeight = 50;
+                
+                if (
+                    mousePos.x >= buttonX - buttonWidth/2 &&
+                    mousePos.x <= buttonX + buttonWidth/2 &&
+                    mousePos.y >= buttonY - buttonHeight/2 &&
+                    mousePos.y <= buttonY + buttonHeight/2
+                ) {
+                    initializeGame();
+                    return;
+                }
+            }
+            
+            // Find if we're clicking on a shape
+            for (const shape of gameState.shapes) {
+                if (shape.contains(mousePos.x, mousePos.y)) {
+                    gameState.draggedShape = shape;
+                    gameState.trailPositions = [];
+                    playDragSound();
+                    break;
+                }
+            }
+        }
+        
+        function handleMove(e) {
+            e.preventDefault();
+            if (!gameState.draggedShape) return;
+            
+            const mousePos = getMousePos(e);
+            
+            // Add position to trail
+            gameState.trailPositions.push({
+                x: gameState.draggedShape.x,
+                y: gameState.draggedShape.y,
+                alpha: 1.0
+            });
+            
+            // Limit trail length
+            if (gameState.trailPositions.length > 5) {
+                gameState.trailPositions.shift();
+            }
+            
+            // Move the shape
+            gameState.draggedShape.x = mousePos.x;
+            gameState.draggedShape.y = mousePos.y;
+            
+            // Check proximity to target
+            const distance = Math.sqrt(
+                (gameState.draggedShape.x - gameState.targetOutline.x) ** 2 +
+                (gameState.draggedShape.y - gameState.targetOutline.y) ** 2
+            );
+            
+            // Snap to outline if close enough and is Mars
+            if (distance < 20 && gameState.draggedShape.type === 'mars') {
+                gameState.draggedShape.x = gameState.targetOutline.x;
+                gameState.draggedShape.y = gameState.targetOutline.y;
+            }
+        }
+        
+        function handleEnd(e) {
+            e.preventDefault();
+            if (!gameState.draggedShape) return;
+            
+            // Check if shape is placed on target
+            const distance = Math.sqrt(
+                (gameState.draggedShape.x - gameState.targetOutline.x) ** 2 +
+                (gameState.draggedShape.y - gameState.targetOutline.y) ** 2
+            );
+            
+            if (distance < 40) {
+                checkAnswer(gameState.draggedShape);
+            }
+            
+            gameState.draggedShape = null;
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchend', handleEnd);
+        
+        // Game loop
+        let lastTime = 0;
+        let pulseDirection = 1;
+        let pulseAmount = 0;
+        
+        function gameLoop(timestamp) {
+            // Calculate delta time
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw starry background
+            ctx.fillStyle = '#FFFFFF';
+            for (let i = 0; i < 100; i++) {
+                const x = Math.sin(i * 382.3) * canvas.width/2 + canvas.width/2;
+                const y = Math.cos(i * 472.1) * canvas.height/2 + canvas.height/2;
+                const size = (Math.sin(timestamp / 1000 + i) + 1) * 1.5;
+                ctx.fillRect(x, y, size, size);
+            }
+            
+            // Update pulse effect
+            pulseAmount += 0.1 * pulseDirection;
+            if (pulseAmount > 2 || pulseAmount < 0) {
+                pulseDirection *= -1;
+            }
+            
+            // Draw question
+            ctx.font = isMobile ? '20px Arial' : '24px Arial';
+            ctx.fillStyle = COLORS.question;
+            ctx.textAlign = 'center';
+            ctx.fillText("Which planet is known as the Red Planet?", canvas.width/2, 60);
+            
+            // Draw target outline with pulse effect
+            if (!gameState.gameOver) {
+                gameState.targetOutline.renderOutline(pulseAmount);
+            }
+            
+            // Draw shape trails
+            for (let i = 0; i < gameState.trailPositions.length; i++) {
+                const trail = gameState.trailPositions[i];
+                trail.alpha -= 0.03;
+                
+                if (trail.alpha > 0) {
+                    ctx.globalAlpha = trail.alpha;
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(trail.x - 3, trail.y - 3, 6, 6);
+                    ctx.globalAlpha = 1.0;
+                }
+            }
+            
+            // Draw all shapes except dragged one
+            for (const shape of gameState.shapes) {
+                if (shape !== gameState.draggedShape) {
+                    shape.render();
+                }
+            }
+            
+            // Draw dragged shape last (on top)
+            if (gameState.draggedShape) {
+                gameState.draggedShape.render();
+            }
+            
+            // Draw game over state
+            if (gameState.gameOver) {
+                // Draw result message
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                
+                if (gameState.result === "correct") {
+                    ctx.fillStyle = COLORS.correctOutline;
+                    ctx.fillText("Correct!", canvas.width/2, canvas.height/2 - 40);
+                } else {
+                    ctx.fillStyle = COLORS.incorrectFeedback;
+                    ctx.fillText("Incorrect!", canvas.width/2, canvas.height/2 - 40);
+                    ctx.font = '20px Arial';
+                    ctx.fillText("Mars is the Red Planet", canvas.width/2, canvas.height/2);
+                }
+                
+                // Draw restart button
+                const buttonX = canvas.width/2;
+                const buttonY = canvas.height - 70;
+                const buttonWidth = 150;
+                const buttonHeight = 50;
+                
+                ctx.fillStyle = COLORS.button;
+                ctx.fillRect(buttonX - buttonWidth/2, buttonY - buttonHeight/2, buttonWidth, buttonHeight);
+                
+                // Button border
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(buttonX - buttonWidth/2, buttonY - buttonHeight/2, buttonWidth, buttonHeight);
+                
+                // Button text
+                ctx.font = '20px Arial';
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillText("Restart", buttonX, buttonY + 7);
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Initialize and start the game
+        initializeGame();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

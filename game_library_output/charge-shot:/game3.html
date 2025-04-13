@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz: Charge Shot</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #222;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game constants
+        const COLORS = {
+            bg: '#222034',
+            text: '#f4f4f4',
+            textShadow: '#453e78',
+            chargeBarBg: '#332c57',
+            chargeBarLow: '#59c135',
+            chargeBarMed: '#d8a014',
+            chargeBarHigh: '#d04648',
+            playerBase: '#8b9bb4',
+            playerBody: '#5a6988',
+            projectile: '#76bed0',
+            correct: '#59c135',
+            incorrect: '#d04648',
+            targetBg: '#453e78', 
+            targetBorder: '#8b9bb4'
+        };
+        
+        // Game state
+        let gameState = {
+            charging: false,
+            chargePower: 0,
+            maxCharge: 100,
+            projectile: null,
+            targets: [
+                { text: 'Berlin', x: 350, y: 150, width: 160, height: 60, distance: 30, correct: false },
+                { text: 'Paris', x: 600, y: 300, width: 160, height: 60, distance: 70, correct: true },
+                { text: 'London', x: 180, y: 400, width: 160, height: 60, distance: 40, correct: false },
+                { text: 'Rome', x: 500, y: 480, width: 160, height: 60, distance: 55, correct: false }
+            ],
+            gameOver: false,
+            result: null,
+            shake: 0,
+            restartBtn: { x: 350, y: 520, width: 100, height: 40 }
+        };
+        
+        // Player position
+        const player = {
+            x: 80,
+            y: 300,
+            width: 40,
+            height: 60
+        };
+        
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playChargeSound(power) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = 220 + (power * 4);
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), 50);
+        }
+        
+        function playShootSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'triangle';
+            oscillator.frequency.value = 440;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playHitSound(correct) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = correct ? 660 : 220;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (correct) {
+                oscillator.frequency.setValueAtTime(660, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(1100, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else {
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(180, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            }
+        }
+        
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+        
+        function drawPlayer() {
+            // Draw player base
+            drawPixelRect(player.x - 10, player.y + 40, 60, 20, COLORS.playerBase);
+            // Draw player body
+            drawPixelRect(player.x, player.y, 40, 40, COLORS.playerBody);
+            // Draw cannon
+            const cannonLength = 20 + (gameState.chargePower / 10);
+            drawPixelRect(player.x + 40, player.y + 15, cannonLength, 10, COLORS.playerBody);
+        }
+        
+        function drawChargeBar() {
+            // Background
+            drawPixelRect(player.x - 10, player.y - 30, 60, 15, COLORS.chargeBarBg);
+            
+            // Fill based on charge
+            const fillWidth = (gameState.chargePower / gameState.maxCharge) * 56;
+            let barColor = COLORS.chargeBarLow;
+            
+            if (gameState.chargePower > gameState.maxCharge * 0.7) {
+                barColor = COLORS.chargeBarHigh;
+            } else if (gameState.chargePower > gameState.maxCharge * 0.4) {
+                barColor = COLORS.chargeBarMed;
+            }
+            
+            drawPixelRect(player.x - 8, player.y - 28, fillWidth, 11, barColor);
+        }
+        
+        function drawProjectile() {
+            if (gameState.projectile) {
+                drawPixelRect(
+                    gameState.projectile.x,
+                    gameState.projectile.y,
+                    12,
+                    8,
+                    COLORS.projectile
+                );
+            }
+        }
+        
+        function drawTargets() {
+            gameState.targets.forEach(target => {
+                // Draw target
+                drawPixelRect(target.x, target.y, target.width, target.height, COLORS.targetBg);
+                // Draw border
+                ctx.strokeStyle = COLORS.targetBorder;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(target.x, target.y, target.width, target.height);
+                
+                // Draw text
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(target.text, target.x + target.width / 2, target.y + target.height / 2);
+            });
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Draw text with shadow for retro effect
+            ctx.fillStyle = COLORS.textShadow;
+            ctx.fillText('What is the capital of France?', canvas.width / 2 + 2, 50 + 2);
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 50);
+        }
+        
+        function drawResults() {
+            if (gameState.result !== null) {
+                const resultText = gameState.result ? 'CORRECT!' : 'WRONG!';
+                const resultColor = gameState.result ? COLORS.correct : COLORS.incorrect;
+                
+                ctx.fillStyle = resultColor;
+                ctx.font = 'bold 40px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(resultText, canvas.width / 2, canvas.height / 2 - 50);
+                
+                // Draw restart button
+                drawPixelRect(gameState.restartBtn.x, gameState.restartBtn.y, 
+                              gameState.restartBtn.width, gameState.restartBtn.height, COLORS.playerBase);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '18px Arial';
+                ctx.fillText('Restart', gameState.restartBtn.x + gameState.restartBtn.width / 2, 
+                            gameState.restartBtn.y + gameState.restartBtn.height / 2);
+            }
+        }
+        
+        function drawInstructions() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Hold mouse to charge, release to shoot!', canvas.width / 2, canvas.height - 20);
+        }
+        
+        function drawGame() {
+            // Apply screen shake if active
+            ctx.save();
+            if (gameState.shake > 0) {
+                const shakeX = (Math.random() - 0.5) * gameState.shake;
+                const shakeY = (Math.random() - 0.5) * gameState.shake;
+                ctx.translate(shakeX, shakeY);
+                gameState.shake -= 0.5;
+            }
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawQuestion();
+            drawTargets();
+            drawPlayer();
+            
+            if (gameState.charging) {
+                drawChargeBar();
+            }
+            
+            drawProjectile();
+            drawResults();
+            
+            if (!gameState.gameOver) {
+                drawInstructions();
+            }
+            
+            ctx.restore();
+        }
+        
+        function updateProjectile() {
+            if (gameState.projectile) {
+                gameState.projectile.x += gameState.projectile.speedX;
+                gameState.projectile.y += gameState.projectile.speedY;
+                
+                // Check collisions with targets
+                gameState.targets.forEach(target => {
+                    if (
+                        gameState.projectile.x >= target.x &&
+                        gameState.projectile.x <= target.x + target.width &&
+                        gameState.projectile.y >= target.y &&
+                        gameState.projectile.y <= target.y + target.height
+                    ) {
+                        gameState.gameOver = true;
+                        gameState.result = target.correct;
+                        gameState.shake = target.correct ? 10 : 15;
+                        playHitSound(target.correct);
+                    }
+                });
+                
+                // Check if projectile is out of bounds
+                if (
+                    gameState.projectile.x > canvas.width ||
+                    gameState.projectile.y > canvas.height ||
+                    gameState.projectile.y < 0
+                ) {
+                    gameState.projectile = null;
+                }
+            }
+        }
+        
+        function updateCharge() {
+            if (gameState.charging && !gameState.gameOver) {
+                gameState.chargePower = Math.min(gameState.chargePower + 1.5, gameState.maxCharge);
+                
+                // Play charge sound every 10 power units
+                if (gameState.chargePower % 10 < 1.5) {
+                    playChargeSound(gameState.chargePower);
+                }
+            }
+        }
+        
+        function gameLoop() {
+            updateCharge();
+            updateProjectile();
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function fireProjectile() {
+            const targetAngle = Math.PI / 4; // 45 degrees upward
+            const power = gameState.chargePower / 20;
+            
+            gameState.projectile = {
+                x: player.x + 60,
+                y: player.y + 20,
+                speedX: Math.cos(targetAngle) * power,
+                speedY: -Math.sin(targetAngle) * power
+            };
+            
+            playShootSound();
+            gameState.charging = false;
+        }
+        
+        function handleMouseDown() {
+            if (!gameState.gameOver) {
+                gameState.charging = true;
+                gameState.chargePower = 0;
+            }
+        }
+        
+        function handleMouseUp(e) {
+            if (gameState.gameOver) {
+                // Check if restart button was clicked
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                if (
+                    mouseX >= gameState.restartBtn.x &&
+                    mouseX <= gameState.restartBtn.x + gameState.restartBtn.width &&
+                    mouseY >= gameState.restartBtn.y &&
+                    mouseY <= gameState.restartBtn.y + gameState.restartBtn.height
+                ) {
+                    // Restart game
+                    gameState = {
+                        charging: false,
+                        chargePower: 0,
+                        maxCharge: 100,
+                        projectile: null,
+                        targets: [
+                            { text: 'Berlin', x: 350, y: 150, width: 160, height: 60, distance: 30, correct: false },
+                            { text: 'Paris', x: 600, y: 300, width: 160, height: 60, distance: 70, correct: true },
+                            { text: 'London', x: 180, y: 400, width: 160, height: 60, distance: 40, correct: false },
+                            { text: 'Rome', x: 500, y: 480, width: 160, height: 60, distance: 55, correct: false }
+                        ],
+                        gameOver: false,
+                        result: null,
+                        shake: 0,
+                        restartBtn: { x: 350, y: 520, width: 100, height: 40 }
+                    };
+                }
+            } else if (gameState.charging) {
+                fireProjectile();
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('touchstart', handleMouseDown);
+        
+        canvas.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('touchend', handleMouseUp);
+        
+        // Start the game loop
+        gameLoop();
+        
+        // Handle mobile device scaling
+        function resizeCanvas() {
+            if (window.innerWidth <= 500) {
+                canvas.width = 360;
+                canvas.height = 640;
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+            }
+            
+            // Adjust player position for different canvas sizes
+            if (canvas.width === 360) {
+                player.x = 40;
+                gameState.restartBtn.x = 130;
+            } else {
+                player.x = 80;
+                gameState.restartBtn.x = 350;
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>

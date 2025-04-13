@@ -1,0 +1,106 @@
+I'll update the prompt by filling in the values from INFO_DICT and adding the instructions for the Code-Entry game mechanic.
+
+---
+
+**UPDATED PROMPT:**
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ What is the capital of France?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Code-Entry**  
+ Description of mechanic: 
+
+There should be only one correct answer if the question is MCQ or T/F.
+
+- Player must enter the correct code or sequence using a virtual keyboard or input interface
+- Include a visible text input area where entered characters appear
+- Provide a clear visual display of what the player has typed so far
+- Include visual feedback when a key is pressed (highlighting/animation)
+- Implement a "submit" or "enter" button to check the answer
+- Show success/failure animations when the code is submitted
+- Include backspace/delete functionality to correct mistakes
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The keyboard/input interface should have distinct pixel-art styled keys
+Keys should visibly "press down" when clicked, with a satisfying pixel animation
+The text input area should resemble an old terminal or console display
+Use blocky, chunky styling for all UI elements
+Include pixelated borders around the keyboard and input areas
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+Each keypress should produce a distinct feedback sound
+Implement a time pressure element to make typing exciting
+The submit button should have a distinct visual state when clickable
+Consider having the input field flash or pulse to draw attention
+Ensure the keyboard layout is intuitive and easy to use quickly
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

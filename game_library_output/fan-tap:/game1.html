@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fan-Tap Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        let gameOver = false;
+        let correct = null;
+        let fanOpening = 0;
+        let fanMaxOpen = Math.PI;
+        let fanOptions = [
+            { text: "TRUE", color: "#5CDB95", angle: -Math.PI/4, correct: false },
+            { text: "FALSE", color: "#FF6B6B", angle: Math.PI/4, correct: true }
+        ];
+        let question = "The Great Wall of China is visible from space.";
+        
+        // Color palette (limited to 16 colors for 8-bit feel)
+        const colors = {
+            background: "#0F2027",
+            questionBg: "#2C3E50",
+            textColor: "#E0E0E0",
+            buttonBg: "#4A5568",
+            buttonText: "#FFFFFF",
+            correct: "#48BB78",
+            incorrect: "#F56565",
+            fanHandleDark: "#8B4513",
+            fanHandleLight: "#CD853F"
+        };
+
+        // Audio context for sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Simple sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime);
+                }, 100);
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime);
+                }, 200);
+                
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                oscillator.stop(audioCtx.currentTime + 0.5);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(196.00, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    oscillator.frequency.setValueAtTime(146.83, audioCtx.currentTime);
+                }, 150);
+                
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+        
+        // Draw pixelated rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            
+            // Draw as a grid of "pixels" (5x5) for the 8-bit effect
+            const pixelSize = 4;
+            for (let py = 0; py < height; py += pixelSize) {
+                for (let px = 0; px < width; px += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x + px), 
+                        Math.floor(y + py), 
+                        pixelSize - 1, 
+                        pixelSize - 1
+                    );
+                }
+            }
+        }
+        
+        // Draw pixelated text
+        function drawPixelText(text, x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Add a slight shadow for 8-bit effect
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            ctx.shadowBlur = 0;
+            
+            ctx.fillText(text, x, y);
+            
+            // Reset shadow
+            ctx.shadowColor = 'transparent';
+        }
+        
+        // Draw the fan
+        function drawFan() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2 + 50;
+            const fanRadius = 180;
+            const handleLength = 40;
+            const handleWidth = 20;
+            
+            // Draw fan handle (pixelated)
+            drawPixelRect(
+                centerX - handleWidth/2, 
+                centerY, 
+                handleWidth, 
+                handleLength, 
+                colors.fanHandleDark
+            );
+            
+            // Draw handle details
+            drawPixelRect(
+                centerX - handleWidth/2 + 4, 
+                centerY + 4, 
+                handleWidth - 8, 
+                handleLength - 8, 
+                colors.fanHandleLight
+            );
+            
+            // Draw fan base (circle segment at bottom)
+            ctx.fillStyle = "#444";
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 30, 0, Math.PI, false);
+            ctx.fill();
+            
+            // Calculate the opening angle based on animation
+            const openingAngle = fanMaxOpen * (fanOpening / 100);
+            
+            // Draw fan options
+            for (let i = 0; i < fanOptions.length; i++) {
+                const option = fanOptions[i];
+                const angle = option.angle * (openingAngle / fanMaxOpen);
+                
+                // Skip if not visible yet
+                if (fanOpening < 50 && i > 0) continue;
+                
+                const optionX = centerX + Math.cos(angle) * fanRadius;
+                const optionY = centerY + Math.sin(angle) * fanRadius;
+                
+                // Fan segment
+                ctx.fillStyle = option.color;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.arc(centerX, centerY, fanRadius, 
+                        angle - Math.PI/8, angle + Math.PI/8, false);
+                ctx.lineTo(centerX, centerY);
+                ctx.fill();
+                
+                // Option text
+                const textX = centerX + Math.cos(angle) * (fanRadius * 0.7);
+                const textY = centerY + Math.sin(angle) * (fanRadius * 0.7);
+                drawPixelText(option.text, textX, textY, 28, "#000");
+            }
+        }
+
+        // Draw question box
+        function drawQuestion() {
+            const boxWidth = canvas.width - 80;
+            const boxHeight = 100;
+            const boxX = (canvas.width - boxWidth) / 2;
+            const boxY = 80;
+            
+            // Draw question box background
+            drawPixelRect(boxX, boxY, boxWidth, boxHeight, colors.questionBg);
+            
+            // Draw border for question box
+            ctx.strokeStyle = colors.textColor;
+            ctx.lineWidth = 4;
+            ctx.setLineDash([8, 4]); // Pixelated border
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+            ctx.setLineDash([]); // Reset line style
+            
+            // Draw question text
+            drawPixelText(question, canvas.width / 2, boxY + boxHeight / 2, 24, colors.textColor);
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            const buttonX = (canvas.width - buttonWidth) / 2;
+            const buttonY = canvas.height - 100;
+            
+            drawPixelRect(buttonX, buttonY, buttonWidth, buttonHeight, colors.buttonBg);
+            drawPixelText("RESTART", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2, 18, colors.buttonText);
+            
+            // Store button position for click detection
+            return { x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight };
+        }
+        
+        // Draw result message
+        function drawResult() {
+            let message = correct ? "CORRECT!" : "WRONG!";
+            let color = correct ? colors.correct : colors.incorrect;
+            drawPixelText(message, canvas.width / 2, canvas.height / 2 - 60, 32, color);
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawQuestion();
+            
+            // Update fan animation
+            if (fanOpening < 100 && !gameOver) {
+                fanOpening += 2; // Speed of fan opening
+            }
+            
+            // Draw fan
+            drawFan();
+            
+            // If game over, show result and restart button
+            if (gameOver) {
+                drawResult();
+                restartBtnPos = drawRestartButton();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks/taps
+        function handleClick(e) {
+            if (gameOver) {
+                // Check if restart button was clicked
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+                
+                if (clickX >= restartBtnPos.x && clickX <= restartBtnPos.x + restartBtnPos.width &&
+                    clickY >= restartBtnPos.y && clickY <= restartBtnPos.y + restartBtnPos.height) {
+                    // Restart game
+                    gameOver = false;
+                    correct = null;
+                    fanOpening = 0;
+                    playSound('select');
+                }
+                return;
+            }
+            
+            // Only process clicks when fan is fully open
+            if (fanOpening < 100) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2 + 50;
+            
+            // Calculate angle of click from center
+            const dx = clickX - centerX;
+            const dy = clickY - centerY;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            
+            // Only register clicks on the fan
+            if (distance < 180 && distance > 30) {
+                const angle = Math.atan2(dy, dx);
+                
+                // Check which option was clicked
+                for (const option of fanOptions) {
+                    const optionAngleMin = option.angle - Math.PI/8;
+                    const optionAngleMax = option.angle + Math.PI/8;
+                    
+                    if (angle >= optionAngleMin && angle <= optionAngleMax) {
+                        gameOver = true;
+                        correct = option.correct;
+                        
+                        // Play sound
+                        if (option.correct) {
+                            playSound('correct');
+                        } else {
+                            playSound('incorrect');
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Initialize game
+        let restartBtnPos = { x: 0, y: 0, width: 0, height: 0 };
+        canvas.addEventListener('click', handleClick);
+        gameLoop();
+        
+        // Handle mobile optimization
+        function resizeCanvas() {
+            const isMobile = window.innerWidth <= 800;
+            if (isMobile) {
+                canvas.width = 360;
+                canvas.height = 640;
+            } else {
+                canvas.width = 800;
+                canvas.height = 600;
+            }
+        }
+        
+        // Check for resize
+        window.addEventListener('resize', resizeCanvas);
+        // Initial sizing
+        resizeCanvas();
+    </script>
+</body>
+</html>

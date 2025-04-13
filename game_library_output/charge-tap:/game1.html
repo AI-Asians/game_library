@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz - Charge-Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size for web
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Adjust for mobile if needed
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+
+        // Game state
+        let gameState = {
+            charging: false,
+            chargeLevel: 0,
+            maxCharge: 100,
+            chargeSpeed: 1.5,
+            dischargingSpeed: 2,
+            gameOver: false,
+            correct: null,
+            restartButton: {
+                x: canvas.width / 2 - 75,
+                y: canvas.height / 2 + 80,
+                width: 150,
+                height: 50
+            }
+        };
+
+        // Answer options with charge ranges
+        const answers = [
+            { text: "Berlin", min: 0, max: 25, correct: false },
+            { text: "London", min: 25, max: 50, correct: false },
+            { text: "Paris", min: 50, max: 75, correct: true },
+            { text: "Rome", min: 75, max: 100, correct: false }
+        ];
+
+        // Color palette (16 colors)
+        const colors = {
+            background: "#0f380f",
+            question: "#8bac0f",
+            meter: "#306230",
+            meterFill: "#9bbc0f",
+            meterHigh: "#e6f8da",
+            text: "#e6f8da",
+            correct: "#8bac0f",
+            incorrect: "#ac3232",
+            buttonBg: "#306230",
+            buttonText: "#e6f8da",
+            buttonShadow: "#0f380f",
+            markers: "#e6f8da"
+        };
+
+        // Sound effects generator
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq, duration, type = 'square') {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            
+            gainNode.connect(audioContext.destination);
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+
+        function chargingSound() {
+            playSound(100 + gameState.chargeLevel * 3, 0.1);
+        }
+
+        function correctSound() {
+            playSound(330, 0.1);
+            setTimeout(() => playSound(392, 0.1), 100);
+            setTimeout(() => playSound(523, 0.2), 200);
+        }
+
+        function incorrectSound() {
+            playSound(220, 0.2);
+            setTimeout(() => playSound(196, 0.3), 200);
+        }
+
+        // Draw functions
+        function drawQuestion() {
+            ctx.fillStyle = colors.question;
+            ctx.textAlign = "center";
+            ctx.font = "24px Arial";
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 100);
+        }
+
+        function drawChargeMeter() {
+            // Draw meter background
+            ctx.fillStyle = colors.meter;
+            const meterWidth = canvas.width * 0.8;
+            const meterHeight = 40;
+            const meterX = (canvas.width - meterWidth) / 2;
+            const meterY = canvas.height / 2 - 20;
+            
+            ctx.fillRect(meterX, meterY, meterWidth, meterHeight);
+
+            // Draw charge level
+            let fillWidth = (gameState.chargeLevel / gameState.maxCharge) * meterWidth;
+            
+            // Pixelated fill
+            const blockSize = 8;
+            const blocks = Math.floor(fillWidth / blockSize);
+            
+            // Choose fill color based on charge level
+            if (gameState.chargeLevel < 50) {
+                ctx.fillStyle = colors.meterFill;
+            } else {
+                ctx.fillStyle = colors.meterHigh;
+            }
+            
+            for (let i = 0; i < blocks; i++) {
+                ctx.fillRect(
+                    meterX + (i * blockSize), 
+                    meterY + 4, 
+                    blockSize - 2, 
+                    meterHeight - 8
+                );
+            }
+
+            // Draw answer markers
+            ctx.fillStyle = colors.markers;
+            answers.forEach(answer => {
+                const markerX = meterX + (answer.min / 100) * meterWidth;
+                const markerWidth = ((answer.max - answer.min) / 100) * meterWidth;
+                
+                // Draw marker line
+                ctx.fillRect(markerX, meterY - 10, 2, 10);
+                ctx.fillRect(markerX + markerWidth, meterY - 10, 2, 10);
+                
+                // Draw label
+                ctx.font = "16px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(answer.text, markerX + markerWidth/2, meterY - 20);
+            });
+
+            // Power particles if charge is high
+            if (gameState.chargeLevel > 70) {
+                for (let i = 0; i < 5; i++) {
+                    let particleX = meterX + fillWidth + (Math.random() * 10 - 5);
+                    let particleY = meterY + (Math.random() * meterHeight);
+                    let size = Math.floor(Math.random() * 4) + 2;
+                    ctx.fillRect(particleX, particleY, size, size);
+                }
+            }
+        }
+
+        function drawInstructions() {
+            ctx.fillStyle = colors.text;
+            ctx.font = "18px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("HOLD to charge, RELEASE to answer", canvas.width / 2, canvas.height - 50);
+        }
+
+        function checkAnswer() {
+            for (let answer of answers) {
+                if (gameState.chargeLevel >= answer.min && gameState.chargeLevel <= answer.max) {
+                    gameState.gameOver = true;
+                    gameState.correct = answer.correct;
+                    
+                    if (answer.correct) {
+                        correctSound();
+                    } else {
+                        incorrectSound();
+                    }
+                    return;
+                }
+            }
+        }
+
+        function drawResult() {
+            ctx.font = "32px Arial";
+            ctx.textAlign = "center";
+            
+            if (gameState.correct) {
+                ctx.fillStyle = colors.correct;
+                ctx.fillText("CORRECT!", canvas.width / 2, canvas.height / 2 + 40);
+            } else {
+                ctx.fillStyle = colors.incorrect;
+                ctx.fillText("INCORRECT!", canvas.width / 2, canvas.height / 2 + 40);
+            }
+            
+            // Draw restart button
+            ctx.fillStyle = colors.buttonBg;
+            ctx.fillRect(
+                gameState.restartButton.x, 
+                gameState.restartButton.y, 
+                gameState.restartButton.width, 
+                gameState.restartButton.height
+            );
+            
+            // Button shadow
+            ctx.fillStyle = colors.buttonShadow;
+            ctx.fillRect(
+                gameState.restartButton.x + 4, 
+                gameState.restartButton.y + 4, 
+                gameState.restartButton.width, 
+                gameState.restartButton.height
+            );
+            
+            // Button text
+            ctx.fillStyle = colors.buttonText;
+            ctx.font = "24px Arial";
+            ctx.fillText("RESTART", canvas.width / 2, gameState.restartButton.y + 35);
+        }
+
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawQuestion();
+            drawChargeMeter();
+            
+            if (!gameState.gameOver) {
+                drawInstructions();
+                
+                // Update charge level
+                if (gameState.charging) {
+                    gameState.chargeLevel += gameState.chargeSpeed;
+                    
+                    // Add wobble effect
+                    gameState.chargeLevel += Math.sin(Date.now() / 100) * 0.4;
+                    
+                    // Play charging sound every 10 levels
+                    if (Math.floor(gameState.chargeLevel) % 10 === 0) {
+                        chargingSound();
+                    }
+                    
+                    // Reset if overcharged
+                    if (gameState.chargeLevel >= gameState.maxCharge) {
+                        gameState.chargeLevel = 0;
+                    }
+                } else {
+                    // Discharge when not holding
+                    gameState.chargeLevel -= gameState.dischargingSpeed;
+                    if (gameState.chargeLevel <= 0) {
+                        gameState.chargeLevel = 0;
+                    }
+                }
+            } else {
+                drawResult();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousedown', function(e) {
+            if (gameState.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                // Check if restart button was clicked
+                if (
+                    x >= gameState.restartButton.x && 
+                    x <= gameState.restartButton.x + gameState.restartButton.width &&
+                    y >= gameState.restartButton.y && 
+                    y <= gameState.restartButton.y + gameState.restartButton.height
+                ) {
+                    // Reset game
+                    gameState = {
+                        charging: false,
+                        chargeLevel: 0,
+                        maxCharge: 100,
+                        chargeSpeed: 1.5,
+                        dischargingSpeed: 2,
+                        gameOver: false,
+                        correct: null,
+                        restartButton: gameState.restartButton
+                    };
+                }
+            } else {
+                gameState.charging = true;
+            }
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            if (!gameState.gameOver && gameState.charging) {
+                gameState.charging = false;
+                checkAnswer();
+            }
+        });
+
+        // Touch event support
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            if (gameState.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+                const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+                
+                if (
+                    x >= gameState.restartButton.x && 
+                    x <= gameState.restartButton.x + gameState.restartButton.width &&
+                    y >= gameState.restartButton.y && 
+                    y <= gameState.restartButton.y + gameState.restartButton.height
+                ) {
+                    gameState = {
+                        charging: false,
+                        chargeLevel: 0,
+                        maxCharge: 100,
+                        chargeSpeed: 1.5,
+                        dischargingSpeed: 2,
+                        gameOver: false,
+                        correct: null,
+                        restartButton: gameState.restartButton
+                    };
+                }
+            } else {
+                gameState.charging = true;
+            }
+        });
+
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            if (!gameState.gameOver && gameState.charging) {
+                gameState.charging = false;
+                checkAnswer();
+            }
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

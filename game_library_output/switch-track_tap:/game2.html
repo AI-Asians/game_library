@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Switch-Track Tap Mini Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      image-rendering: pixelated;
+      background-color: #5a3921;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    #restart {
+      position: absolute;
+      bottom: 20px;
+      padding: 8px 16px;
+      background-color: #444;
+      color: white;
+      border: 3px solid #777;
+      font-family: sans-serif;
+      font-size: 16px;
+      cursor: pointer;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <button id="restart">Restart</button>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const restartBtn = document.getElementById('restart');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth <= 480;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Colors - limited 8-bit palette
+    const COLORS = {
+      sky: '#87CEEB',
+      grass: '#538D22',
+      track: '#8B4513',
+      ties: '#3A2618',
+      train: '#D22B2B',
+      smoke: '#CCCCCC',
+      text: '#FFFFFF',
+      correctTrack: '#538D22',
+      wrongTrack: '#952323',
+      lever: '#FFD700',
+      leverBase: '#444444'
+    };
+    
+    // Game variables
+    let gameState = 'playing'; // playing, correct, incorrect
+    let trainPosition = 0;
+    let trainSpeed = 2;
+    const trainSize = { width: 50, height: 30 };
+    
+    // Track setup
+    const mainTrackY = canvas.height - 120;
+    let activeTrack = 0; // 0 = top, 1 = middle, 2 = bottom
+    const trackOptions = [
+      { text: 'Mars', correct: true, y: mainTrackY - 150 },
+      { text: 'Venus', correct: false, y: mainTrackY },
+      { text: 'Jupiter', correct: false, y: mainTrackY + 150 }
+    ];
+    
+    const switchPositions = [
+      { x: canvas.width * 0.4, fromY: mainTrackY, toY: trackOptions[0].y },
+      { x: canvas.width * 0.4, fromY: mainTrackY, toY: trackOptions[2].y }
+    ];
+    
+    // Smoke particles
+    const smokeParticles = [];
+    
+    // Audio context for sound effects
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Sound effects
+    function playSound(type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      switch(type) {
+        case 'switch':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(600, audioCtx.currentTime + 0.1);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.3);
+          break;
+        case 'correct':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+          oscillator.frequency.setValueAtTime(392, audioCtx.currentTime + 0.1);
+          oscillator.frequency.setValueAtTime(523, audioCtx.currentTime + 0.2);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.4);
+          break;
+        case 'incorrect':
+          oscillator.type = 'sawtooth';
+          oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+          oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.2);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.4);
+          break;
+        case 'train':
+          oscillator.type = 'triangle';
+          oscillator.frequency.setValueAtTime(110, audioCtx.currentTime);
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.1);
+          break;
+      }
+    }
+    
+    // Draw the background
+    function drawBackground() {
+      // Sky
+      ctx.fillStyle = COLORS.sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height - 80);
+      
+      // Ground
+      ctx.fillStyle = COLORS.grass;
+      ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+      
+      // Question text
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Which planet is known as the Red Planet?', canvas.width / 2, 40);
+    }
+    
+    // Draw tracks
+    function drawTracks() {
+      // Draw all three horizontal tracks
+      trackOptions.forEach(track => {
+        drawHorizontalTrack(0, track.y, canvas.width);
+      });
+      
+      // Draw the switch tracks
+      if (activeTrack === 0) {
+        drawSwitchTrack(switchPositions[0].x, mainTrackY, trackOptions[0].y);
+      } else if (activeTrack === 2) {
+        drawSwitchTrack(switchPositions[1].x, mainTrackY, trackOptions[2].y);
+      }
+      
+      // Draw the switches
+      drawSwitch(switchPositions[0].x, mainTrackY, trackOptions[0].y, activeTrack === 0);
+      drawSwitch(switchPositions[1].x, mainTrackY, trackOptions[2].y, activeTrack === 2);
+    }
+    
+    function drawHorizontalTrack(x, y, length) {
+      // Track ties
+      for (let i = 0; i < length; i += 20) {
+        ctx.fillStyle = COLORS.ties;
+        ctx.fillRect(i, y - 5, 15, 10);
+      }
+      
+      // Track rails
+      ctx.fillStyle = COLORS.track;
+      ctx.fillRect(0, y - 3, length, 2);
+      ctx.fillRect(0, y + 1, length, 2);
+    }
+    
+    function drawSwitchTrack(x, fromY, toY) {
+      // Calculate the slope and distance
+      const distance = Math.abs(toY - fromY);
+      const direction = toY < fromY ? -1 : 1;
+      
+      // Draw angled track with ties
+      for (let i = 0; i < distance; i += 10) {
+        const currentX = x + (i * 0.5);
+        const currentY = fromY + (i * direction);
+        
+        // Track tie
+        ctx.fillStyle = COLORS.ties;
+        ctx.fillRect(currentX - 5, currentY - 5, 15, 10);
+      }
+      
+      // Draw the rails as lines
+      ctx.strokeStyle = COLORS.track;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, fromY - 3);
+      ctx.lineTo(x + (distance * 0.5), toY - 3);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(x, fromY + 1);
+      ctx.lineTo(x + (distance * 0.5), toY + 1);
+      ctx.stroke();
+    }
+    
+    function drawSwitch(x, fromY, toY, isActive) {
+      // Draw switch base
+      ctx.fillStyle = COLORS.leverBase;
+      ctx.fillRect(x - 5, fromY + 5, 10, 15);
+      
+      // Draw lever
+      ctx.fillStyle = COLORS.lever;
+      
+      if (isActive) {
+        // Lever pointing to branch track
+        const angle = toY < fromY ? -Math.PI/4 : Math.PI/4;
+        ctx.save();
+        ctx.translate(x, fromY + 10);
+        ctx.rotate(angle);
+        ctx.fillRect(0, -3, 15, 6);
+        ctx.restore();
+      } else {
+        // Lever pointing straight
+        ctx.fillRect(x, fromY + 7, 15, 6);
+      }
+    }
+    
+    // Draw the train
+    function drawTrain(x, y) {
+      // Main body
+      ctx.fillStyle = COLORS.train;
+      ctx.fillRect(x, y - 20, trainSize.width, trainSize.height);
+      
+      // Cabin
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(x + 35, y - 30, 15, 15);
+      
+      // Wheels
+      ctx.fillStyle = '#111111';
+      ctx.fillRect(x + 10, y + 10, 10, 10);
+      ctx.fillRect(x + 30, y + 10, 10, 10);
+      
+      // Chimney
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(x + 40, y - 35, 8, 15);
+      
+      // Add smoke
+      if (Math.random() > 0.7) {
+        smokeParticles.push({
+          x: x + 44,
+          y: y - 35,
+          size: 5 + Math.random() * 5,
+          speed: 0.5 + Math.random(),
+          life: 30
+        });
+      }
+      
+      // Answer text on train
+      const currentTrack = trackOptions[activeTrack];
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(currentTrack.text, x + trainSize.width / 2, y - 5);
+    }
+    
+    // Draw smoke particles
+    function drawSmoke() {
+      for (let i = 0; i < smokeParticles.length; i++) {
+        const particle = smokeParticles[i];
+        
+        ctx.fillStyle = `rgba(204, 204, 204, ${particle.life / 30})`;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Update particle
+        particle.x += (Math.random() - 0.5);
+        particle.y -= particle.speed;
+        particle.life--;
+        
+        // Remove dead particles
+        if (particle.life <= 0) {
+          smokeParticles.splice(i, 1);
+          i--;
+        }
+      }
+    }
+    
+    // Game logic
+    function updateGame() {
+      if (gameState === 'playing') {
+        // Move train
+        trainPosition += trainSpeed;
+        
+        // Play train sound at intervals
+        if (trainPosition % 30 === 0) {
+          playSound('train');
+        }
+        
+        // Check if train has reached the end
+        if (trainPosition > canvas.width) {
+          const currentTrack = trackOptions[activeTrack];
+          if (currentTrack.correct) {
+            gameState = 'correct';
+            playSound('correct');
+          } else {
+            gameState = 'incorrect';
+            playSound('incorrect');
+          }
+          
+          restartBtn.style.display = 'block';
+        }
+        
+        // Update smoke particles
+        for (let i = smokeParticles.length - 1; i >= 0; i--) {
+          smokeParticles[i].life--;
+          smokeParticles[i].y -= smokeParticles[i].speed;
+          if (smokeParticles[i].life <= 0) {
+            smokeParticles.splice(i, 1);
+          }
+        }
+      }
+    }
+    
+    // Main draw function
+    function draw() {
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      drawBackground();
+      drawTracks();
+      
+      // Draw train based on current state
+      const currentTrackY = trackOptions[activeTrack].y;
+      
+      // Calculate train y position based on track switches
+      let trainY = currentTrackY;
+      
+      // Draw the train
+      drawTrain(trainPosition, trainY);
+      
+      // Draw smoke
+      drawSmoke();
+      
+      // Draw game over message if needed
+      if (gameState !== 'playing') {
+        ctx.fillStyle = gameState === 'correct' ? 'rgba(0, 255, 0, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = COLORS.text;
+        ctx.font = '30px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          gameState === 'correct' ? 'Correct!' : 'Incorrect!', 
+          canvas.width / 2, 
+          canvas.height / 2
+        );
+      }
+    }
+    
+    // Game loop
+    function gameLoop() {
+      updateGame();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Handle clicks on track switches
+    canvas.addEventListener('click', (e) => {
+      if (gameState !== 'playing') return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      // Check if click was on a switch
+      switchPositions.forEach((switchPos, index) => {
+        const switchRadius = 20;
+        const dx = clickX - switchPos.x;
+        const dy = clickY - switchPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < switchRadius) {
+          playSound('switch');
+          
+          // Toggle appropriate track
+          if (index === 0) {
+            activeTrack = activeTrack === 0 ? 1 : 0;  // Toggle between top and middle
+          } else {
+            activeTrack = activeTrack === 2 ? 1 : 2;  // Toggle between bottom and middle
+          }
+        }
+      });
+    });
+    
+    // Restart button
+    restartBtn.addEventListener('click', () => {
+      gameState = 'playing';
+      trainPosition = 0;
+      activeTrack = 1; // Middle track
+      smokeParticles.length = 0;
+      restartBtn.style.display = 'none';
+    });
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

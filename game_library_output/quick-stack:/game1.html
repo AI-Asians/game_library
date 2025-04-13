@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz - Quick Stack</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background: #444;
+            color: white;
+            border: 4px solid #666;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game variables
+        const COLORS = ['#FF6B6B', '#4ECDC4', '#FFD166', '#06D6A0', '#118AB2'];
+        const BLOCK_WIDTH = isMobile ? 340 : 180;
+        const BLOCK_HEIGHT = 60;
+        const BLOCK_FALL_SPEED = isMobile ? 3 : 4;
+        const MAX_STACK_HEIGHT = canvas.height - 200;
+        const QUESTION = "What is the capital of France?";
+        const OPTIONS = ["Paris", "London", "Berlin", "Madrid"];
+        const CORRECT_ANSWER = "Paris";
+        const restartBtn = document.getElementById('restartBtn');
+
+        let gameOver = false;
+        let success = false;
+        let blocks = [];
+        let stackHeight = 0;
+        let timeElapsed = 0;
+
+        // Sound effects (simple beep sounds)
+        function playSound(freq, duration, type = 'square') {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = freq;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                oscillator.start();
+                
+                setTimeout(() => {
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                    setTimeout(() => oscillator.stop(), 100);
+                }, duration);
+            } catch (e) {
+                console.log("Audio error: ", e);
+            }
+        }
+
+        // Create initial falling blocks with answer options
+        function initGame() {
+            blocks = [];
+            stackHeight = 0;
+            gameOver = false;
+            success = false;
+            timeElapsed = 0;
+            restartBtn.style.display = 'none';
+            
+            // Shuffle options
+            const shuffledOptions = [...OPTIONS].sort(() => Math.random() - 0.5);
+            
+            // Create blocks with options
+            shuffledOptions.forEach((option, index) => {
+                blocks.push({
+                    x: Math.random() * (canvas.width - BLOCK_WIDTH),
+                    y: -BLOCK_HEIGHT - (index * (BLOCK_HEIGHT + 40)),
+                    width: BLOCK_WIDTH,
+                    height: BLOCK_HEIGHT,
+                    color: COLORS[index % COLORS.length],
+                    option: option,
+                    isCorrect: option === CORRECT_ANSWER,
+                    stacked: false,
+                });
+            });
+        }
+
+        // Draw a pixelated block
+        function drawPixelatedBlock(x, y, width, height, color, text) {
+            // Draw block body with pixelated edge
+            const pixelSize = 4;
+            
+            // Main block
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Pixelated highlight
+            ctx.fillStyle = lightenColor(color, 50);
+            for (let px = 0; px < width; px += pixelSize) {
+                ctx.fillRect(x + px, y, pixelSize, pixelSize);
+            }
+            for (let py = 0; py < height; py += pixelSize) {
+                ctx.fillRect(x, y + py, pixelSize, pixelSize);
+            }
+            
+            // Pixelated shadow
+            ctx.fillStyle = darkenColor(color, 50);
+            for (let px = 0; px < width; px += pixelSize) {
+                ctx.fillRect(x + px, y + height - pixelSize, pixelSize, pixelSize);
+            }
+            for (let py = 0; py < height; py += pixelSize) {
+                ctx.fillRect(x + width - pixelSize, y + py, pixelSize, pixelSize);
+            }
+            
+            // Text
+            ctx.fillStyle = "#000";
+            ctx.font = isMobile ? '20px sans-serif' : '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x + width / 2, y + height / 2);
+        }
+
+        // Helper function to lighten a color
+        function lightenColor(color, amount) {
+            return color;  // Simplified for brevity
+        }
+
+        // Helper function to darken a color
+        function darkenColor(color, amount) {
+            return color;  // Simplified for brevity
+        }
+
+        // Draw the background grid
+        function drawBackground() {
+            // 8-bit style background
+            ctx.fillStyle = '#1a1c2c';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid pattern
+            const gridSize = 20;
+            ctx.strokeStyle = '#2d2d44';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+            }
+            ctx.stroke();
+        }
+
+        // Draw text with a retro feel
+        function drawRetroText(text, x, y, size, color) {
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(x - 2, y - 2, ctx.measureText(text).width + 4, size + 4);
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText(text, x, y);
+        }
+
+        // Update game state
+        function update() {
+            if (gameOver) return;
+
+            timeElapsed += 1/60; // Approximate for 60fps
+
+            // Update blocks
+            blocks.forEach(block => {
+                if (!block.stacked) {
+                    block.y += BLOCK_FALL_SPEED;
+                    
+                    // Check if block should stack
+                    const groundLevel = canvas.height - stackHeight - block.height;
+                    if (block.y >= groundLevel) {
+                        block.y = groundLevel;
+                        block.stacked = true;
+                        stackHeight += block.height;
+                        playSound(150, 100);
+                        
+                        // Check game over condition for stack height
+                        if (stackHeight >= MAX_STACK_HEIGHT) {
+                            endGame(false);
+                        }
+                    }
+                }
+            });
+        }
+
+        // Draw game elements
+        function draw() {
+            drawBackground();
+            
+            // Draw the question
+            drawRetroText(QUESTION, canvas.width / 2 - 150, 30, 24, '#FFFFFF');
+            
+            // Draw blocks
+            blocks.forEach(block => {
+                drawPixelatedBlock(block.x, block.y, block.width, block.height, block.color, block.option);
+            });
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = success ? '#4CAF50' : '#F44336';
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    success ? 'Correct!' : 'Wrong Answer!', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 40
+                );
+                
+                restartBtn.style.display = 'block';
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle click/touch on blocks
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            // Check if any block was clicked
+            blocks.forEach(block => {
+                if (!block.stacked && 
+                    clickX >= block.x && 
+                    clickX <= block.x + block.width && 
+                    clickY >= block.y && 
+                    clickY <= block.y + block.height) {
+                    
+                    // Handle selection
+                    if (block.isCorrect) {
+                        playSound(440, 200);
+                        success = true;
+                    } else {
+                        playSound(200, 200);
+                        success = false;
+                    }
+                    endGame(success);
+                }
+            });
+        }
+
+        // End the game
+        function endGame(playerWon) {
+            gameOver = true;
+            restartBtn.style.display = 'block';
+        }
+
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', initGame);
+
+        // Initialize and start game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

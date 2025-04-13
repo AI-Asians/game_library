@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Garden Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Check if on mobile and resize if needed
+        if (window.innerWidth <= 480) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+        
+        // Game variables
+        const game = {
+            state: 'playing', // playing, correct, incorrect
+            width: canvas.width,
+            height: canvas.height,
+            question: 'Which planet is known as the Red Planet?',
+            options: ['Earth', 'Mars', 'Venus', 'Jupiter'],
+            correctAnswer: 'Mars',
+            restartBtn: {
+                x: canvas.width/2 - 60,
+                y: canvas.height/2 + 150,
+                width: 120,
+                height: 40
+            }
+        };
+        
+        // Colors (limited palette)
+        const colors = {
+            sky: '#5fcde4',
+            grass: '#76c442',
+            soil: '#8d5b4c',
+            pot: '#e77c56',
+            potDark: '#973f1e',
+            plantGreen: '#3e8948',
+            plantDarkGreen: '#265c2d',
+            flowerRed: '#d13b27',
+            flowerBlue: '#3c5ba2',
+            flowerYellow: '#e5e04c',
+            flowerPurple: '#9245b9',
+            cloud: '#ffffff',
+            text: '#352e25',
+            correct: '#76c442',
+            incorrect: '#d13b27',
+            water: '#5fcde4',
+            btnBg: '#4a6cd3',
+            btnBorder: '#2a3cd3'
+        };
+        
+        // Plant objects
+        const plants = [];
+        const spacing = game.width / 6;
+        
+        for (let i = 0; i < game.options.length; i++) {
+            plants.push({
+                x: spacing + i * spacing,
+                y: game.height / 2 + 50,
+                option: game.options[i],
+                state: 'waiting', // waiting, growing, wilting
+                growthStage: 0,
+                potWidth: 60,
+                potHeight: 40
+            });
+        }
+        
+        // Watering can
+        const wateringCan = {
+            x: game.width / 2,
+            y: game.height / 2 - 80,
+            width: 40,
+            height: 30,
+            rotation: 0,
+            selected: false,
+            targetPlant: null
+        };
+        
+        // Sound functions
+        function playSelectSound() {
+            const context = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = context.createOscillator();
+            const gainNode = context.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, context.currentTime);
+            oscillator.frequency.setValueAtTime(440, context.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, context.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(context.destination);
+            
+            oscillator.start();
+            oscillator.stop(context.currentTime + 0.3);
+        }
+        
+        function playCorrectSound() {
+            const context = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = context.createOscillator();
+            const gainNode = context.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, context.currentTime);
+            oscillator.frequency.setValueAtTime(660, context.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(880, context.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, context.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(context.destination);
+            
+            oscillator.start();
+            oscillator.stop(context.currentTime + 0.4);
+        }
+        
+        function playIncorrectSound() {
+            const context = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = context.createOscillator();
+            const gainNode = context.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, context.currentTime);
+            oscillator.frequency.setValueAtTime(180, context.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, context.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(context.destination);
+            
+            oscillator.start();
+            oscillator.stop(context.currentTime + 0.3);
+        }
+        
+        // Drawing functions
+        function drawSky() {
+            ctx.fillStyle = colors.sky;
+            ctx.fillRect(0, 0, game.width, game.height / 2 + 70);
+            
+            // Clouds (pixel style)
+            ctx.fillStyle = colors.cloud;
+            // Cloud 1
+            drawPixelCloud(game.width / 4, game.height / 6, 40);
+            // Cloud 2
+            drawPixelCloud(game.width / 2 + 100, game.height / 8, 50);
+            // Cloud 3
+            drawPixelCloud(game.width / 3 + 50, game.height / 4, 30);
+        }
+        
+        function drawPixelCloud(x, y, size) {
+            const blockSize = size / 5;
+            ctx.fillRect(x, y, blockSize * 5, blockSize * 2);
+            ctx.fillRect(x - blockSize, y + blockSize, blockSize * 7, blockSize * 2);
+            ctx.fillRect(x, y + blockSize * 3, blockSize * 5, blockSize);
+        }
+        
+        function drawGrass() {
+            ctx.fillStyle = colors.grass;
+            ctx.fillRect(0, game.height / 2 + 70, game.width, game.height);
+            
+            // Soil area
+            ctx.fillStyle = colors.soil;
+            ctx.fillRect(game.width / 8, game.height / 2 + 90, game.width - game.width / 4, 40);
+        }
+        
+        function drawPlant(plant) {
+            // Draw pot
+            ctx.fillStyle = colors.potDark;
+            ctx.fillRect(plant.x - plant.potWidth / 2 + 2, plant.y - 5, plant.potWidth, plant.potHeight);
+            ctx.fillStyle = colors.pot;
+            ctx.fillRect(plant.x - plant.potWidth / 2, plant.y - 10, plant.potWidth, plant.potHeight);
+            
+            // Draw soil
+            ctx.fillStyle = colors.soil;
+            ctx.fillRect(plant.x - plant.potWidth / 2 + 5, plant.y - 10, plant.potWidth - 10, 10);
+            
+            // Draw plant based on state
+            if (plant.state === 'waiting') {
+                // Small sprout
+                ctx.fillStyle = colors.plantGreen;
+                ctx.fillRect(plant.x - 2, plant.y - 20, 4, 10);
+                ctx.fillRect(plant.x - 6, plant.y - 25, 12, 5);
+            } else if (plant.state === 'growing') {
+                // Growing plant with flower
+                ctx.fillStyle = colors.plantGreen;
+                ctx.fillRect(plant.x - 2, plant.y - 20 - plant.growthStage * 5, 4, 10 + plant.growthStage * 5);
+                
+                // Leaves
+                ctx.fillStyle = colors.plantDarkGreen;
+                ctx.fillRect(plant.x - 10, plant.y - 25 - plant.growthStage * 3, 8, 4);
+                ctx.fillRect(plant.x + 2, plant.y - 30 - plant.growthStage * 3, 8, 4);
+                
+                // Flower
+                if (plant.growthStage >= 3) {
+                    let flowerColor;
+                    if (plant.option === 'Mars') flowerColor = colors.flowerRed;
+                    else if (plant.option === 'Earth') flowerColor = colors.flowerBlue;
+                    else if (plant.option === 'Venus') flowerColor = colors.flowerYellow;
+                    else flowerColor = colors.flowerPurple;
+                    
+                    const flowerSize = 10 + plant.growthStage * 2;
+                    ctx.fillStyle = flowerColor;
+                    ctx.fillRect(plant.x - flowerSize/2, plant.y - 45 - plant.growthStage * 5, flowerSize, flowerSize);
+                    
+                    // Flower center
+                    ctx.fillStyle = '#F9F06B';
+                    ctx.fillRect(plant.x - 3, plant.y - 41 - plant.growthStage * 5, 6, 6);
+                }
+            } else if (plant.state === 'wilting') {
+                // Wilting plant
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(plant.x - 2, plant.y - 15, 4, 5);
+                
+                // Droopy leaves
+                ctx.fillStyle = '#764A13';
+                ctx.fillRect(plant.x - 10, plant.y - 15, 8, 2);
+                ctx.fillRect(plant.x + 2, plant.y - 15, 8, 2);
+            }
+            
+            // Draw option text below pot
+            ctx.fillStyle = colors.text;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(plant.option, plant.x, plant.y + plant.potHeight + 15);
+        }
+        
+        function drawWateringCan() {
+            ctx.save();
+            if (wateringCan.selected) {
+                ctx.translate(wateringCan.x, wateringCan.y);
+                ctx.rotate(wateringCan.rotation);
+                ctx.translate(-wateringCan.x, -wateringCan.y);
+            }
+            
+            // Watering can body
+            ctx.fillStyle = '#888888';
+            ctx.fillRect(wateringCan.x - 20, wateringCan.y - 15, 30, 20);
+            
+            // Spout
+            ctx.fillRect(wateringCan.x - 30, wateringCan.y - 5, 10, 5);
+            
+            // Handle
+            ctx.fillRect(wateringCan.x + 10, wateringCan.y - 10, 10, 5);
+            ctx.fillRect(wateringCan.x + 15, wateringCan.y - 25, 5, 15);
+            
+            // Water drops when pouring
+            if (wateringCan.selected && wateringCan.targetPlant) {
+                ctx.fillStyle = colors.water;
+                for (let i = 0; i < 3; i++) {
+                    ctx.fillRect(wateringCan.x - 35 - i * 5, wateringCan.y + 5 + i * 10, 4, 4);
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(game.question, game.width / 2, 50);
+        }
+        
+        function drawFeedback() {
+            if (game.state === 'correct') {
+                ctx.fillStyle = colors.correct;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Correct!', game.width / 2, 120);
+            } else if (game.state === 'incorrect') {
+                ctx.fillStyle = colors.incorrect;
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Try Again!', game.width / 2, 120);
+            }
+        }
+        
+        function drawRestartButton() {
+            if (game.state !== 'playing') {
+                ctx.fillStyle = colors.btnBg;
+                ctx.fillRect(game.restartBtn.x, game.restartBtn.y, game.restartBtn.width, game.restartBtn.height);
+                ctx.strokeStyle = colors.btnBorder;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(game.restartBtn.x, game.restartBtn.y, game.restartBtn.width, game.restartBtn.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', game.restartBtn.x + game.restartBtn.width / 2, game.restartBtn.y + game.restartBtn.height / 2 + 7);
+            }
+        }
+        
+        // Game update function
+        function update() {
+            // Update growing/wilting animations
+            plants.forEach(plant => {
+                if (plant.state === 'growing' && plant.growthStage < 5) {
+                    plant.growthStage += 0.1;
+                }
+            });
+            
+            // Update watering can animation
+            if (wateringCan.selected && wateringCan.targetPlant) {
+                wateringCan.rotation = Math.sin(Date.now() / 200) * 0.2;
+            } else {
+                wateringCan.rotation = 0;
+            }
+        }
+        
+        // Game render function
+        function render() {
+            // Clear canvas
+            ctx.clearRect(0, 0, game.width, game.height);
+            
+            // Draw background elements
+            drawSky();
+            drawGrass();
+            
+            // Draw plants
+            plants.forEach(plant => {
+                drawPlant(plant);
+            });
+            
+            // Draw watering can
+            drawWateringCan();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw feedback
+            drawFeedback();
+            
+            // Draw restart button if needed
+            drawRestartButton();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('touchstart', handleTouchStart, {passive: false});
+        canvas.addEventListener('touchmove', handleTouchMove, {passive: false});
+        canvas.addEventListener('touchend', handleTouchEnd);
+        
+        // Mouse/touch handlers
+        let isDragging = false;
+        
+        function handleMouseDown(e) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            handleInputStart(mouseX, mouseY);
+        }
+        
+        function handleMouseMove(e) {
+            if (!isDragging) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            handleInputMove(mouseX, mouseY);
+        }
+        
+        function handleMouseUp(e) {
+            handleInputEnd();
+        }
+        
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            handleInputStart(touchX, touchY);
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            if (!isDragging) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = touch.clientX - rect.left;
+            const touchY = touch.clientY - rect.top;
+            
+            handleInputMove(touchX, touchY);
+        }
+        
+        function handleTouchEnd(e) {
+            handleInputEnd();
+        }
+        
+        function handleInputStart(x, y) {
+            // Check if the restart button was clicked
+            if (game.state !== 'playing') {
+                if (x >= game.restartBtn.x && x <= game.restartBtn.x + game.restartBtn.width &&
+                    y >= game.restartBtn.y && y <= game.restartBtn.y + game.restartBtn.height) {
+                    resetGame();
+                    return;
+                }
+            }
+            
+            // Only allow interaction in playing state
+            if (game.state !== 'playing') return;
+            
+            // Check if watering can was clicked
+            if (x >= wateringCan.x - 20 && x <= wateringCan.x + 20 &&
+                y >= wateringCan.y - 25 && y <= wateringCan.y + 15) {
+                wateringCan.selected = true;
+                isDragging = true;
+                playSelectSound();
+            }
+            
+            // Check if a plant was clicked directly
+            if (!wateringCan.selected) {
+                for (let i = 0; i < plants.length; i++) {
+                    const plant = plants[i];
+                    if (x >= plant.x - plant.potWidth / 2 && x <= plant.x + plant.potWidth / 2 &&
+                        y >= plant.y - plant.potHeight && y <= plant.y + plant.potHeight) {
+                        selectPlant(plant);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        function handleInputMove(x, y) {
+            if (wateringCan.selected) {
+                wateringCan.x = x;
+                wateringCan.y = y;
+                
+                // Check if watering can is over a plant
+                wateringCan.targetPlant = null;
+                for (let i = 0; i < plants.length; i++) {
+                    const plant = plants[i];
+                    if (x >= plant.x - plant.potWidth / 2 && x <= plant.x + plant.potWidth / 2 &&
+                        y >= plant.y - plant.potHeight && y <= plant.y + plant.potHeight) {
+                        wateringCan.targetPlant = plant;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        function handleInputEnd() {
+            if (wateringCan.selected && wateringCan.targetPlant) {
+                selectPlant(wateringCan.targetPlant);
+            }
+            
+            wateringCan.selected = false;
+            wateringCan.targetPlant = null;
+            isDragging = false;
+            
+            // Reset watering can position
+            wateringCan.x = game.width / 2;
+            wateringCan.y = game.height / 2 - 80;
+        }
+        
+        function selectPlant(plant) {
+            if (plant.option === game.correctAnswer) {
+                game.state = 'correct';
+                plant.state = 'growing';
+                playCorrectSound();
+            } else {
+                game.state = 'incorrect';
+                plant.state = 'wilting';
+                playIncorrectSound();
+                
+                // Find correct plant and make it grow anyway
+                const correctPlant = plants.find(p => p.option === game.correctAnswer);
+                if (correctPlant) correctPlant.state = 'growing';
+            }
+        }
+        
+        function resetGame() {
+            game.state = 'playing';
+            plants.forEach(plant => {
+                plant.state = 'waiting';
+                plant.growthStage = 0;
+            });
+            wateringCan.selected = false;
+            wateringCan.targetPlant = null;
+            wateringCan.x = game.width / 2;
+            wateringCan.y = game.height / 2 - 80;
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

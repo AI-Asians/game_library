@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Planet Memory Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            background-color: #222;
+            touch-action: manipulation;
+        }
+        canvas { 
+            display: block; 
+            background-color: #000; 
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive sizing - detect if mobile
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#000000',
+            text: '#FFFFFF',
+            question: '#FFFF55',
+            option: '#55AAFF',
+            optionBorder: '#8888FF',
+            correct: '#55FF55',
+            wrong: '#FF5555',
+            timer: '#FF8855',
+            container: '#333366',
+            notification: '#FF88FF',
+            hover: '#6666AA'
+        };
+        
+        // Game state
+        let options = [
+            'Mars',            // Correct answer
+            'Venus',
+            'Jupiter',
+            'Mercury'
+        ];
+        let optionPositions = [];
+        let gameState = 'showing'; // showing, memorizing, guessing, feedback
+        let correctIndex = 0;
+        let selectedIndex = -1;
+        let timer = 0;
+        let timerMax = 120; // 2 seconds at 60fps
+        let notificationAlpha = 0;
+        let hoveredIndex = -1;
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Generate sound functions
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'start') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(480, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(550, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(660, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'tick') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.05);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.05);
+            } else if (type === 'hide') {
+                oscillator.type = 'triangle';
+                oscillator.frequency.setValueAtTime(550, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(220, audioCtx.currentTime + 0.3);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+        
+        // Initialize game
+        function init() {
+            // Shuffle options with Fisher-Yates algorithm
+            let shuffled = [...options];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            
+            // Find the index of the correct answer after shuffling
+            correctIndex = shuffled.indexOf('Mars');
+            
+            // Set up option positions
+            optionPositions = [];
+            const cols = 2;
+            const rows = 2;
+            const marginX = canvas.width * 0.15;
+            const marginY = canvas.height * 0.35;
+            const width = (canvas.width - marginX * 2) / cols;
+            const height = (canvas.height * 0.4) / rows;
+            
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const index = row * cols + col;
+                    if (index < shuffled.length) {
+                        optionPositions.push({
+                            x: marginX + col * width,
+                            y: marginY + row * height,
+                            width: width,
+                            height: height,
+                            text: shuffled[index]
+                        });
+                    }
+                }
+            }
+            
+            gameState = 'showing';
+            timer = timerMax;
+            selectedIndex = -1;
+            notificationAlpha = 0;
+            hoveredIndex = -1;
+            
+            // Play start sound
+            playSound('start');
+        }
+        
+        // Draw pixelated rectangle with border
+        function drawPixelRect(x, y, width, height, fillColor, borderColor, borderSize = 4) {
+            // Main fill
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(
+                Math.floor(x), 
+                Math.floor(y), 
+                Math.floor(width), 
+                Math.floor(height)
+            );
+            
+            // Pixelated border
+            if (borderColor) {
+                ctx.fillStyle = borderColor;
+                
+                // Top
+                ctx.fillRect(
+                    Math.floor(x), 
+                    Math.floor(y), 
+                    Math.floor(width), 
+                    Math.floor(borderSize)
+                );
+                
+                // Bottom
+                ctx.fillRect(
+                    Math.floor(x), 
+                    Math.floor(y + height - borderSize), 
+                    Math.floor(width), 
+                    Math.floor(borderSize)
+                );
+                
+                // Left
+                ctx.fillRect(
+                    Math.floor(x), 
+                    Math.floor(y + borderSize), 
+                    Math.floor(borderSize), 
+                    Math.floor(height - borderSize * 2)
+                );
+                
+                // Right
+                ctx.fillRect(
+                    Math.floor(x + width - borderSize), 
+                    Math.floor(y + borderSize), 
+                    Math.floor(borderSize), 
+                    Math.floor(height - borderSize * 2)
+                );
+            }
+        }
+        
+        // Draw the game
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.question;
+            ctx.font = `${isMobile ? 24 : 30}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Which planet is known as', canvas.width / 2, canvas.height * 0.15);
+            ctx.fillText('the Red Planet?', canvas.width / 2, canvas.height * 0.15 + (isMobile ? 30 : 40));
+            
+            // Draw the container boxes for each option
+            for (let i = 0; i < optionPositions.length; i++) {
+                const pos = optionPositions[i];
+                let boxColor = COLORS.container;
+                let borderColor = null;
+                
+                if (gameState === 'showing') {
+                    // When showing answers, display the options with borders
+                    boxColor = COLORS.option;
+                    borderColor = COLORS.optionBorder;
+                } else if (gameState === 'feedback') {
+                    // During feedback, color based on correctness
+                    if (i === correctIndex) {
+                        boxColor = COLORS.correct;
+                        borderColor = COLORS.optionBorder;
+                    } else if (i === selectedIndex && selectedIndex !== correctIndex) {
+                        boxColor = COLORS.wrong;
+                        borderColor = COLORS.optionBorder;
+                    } else {
+                        boxColor = COLORS.container;
+                    }
+                } else if (gameState === 'guessing' && i === hoveredIndex) {
+                    // Highlight hovered container
+                    boxColor = COLORS.hover;
+                }
+                
+                // Draw the option container
+                drawPixelRect(
+                    pos.x, pos.y, 
+                    pos.width, pos.height, 
+                    boxColor, borderColor
+                );
+                
+                // Draw option text if in showing state or feedback state
+                if (gameState === 'showing' || (gameState === 'feedback' && (i === correctIndex || i === selectedIndex))) {
+                    ctx.fillStyle = COLORS.text;
+                    ctx.font = `${isMobile ? 22 : 26}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(
+                        pos.text, 
+                        pos.x + pos.width / 2, 
+                        pos.y + pos.height / 2
+                    );
+                }
+            }
+            
+            // Draw timer when showing answers
+            if (gameState === 'showing') {
+                const timerWidth = canvas.width * 0.6;
+                const timerHeight = 15;
+                const timerX = (canvas.width - timerWidth) / 2;
+                const timerY = canvas.height * 0.28;
+                
+                // Background
+                drawPixelRect(
+                    timerX, timerY, 
+                    timerWidth, timerHeight, 
+                    '#222222', COLORS.timer
+                );
+                
+                // Filled portion
+                const fillWidth = timerWidth * (timer / timerMax);
+                drawPixelRect(
+                    timerX, timerY, 
+                    fillWidth, timerHeight, 
+                    COLORS.timer, null
+                );
+            }
+            
+            // Draw "Memorize Now!" notification with blinking effect
+            if (gameState === 'showing' && timer < timerMax * 0.5) {
+                ctx.fillStyle = COLORS.notification;
+                ctx.globalAlpha = Math.sin(timer * 0.2) * 0.5 + 0.5;
+                ctx.font = `${isMobile ? 22 : 28}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('MEMORIZE NOW!', canvas.width / 2, canvas.height * 0.28 + 40);
+                ctx.globalAlpha = 1;
+            }
+            
+            // Draw memorize notification when transitioning
+            if (gameState === 'memorizing') {
+                ctx.fillStyle = COLORS.notification;
+                ctx.globalAlpha = notificationAlpha;
+                ctx.font = `${isMobile ? 26 : 32}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('REMEMBER & TAP!', canvas.width / 2, canvas.height / 2);
+                ctx.globalAlpha = 1;
+            }
+            
+            // Draw restart button after feedback
+            if (gameState === 'feedback') {
+                const btnWidth = canvas.width * 0.3;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height * 0.8;
+                
+                drawPixelRect(
+                    btnX, btnY, 
+                    btnWidth, btnHeight, 
+                    '#222255', COLORS.option
+                );
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('RESTART', btnX + btnWidth / 2, btnY + btnHeight / 2);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (gameState === 'showing') {
+                // Count down timer while showing options
+                timer--;
+                
+                // Play occasional tick sound
+                if (timer % 20 === 0 && timer > 0) {
+                    playSound('tick');
+                }
+                
+                // When timer ends, transition to memorizing state
+                if (timer <= 0) {
+                    gameState = 'memorizing';
+                    notificationAlpha = 1;
+                    playSound('hide');
+                }
+            } else if (gameState === 'memorizing') {
+                // Flash notification briefly then transition to guessing
+                notificationAlpha -= 0.05;
+                if (notificationAlpha <= 0) {
+                    gameState = 'guessing';
+                }
+            }
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse movement for hover effects
+        function handleMouseMove(e) {
+            if (gameState !== 'guessing') return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            hoveredIndex = -1;
+            for (let i = 0; i < optionPositions.length; i++) {
+                const pos = optionPositions[i];
+                if (mouseX >= pos.x && mouseX <= pos.x + pos.width &&
+                    mouseY >= pos.y && mouseY <= pos.y + pos.height) {
+                    hoveredIndex = i;
+                    break;
+                }
+            }
+        }
+        
+        // Handle mouse click or touch
+        function handleClick(e) {
+            // Get click coordinates
+            const rect = canvas.getBoundingClientRect();
+            let clickX, clickY;
+            
+            if (e.type === 'touchstart') {
+                clickX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+                clickY = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+            } else {
+                clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            }
+            
+            // Handle guessing state
+            if (gameState === 'guessing') {
+                for (let i = 0; i < optionPositions.length; i++) {
+                    const pos = optionPositions[i];
+                    if (clickX >= pos.x && clickX <= pos.x + pos.width &&
+                        clickY >= pos.y && clickY <= pos.y + pos.height) {
+                        selectedIndex = i;
+                        gameState = 'feedback';
+                        
+                        // Play sound based on correctness
+                        if (selectedIndex === correctIndex) {
+                            playSound('correct');
+                        } else {
+                            playSound('wrong');
+                        }
+                        break;
+                    }
+                }
+            } 
+            // Handle feedback state (restart button)
+            else if (gameState === 'feedback') {
+                const btnWidth = canvas.width * 0.3;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = canvas.height * 0.8;
+                
+                if (clickX >= btnX && clickX <= btnX + btnWidth &&
+                    clickY >= btnY && clickY <= btnY + btnHeight) {
+                    init();
+                }
+            }
+        }
+        
+        // Add event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', handleClick);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        
+        // Start the game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>

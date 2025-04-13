@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const COLORS = {
+            bg: '#0f0f2d',
+            text: '#ffffff',
+            meter: '#444444',
+            meterFill: '#55dd55',
+            option1: '#ff5555',
+            option2: '#55ff55',
+            option3: '#5555ff',
+            option4: '#ffff55',
+            correct: '#00ff00',
+            incorrect: '#ff0000',
+            button: '#555555',
+            buttonHover: '#777777'
+        };
+        
+        // Game state
+        const state = {
+            power: 0,
+            maxPower: 100,
+            charging: false,
+            answered: false,
+            correct: false,
+            gameOver: false,
+            particles: [],
+            restartHover: false,
+            flashEffect: 0
+        };
+        
+        // Question data
+        const question = {
+            text: "What is the capital of France?",
+            options: ["Berlin", "Paris", "Madrid", "Rome"],
+            correctIndex: 1 // Paris
+        };
+        
+        // Power levels for each answer
+        const powerLevels = [
+            { min: 0, max: 25, index: 0 },     // Berlin
+            { min: 25, max: 50, index: 1 },    // Paris
+            { min: 50, max: 75, index: 2 },    // Madrid
+            { min: 75, max: 100, index: 3 }    // Rome
+        ];
+        
+        // Audio context and sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        function playTone(frequency, duration, volume = 0.5) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration);
+            
+            return oscillator;
+        }
+        
+        function playChargeSound() {
+            const freq = 200 + (state.power * 4);
+            playTone(freq, 50, 0.2);
+        }
+        
+        function playCorrectSound() {
+            playTone(523.25, 100, 0.5); // C5
+            setTimeout(() => playTone(659.25, 100, 0.5), 100); // E5
+            setTimeout(() => playTone(783.99, 200, 0.5), 200); // G5
+        }
+        
+        function playIncorrectSound() {
+            playTone(311.13, 100, 0.5); // Eb4
+            setTimeout(() => playTone(293.66, 200, 0.5), 100); // D4
+        }
+        
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                state.particles.push({
+                    x,
+                    y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    size: Math.random() * 6 + 2,
+                    color,
+                    life: 30
+                });
+            }
+        }
+        
+        // Draw functions
+        function drawPixelText(text, x, y, size, color) {
+            ctx.font = `${size}px Arial, sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.fillText(text, x, y);
+        }
+        
+        function drawQuestion() {
+            drawPixelText(question.text, canvas.width / 2, 80, 24, COLORS.text);
+        }
+        
+        function drawPowerMeter() {
+            const meterWidth = canvas.width * 0.8;
+            const meterHeight = 40;
+            const meterX = (canvas.width - meterWidth) / 2;
+            const meterY = canvas.height / 2 - 20;
+            
+            // Draw meter background
+            ctx.fillStyle = COLORS.meter;
+            ctx.fillRect(meterX, meterY, meterWidth, meterHeight);
+            
+            // Draw meter fill
+            const fillWidth = (state.power / state.maxPower) * meterWidth;
+            
+            // Draw segmented fill with pixel-like blocks
+            const blockSize = 8;
+            const blocks = Math.floor(fillWidth / blockSize);
+            
+            for (let i = 0; i < blocks; i++) {
+                // Determine color based on which answer section we're in
+                let color;
+                const blockPercent = (i * blockSize) / meterWidth * 100;
+                
+                if (blockPercent < 25) color = COLORS.option1;
+                else if (blockPercent < 50) color = COLORS.option2;
+                else if (blockPercent < 75) color = COLORS.option3;
+                else color = COLORS.option4;
+                
+                ctx.fillStyle = color;
+                ctx.fillRect(
+                    meterX + (i * blockSize), 
+                    meterY, 
+                    blockSize - 1, 
+                    meterHeight
+                );
+            }
+            
+            // Draw answer positions
+            const positions = [12.5, 37.5, 62.5, 87.5];
+            positions.forEach((pos, idx) => {
+                const x = meterX + (pos / 100) * meterWidth;
+                
+                // Draw "sweet spot" indicator for correct answer
+                if (idx === question.correctIndex) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${0.3 + Math.sin(Date.now() / 200) * 0.2})`;
+                    ctx.fillRect(
+                        x - 6, 
+                        meterY - 5, 
+                        12, 
+                        meterHeight + 10
+                    );
+                }
+            });
+            
+            // Draw flash effect when answer selected
+            if (state.flashEffect > 0) {
+                ctx.fillStyle = state.correct ? 
+                    `rgba(0, 255, 0, ${state.flashEffect / 10})` : 
+                    `rgba(255, 0, 0, ${state.flashEffect / 10})`;
+                ctx.fillRect(meterX, meterY, meterWidth, meterHeight);
+                state.flashEffect--;
+            }
+        }
+        
+        function drawOptions() {
+            const meterWidth = canvas.width * 0.8;
+            const meterX = (canvas.width - meterWidth) / 2;
+            const meterY = canvas.height / 2 - 20;
+            
+            // Draw options below the meter
+            question.options.forEach((option, idx) => {
+                const x = meterX + (meterWidth * (idx * 25 + 12.5) / 100);
+                const y = meterY + 70;
+                
+                // Draw pixelated option box
+                ctx.fillStyle = idx === 0 ? COLORS.option1 : 
+                                idx === 1 ? COLORS.option2 : 
+                                idx === 2 ? COLORS.option3 : COLORS.option4;
+                
+                ctx.fillRect(x - 40, y - 20, 80, 30);
+                
+                // Draw option text
+                drawPixelText(option, x, y + 5, 16, COLORS.text);
+            });
+        }
+        
+        function drawInstructions() {
+            if (!state.gameOver) {
+                drawPixelText("Hold to charge", canvas.width / 2, canvas.height - 120, 20, COLORS.text);
+                drawPixelText("Release to answer", canvas.width / 2, canvas.height - 90, 20, COLORS.text);
+            }
+        }
+        
+        function drawFeedback() {
+            if (state.answered) {
+                const message = state.correct ? "CORRECT!" : "WRONG!";
+                const color = state.correct ? COLORS.correct : COLORS.incorrect;
+                drawPixelText(message, canvas.width / 2, canvas.height / 2 + 80, 36, color);
+            }
+        }
+        
+        function drawRestartButton() {
+            if (state.gameOver) {
+                const buttonX = canvas.width / 2 - 60;
+                const buttonY = canvas.height - 80;
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                
+                // Check if mouse is over the button
+                if (state.restartHover) {
+                    ctx.fillStyle = COLORS.buttonHover;
+                } else {
+                    ctx.fillStyle = COLORS.button;
+                }
+                
+                // Draw pixelated button
+                ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+                drawPixelText("RESTART", canvas.width / 2, buttonY + 25, 18, COLORS.text);
+            }
+        }
+        
+        function drawParticles() {
+            state.particles.forEach((p, index) => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    state.particles.splice(index, 1);
+                    return;
+                }
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x), 
+                    Math.floor(p.y), 
+                    Math.floor(p.size), 
+                    Math.floor(p.size)
+                );
+            });
+        }
+        
+        function checkAnswer() {
+            let selectedOptionIndex = -1;
+            
+            for (const level of powerLevels) {
+                if (state.power >= level.min && state.power < level.max) {
+                    selectedOptionIndex = level.index;
+                    break;
+                }
+            }
+            
+            // Last option edge case
+            if (state.power >= powerLevels[3].min) {
+                selectedOptionIndex = 3;
+            }
+            
+            state.correct = selectedOptionIndex === question.correctIndex;
+            state.answered = true;
+            state.gameOver = true;
+            state.flashEffect = 10;
+            
+            // Create particles
+            const meterWidth = canvas.width * 0.8;
+            const meterX = (canvas.width - meterWidth) / 2;
+            const meterY = canvas.height / 2 - 20;
+            
+            const particleX = meterX + (meterWidth * state.power / 100);
+            const particleY = meterY + 20;
+            
+            if (state.correct) {
+                playCorrectSound();
+                createParticles(particleX, particleY, COLORS.correct, 30);
+            } else {
+                playIncorrectSound();
+                createParticles(particleX, particleY, COLORS.incorrect, 20);
+            }
+        }
+        
+        // Game loop
+        function update() {
+            if (state.charging && !state.answered) {
+                state.power += 1;
+                if (state.power >= state.maxPower) {
+                    state.power = 0; // Reset to cycle
+                }
+                
+                // Play sound every few frames
+                if (state.power % 5 === 0) {
+                    playChargeSound();
+                }
+            }
+        }
+        
+        function render() {
+            // Clear canvas with background color
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawQuestion();
+            drawPowerMeter();
+            drawOptions();
+            drawInstructions();
+            drawFeedback();
+            drawRestartButton();
+            drawParticles();
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event handlers
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.gameOver) {
+                // Check if clicked on restart button
+                const buttonX = canvas.width / 2 - 60;
+                const buttonY = canvas.height - 80;
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                if (
+                    mouseX >= buttonX && 
+                    mouseX <= buttonX + buttonWidth && 
+                    mouseY >= buttonY && 
+                    mouseY <= buttonY + buttonHeight
+                ) {
+                    // Reset game
+                    state.power = 0;
+                    state.charging = false;
+                    state.answered = false;
+                    state.correct = false;
+                    state.gameOver = false;
+                    state.particles = [];
+                }
+            } else {
+                state.charging = true;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            if (state.charging && !state.answered) {
+                state.charging = false;
+                checkAnswer();
+            }
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (state.gameOver) {
+                // Check if touched restart button
+                const buttonX = canvas.width / 2 - 60;
+                const buttonY = canvas.height - 80;
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                const touchX = touch.clientX - rect.left;
+                const touchY = touch.clientY - rect.top;
+                
+                if (
+                    touchX >= buttonX && 
+                    touchX <= buttonX + buttonWidth && 
+                    touchY >= buttonY && 
+                    touchY <= buttonY + buttonHeight
+                ) {
+                    // Reset game
+                    state.power = 0;
+                    state.charging = false;
+                    state.answered = false;
+                    state.correct = false;
+                    state.gameOver = false;
+                    state.particles = [];
+                }
+            } else {
+                state.charging = true;
+            }
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (state.charging && !state.answered) {
+                state.charging = false;
+                checkAnswer();
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (state.gameOver) {
+                // Check if mouse is over restart button
+                const buttonX = canvas.width / 2 - 60;
+                const buttonY = canvas.height - 80;
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                state.restartHover = (
+                    mouseX >= buttonX && 
+                    mouseX <= buttonX + buttonWidth && 
+                    mouseY >= buttonY && 
+                    mouseY <= buttonY + buttonHeight
+                );
+            }
+        });
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

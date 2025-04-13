@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Morse-Tap TF Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            border: 4px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors - 8-bit style palette
+        const COLORS = {
+            BG: '#081820',
+            TEXT: '#e0f8d0',
+            TRUE: '#0f8080',
+            FALSE: '#800f38',
+            BUTTON: '#346856',
+            BUTTON_PRESSED: '#204038',
+            HIGHLIGHT: '#f8f800',
+            CORRECT: '#18c800',
+            INCORRECT: '#d82800'
+        };
+
+        // Define morse patterns
+        const MORSE = {
+            TRUE: [1, 0, 1, 1, 1], // .-...
+            FALSE: [1, 1, 0, 1, 0] // ..-.
+        };
+
+        // Game state
+        let state = {
+            taps: [],
+            lastTapTime: 0,
+            timeoutId: null,
+            gameOver: false,
+            result: null,
+            tapActive: false,
+            buttonY: canvas.height - 180,
+            patternDisplay: { x: 0, y: 0, width: 0, height: 0 }
+        };
+
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+
+        function drawText(text, x, y, color, size, align = 'center') {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = align;
+            ctx.fillText(text, x, y);
+        }
+
+        function drawMorsePattern(pattern, x, y, width, height, activeIndex = -1, color) {
+            const elementWidth = width / (pattern.length * 2 - 1);
+            const elementHeight = height;
+            
+            for (let i = 0; i < pattern.length; i++) {
+                const elementX = x + i * (elementWidth * 2);
+                const highlight = i === activeIndex;
+                
+                if (pattern[i] === 1) { // Dash
+                    drawPixelRect(
+                        elementX, 
+                        y, 
+                        elementWidth, 
+                        elementHeight, 
+                        highlight ? COLORS.HIGHLIGHT : color
+                    );
+                } else { // Dot
+                    drawPixelRect(
+                        elementX, 
+                        y + elementHeight/3, 
+                        elementWidth/2, 
+                        elementHeight/3, 
+                        highlight ? COLORS.HIGHLIGHT : color
+                    );
+                }
+            }
+            
+            return { x, y, width, height };
+        }
+
+        function checkAnswer() {
+            const truePattern = MORSE.TRUE.toString();
+            const falsePattern = MORSE.FALSE.toString();
+            const userPattern = state.taps.toString();
+            
+            if (userPattern === truePattern) {
+                state.gameOver = true;
+                state.result = true;
+                playSound(440, 150);
+                setTimeout(() => playSound(660, 300), 150);
+            } else if (userPattern === falsePattern) {
+                state.gameOver = true;
+                state.result = false;
+                playSound(330, 150);
+                setTimeout(() => playSound(220, 300), 150);
+            }
+            
+            if (state.gameOver) {
+                setTimeout(resetGame, 2000);
+            }
+        }
+
+        function processInput() {
+            if (state.gameOver) return;
+            
+            clearTimeout(state.timeoutId);
+            
+            // Play tap sound
+            playSound(state.tapActive ? 660 : 440, 80);
+            
+            // Record the tap
+            if (state.taps.length < MORSE.TRUE.length) {
+                state.taps.push(state.tapActive ? 1 : 0);
+                
+                // Check if pattern is complete
+                if (state.taps.length === MORSE.TRUE.length) {
+                    checkAnswer();
+                }
+            }
+            
+            // Set timeout to reset if player stops tapping
+            state.timeoutId = setTimeout(() => {
+                if (state.taps.length > 0 && !state.gameOver) {
+                    state.taps = [];
+                }
+            }, 2000);
+            
+            state.tapActive = !state.tapActive;
+        }
+
+        function resetGame() {
+            state = {
+                taps: [],
+                lastTapTime: 0,
+                timeoutId: null,
+                gameOver: false,
+                result: null,
+                tapActive: false,
+                buttonY: canvas.height - 180,
+                patternDisplay: state.patternDisplay
+            };
+        }
+
+        function update() {
+            // Nothing to update in this game
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.BG;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawText(
+                question, 
+                canvas.width / 2, 
+                80, 
+                COLORS.TEXT, 
+                isMobile ? 18 : 24
+            );
+            
+            // Draw instruction
+            drawText(
+                "Tap the pattern for True or False", 
+                canvas.width / 2, 
+                120, 
+                COLORS.TEXT, 
+                isMobile ? 14 : 18
+            );
+
+            // Draw True pattern reference
+            drawText("TRUE:", 80, 180, COLORS.TRUE, 16, "left");
+            drawMorsePattern(
+                MORSE.TRUE, 
+                130, 
+                170, 
+                180, 
+                20, 
+                -1, 
+                COLORS.TRUE
+            );
+            
+            // Draw False pattern reference
+            drawText("FALSE:", canvas.width - 260, 180, COLORS.FALSE, 16, "left");
+            drawMorsePattern(
+                MORSE.FALSE, 
+                canvas.width - 200, 
+                170, 
+                180, 
+                20, 
+                -1, 
+                COLORS.FALSE
+            );
+
+            // Draw current pattern
+            const patternWidth = 300;
+            const patternHeight = 30;
+            const patternX = (canvas.width - patternWidth) / 2;
+            const patternY = 240;
+            
+            state.patternDisplay = { 
+                x: patternX, 
+                y: patternY, 
+                width: patternWidth, 
+                height: patternHeight 
+            };
+            
+            if (state.taps.length > 0) {
+                drawMorsePattern(
+                    state.taps, 
+                    patternX, 
+                    patternY, 
+                    patternWidth, 
+                    patternHeight, 
+                    state.taps.length - 1,
+                    state.gameOver ? 
+                        (state.result ? COLORS.CORRECT : COLORS.INCORRECT) : 
+                        COLORS.TEXT
+                );
+            } else {
+                drawText(
+                    "Start tapping pattern", 
+                    canvas.width / 2, 
+                    patternY + patternHeight / 2, 
+                    COLORS.TEXT, 
+                    16
+                );
+            }
+            
+            // Draw telegraph button
+            const buttonWidth = 200;
+            const buttonHeight = 80;
+            const buttonX = (canvas.width - buttonWidth) / 2;
+            
+            drawPixelRect(
+                buttonX, 
+                state.buttonY, 
+                buttonWidth, 
+                buttonHeight, 
+                state.tapActive ? COLORS.BUTTON_PRESSED : COLORS.BUTTON
+            );
+            
+            // Button details
+            drawPixelRect(
+                buttonX + 20, 
+                state.buttonY + 20, 
+                buttonWidth - 40, 
+                buttonHeight - 40, 
+                state.tapActive ? COLORS.BUTTON : COLORS.BUTTON_PRESSED
+            );
+            
+            // Result text
+            if (state.gameOver) {
+                drawText(
+                    state.result ? "CORRECT!" : "INCORRECT!", 
+                    canvas.width / 2, 
+                    350, 
+                    state.result ? COLORS.CORRECT : COLORS.INCORRECT, 
+                    28
+                );
+            }
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousedown', () => {
+            if (!state.tapActive) processInput();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (state.tapActive) processInput();
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!state.tapActive) processInput();
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (state.tapActive) processInput();
+        });
+
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

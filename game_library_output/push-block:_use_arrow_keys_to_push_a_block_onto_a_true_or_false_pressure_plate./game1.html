@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Push Block T/F Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            font-family: sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+        }
+        #restart {
+            position: absolute;
+            display: none;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: 2px solid #777;
+            cursor: pointer;
+            font-family: sans-serif;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Play Again</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        let isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game constants
+        const GRID_SIZE = isMobile ? 40 : 50;
+        const COLORS = {
+            background: '#5c94fc',
+            floor: '#8b956d',
+            floorLight: '#9ca984',
+            player: '#ff6b6b',
+            playerOutline: '#990000',
+            block: '#c17e37',
+            blockOutline: '#7a4e20',
+            truePlate: '#4caf50',
+            falsePlate: '#f44336',
+            text: '#ffffff'
+        };
+
+        // Game state
+        let gameOver = false;
+        let isCorrect = false;
+        let player = {
+            x: Math.floor(canvas.width / GRID_SIZE / 2),
+            y: Math.floor(canvas.height / GRID_SIZE / 2) + 1
+        };
+        let block = {
+            x: Math.floor(canvas.width / GRID_SIZE / 2),
+            y: Math.floor(canvas.height / GRID_SIZE / 2)
+        };
+        let truePlate = {
+            x: Math.floor(canvas.width / GRID_SIZE / 2) + 3,
+            y: Math.floor(canvas.height / GRID_SIZE / 2) - 1
+        };
+        let falsePlate = {
+            x: Math.floor(canvas.width / GRID_SIZE / 2) - 3,
+            y: Math.floor(canvas.height / GRID_SIZE / 2) - 1
+        };
+        
+        // The answer to the question (False)
+        const correctAnswer = false;
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'move':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'push':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.15);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
+                        setTimeout(() => {
+                            oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2);
+                            setTimeout(() => {
+                                oscillator.stop(audioContext.currentTime + 0.1);
+                            }, 100);
+                        }, 100);
+                    }, 100);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(196, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    
+                    setTimeout(() => {
+                        oscillator.frequency.setValueAtTime(146.83, audioContext.currentTime + 0.2);
+                        setTimeout(() => {
+                            oscillator.stop(audioContext.currentTime + 0.3);
+                        }, 300);
+                    }, 200);
+                    break;
+            }
+        }
+
+        // Draw functions
+        function drawGrid() {
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw floor grid
+            for (let x = 0; x < canvas.width / GRID_SIZE; x++) {
+                for (let y = 0; y < canvas.height / GRID_SIZE; y++) {
+                    ctx.fillStyle = (x + y) % 2 === 0 ? COLORS.floor : COLORS.floorLight;
+                    ctx.fillRect(x * GRID_SIZE, y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+                }
+            }
+        }
+        
+        function drawPlayer() {
+            const padding = GRID_SIZE * 0.1;
+            
+            // Draw player body
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(
+                player.x * GRID_SIZE + padding, 
+                player.y * GRID_SIZE + padding, 
+                GRID_SIZE - padding * 2, 
+                GRID_SIZE - padding * 2
+            );
+            
+            // Draw player outline
+            ctx.strokeStyle = COLORS.playerOutline;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                player.x * GRID_SIZE + padding, 
+                player.y * GRID_SIZE + padding, 
+                GRID_SIZE - padding * 2, 
+                GRID_SIZE - padding * 2
+            );
+            
+            // Draw eyes
+            ctx.fillStyle = '#ffffff';
+            const eyeSize = GRID_SIZE * 0.15;
+            ctx.fillRect(
+                player.x * GRID_SIZE + GRID_SIZE * 0.3, 
+                player.y * GRID_SIZE + GRID_SIZE * 0.3, 
+                eyeSize, eyeSize
+            );
+            ctx.fillRect(
+                player.x * GRID_SIZE + GRID_SIZE * 0.6, 
+                player.y * GRID_SIZE + GRID_SIZE * 0.3, 
+                eyeSize, eyeSize
+            );
+        }
+        
+        function drawBlock() {
+            const padding = GRID_SIZE * 0.05;
+            
+            // Draw block body
+            ctx.fillStyle = COLORS.block;
+            ctx.fillRect(
+                block.x * GRID_SIZE + padding, 
+                block.y * GRID_SIZE + padding, 
+                GRID_SIZE - padding * 2, 
+                GRID_SIZE - padding * 2
+            );
+            
+            // Draw block outline
+            ctx.strokeStyle = COLORS.blockOutline;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(
+                block.x * GRID_SIZE + padding, 
+                block.y * GRID_SIZE + padding, 
+                GRID_SIZE - padding * 2, 
+                GRID_SIZE - padding * 2
+            );
+            
+            // Draw wood grain details
+            ctx.fillStyle = COLORS.blockOutline;
+            ctx.fillRect(
+                block.x * GRID_SIZE + GRID_SIZE * 0.2, 
+                block.y * GRID_SIZE + GRID_SIZE * 0.3, 
+                GRID_SIZE * 0.6, GRID_SIZE * 0.05
+            );
+            ctx.fillRect(
+                block.x * GRID_SIZE + GRID_SIZE * 0.3, 
+                block.y * GRID_SIZE + GRID_SIZE * 0.6, 
+                GRID_SIZE * 0.4, GRID_SIZE * 0.05
+            );
+        }
+        
+        function drawPlates() {
+            const padding = GRID_SIZE * 0.15;
+            
+            // Draw true plate
+            ctx.fillStyle = COLORS.truePlate;
+            ctx.fillRect(
+                truePlate.x * GRID_SIZE + padding, 
+                truePlate.y * GRID_SIZE + padding, 
+                GRID_SIZE - padding * 2, 
+                GRID_SIZE - padding * 2
+            );
+            
+            // Draw false plate
+            ctx.fillStyle = COLORS.falsePlate;
+            ctx.fillRect(
+                falsePlate.x * GRID_SIZE + padding, 
+                falsePlate.y * GRID_SIZE + padding, 
+                GRID_SIZE - padding * 2, 
+                GRID_SIZE - padding * 2
+            );
+            
+            // Add text on plates
+            ctx.fillStyle = '#ffffff';
+            ctx.font = Math.floor(GRID_SIZE * 0.3) + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            ctx.fillText('TRUE', truePlate.x * GRID_SIZE + GRID_SIZE/2, truePlate.y * GRID_SIZE + GRID_SIZE/2);
+            ctx.fillText('FALSE', falsePlate.x * GRID_SIZE + GRID_SIZE/2, falsePlate.y * GRID_SIZE + GRID_SIZE/2);
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = '#000';
+            ctx.font = Math.floor(GRID_SIZE * 0.45) + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Draw question with backdrop for readability
+            const questionText = "The Great Wall of China is visible from space.";
+            const textWidth = ctx.measureText(questionText).width + 20;
+            const textHeight = GRID_SIZE * 0.6;
+            const textX = canvas.width / 2;
+            const textY = GRID_SIZE;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(textX - textWidth/2, textY - textHeight/2, textWidth, textHeight);
+            
+            ctx.fillStyle = '#fff';
+            ctx.fillText(questionText, textX, textY);
+        }
+        
+        function drawControls() {
+            if (gameOver) return;
+            
+            const baseY = canvas.height - GRID_SIZE * 1.2;
+            const baseX = GRID_SIZE * 1.2;
+            const arrowSize = GRID_SIZE * 0.4;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(baseX - GRID_SIZE, baseY - GRID_SIZE/2, GRID_SIZE * 3, GRID_SIZE);
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = arrowSize + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('← ↑ → ↓', baseX + arrowSize, baseY);
+        }
+        
+        function drawGameOver() {
+            if (!gameOver) return;
+            
+            let message = isCorrect ? "Correct!" : "Incorrect!";
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(canvas.width/2 - GRID_SIZE * 2, canvas.height/2 - GRID_SIZE, GRID_SIZE * 4, GRID_SIZE * 2);
+            
+            ctx.fillStyle = isCorrect ? '#4caf50' : '#f44336';
+            ctx.font = GRID_SIZE * 0.6 + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(message, canvas.width/2, canvas.height/2);
+            
+            // Position and show restart button
+            restartBtn.style.display = 'block';
+            restartBtn.style.top = (canvas.height/2 + GRID_SIZE * 0.5 + canvas.offsetTop) + 'px';
+            restartBtn.style.left = (canvas.width/2 - 50 + canvas.offsetLeft) + 'px';
+        }
+        
+        // Main update function
+        function update() {
+            checkWinCondition();
+            draw();
+            
+            if (!gameOver) {
+                requestAnimationFrame(update);
+            }
+        }
+        
+        function draw() {
+            drawGrid();
+            drawPlates();
+            drawBlock();
+            drawPlayer();
+            drawQuestion();
+            drawControls();
+            drawGameOver();
+        }
+        
+        // Game logic
+        function movePlayer(dx, dy) {
+            if (gameOver) return;
+            
+            const newX = player.x + dx;
+            const newY = player.y + dy;
+            
+            // Check if the new position is the block
+            if (newX === block.x && newY === block.y) {
+                // Try to push the block
+                const newBlockX = block.x + dx;
+                const newBlockY = block.y + dy;
+                
+                // Check if the block can be moved
+                if (isValidPosition(newBlockX, newBlockY)) {
+                    block.x = newBlockX;
+                    block.y = newBlockY;
+                    player.x = newX;
+                    player.y = newY;
+                    playSound('push');
+                }
+            } 
+            // If the new position is not the block, move the player
+            else if (isValidPosition(newX, newY)) {
+                player.x = newX;
+                player.y = newY;
+                playSound('move');
+            }
+        }
+        
+        function isValidPosition(x, y) {
+            // Keep within canvas bounds
+            return x >= 0 && x < canvas.width / GRID_SIZE && 
+                   y >= 0 && y < canvas.height / GRID_SIZE;
+        }
+        
+        function checkWinCondition() {
+            // Check if block is on true plate
+            if (block.x === truePlate.x && block.y === truePlate.y) {
+                gameOver = true;
+                isCorrect = (correctAnswer === true);
+                playSound(isCorrect ? 'correct' : 'wrong');
+            }
+            
+            // Check if block is on false plate
+            if (block.x === falsePlate.x && block.y === falsePlate.y) {
+                gameOver = true;
+                isCorrect = (correctAnswer === false);
+                playSound(isCorrect ? 'correct' : 'wrong');
+            }
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            isCorrect = false;
+            
+            player = {
+                x: Math.floor(canvas.width / GRID_SIZE / 2),
+                y: Math.floor(canvas.height / GRID_SIZE / 2) + 1
+            };
+            block = {
+                x: Math.floor(canvas.width / GRID_SIZE / 2),
+                y: Math.floor(canvas.height / GRID_SIZE / 2)
+            };
+            
+            restartBtn.style.display = 'none';
+            update();
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            
+            switch(e.key) {
+                case 'ArrowUp':
+                    movePlayer(0, -1);
+                    break;
+                case 'ArrowDown':
+                    movePlayer(0, 1);
+                    break;
+                case 'ArrowLeft':
+                    movePlayer(-1, 0);
+                    break;
+                case 'ArrowRight':
+                    movePlayer(1, 0);
+                    break;
+            }
+            e.preventDefault();
+        });
+        
+        // Touch controls for mobile
+        let touchStartX, touchStartY;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameOver) return;
+            
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            e.preventDefault();
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', (e) => {
+            if (gameOver || !touchStartX) return;
+            
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            
+            const diffX = touchEndX - touchStartX;
+            const diffY = touchEndY - touchStartY;
+            
+            // Determine swipe direction
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                // Horizontal swipe
+                if (diffX > 30) {
+                    movePlayer(1, 0); // Right
+                } else if (diffX < -30) {
+                    movePlayer(-1, 0); // Left
+                }
+            } else {
+                // Vertical swipe
+                if (diffY > 30) {
+                    movePlayer(0, 1); // Down
+                } else if (diffY < -30) {
+                    movePlayer(0, -1); // Up
+                }
+            }
+            
+            touchStartX = null;
+            touchStartY = null;
+            e.preventDefault();
+        }, { passive: false });
+        
+        restartBtn.addEventListener('click', resetGame);
+        
+        // Initialize game
+        update();
+    </script>
+</body>
+</html>

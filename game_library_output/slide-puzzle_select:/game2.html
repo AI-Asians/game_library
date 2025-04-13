@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Slider Puzzle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive canvas size
+        const isMobile = window.innerWidth < 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - retro 8-bit palette
+        const COLORS = {
+            background: '#0f380f',
+            questionBg: '#306230',
+            tileBg: '#8bac0f',
+            tileHighlight: '#9bbc0f',
+            tileDark: '#0f380f',
+            targetBg: '#2d4e4e',
+            targetHighlight: '#4e6e6e',
+            text: '#e0f8d0',
+            textShadow: '#0f380f',
+            correct: '#71c205',
+            incorrect: '#d31334',
+            border: '#0f380f'
+        };
+        
+        // Sound effects - simple beep sounds
+        const createBeep = (frequency, duration, volume = 0.5, type = 'square') => {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        };
+        
+        // Sound effects
+        const sounds = {
+            move: () => createBeep(220, 70, 0.2),
+            correct: () => createBeep(440, 100, 0.3, 'square'),
+            incorrect: () => {
+                createBeep(150, 130, 0.3);
+                setTimeout(() => createBeep(110, 200, 0.3), 150);
+            }
+        };
+        
+        // Game state
+        const game = {
+            gridSize: 3,
+            tiles: [],
+            emptyPos: { row: 2, col: 2 },
+            targetPos: { row: 1, col: 1 },
+            answers: ['Mars', 'Venus', 'Jupiter', 'Earth', 'Saturn', 'Neptune', 'Mercury', 'Uranus'],
+            correctAnswer: 'Mars',
+            animating: false,
+            gameOver: false,
+            restartButton: {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                visible: false
+            },
+            tileSize: 0,
+            gridOffset: { x: 0, y: 0 },
+            frameCount: 0
+        };
+        
+        // Initialize the game
+        function init() {
+            // Calculate grid dimensions based on canvas size
+            const gridMargin = canvas.width * 0.1;
+            game.tileSize = (canvas.width - (gridMargin * 2)) / game.gridSize;
+            game.gridOffset = { 
+                x: gridMargin, 
+                y: canvas.height / 2 - (game.tileSize * game.gridSize) / 2
+            };
+            
+            // Set up restart button
+            const buttonSize = canvas.width * 0.3;
+            game.restartButton = {
+                x: canvas.width / 2 - buttonSize / 2,
+                y: canvas.height - gridMargin - buttonSize / 2,
+                width: buttonSize,
+                height: buttonSize / 2,
+                visible: false
+            };
+            
+            // Create the tiles
+            resetPuzzle();
+            
+            // Add event listeners
+            canvas.addEventListener('click', handleClick);
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Reset the puzzle
+        function resetPuzzle() {
+            game.tiles = [];
+            game.gameOver = false;
+            
+            // Create tiles with answers
+            const shuffledAnswers = [...game.answers];
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                const temp = shuffledAnswers[i];
+                const j = Math.floor(Math.random() * shuffledAnswers.length);
+                shuffledAnswers[i] = shuffledAnswers[j];
+                shuffledAnswers[j] = temp;
+            }
+            
+            // Fill the grid with tiles
+            let answerIndex = 0;
+            for (let row = 0; row < game.gridSize; row++) {
+                for (let col = 0; col < game.gridSize; col++) {
+                    // Skip the empty position
+                    if (row === game.emptyPos.row && col === game.emptyPos.col) {
+                        continue;
+                    }
+                    
+                    game.tiles.push({
+                        row: row,
+                        col: col,
+                        text: shuffledAnswers[answerIndex],
+                        x: game.gridOffset.x + col * game.tileSize,
+                        y: game.gridOffset.y + row * game.tileSize,
+                        targetX: game.gridOffset.x + col * game.tileSize,
+                        targetY: game.gridOffset.y + row * game.tileSize,
+                        animating: false
+                    });
+                    
+                    answerIndex++;
+                    if (answerIndex >= shuffledAnswers.length) {
+                        answerIndex = 0;
+                    }
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Update game state
+        function update() {
+            game.frameCount++;
+            
+            // Check if any tiles are currently animating
+            game.animating = game.tiles.some(tile => tile.animating);
+            
+            // Update tile positions during animation
+            game.tiles.forEach(tile => {
+                if (tile.animating) {
+                    const dx = tile.targetX - tile.x;
+                    const dy = tile.targetY - tile.y;
+                    
+                    // Simple animation - move tiles toward their target
+                    tile.x += dx * 0.2;
+                    tile.y += dy * 0.2;
+                    
+                    // Check if animation is complete
+                    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+                        tile.x = tile.targetX;
+                        tile.y = tile.targetY;
+                        tile.animating = false;
+                    }
+                }
+            });
+            
+            // Check for win condition
+            if (!game.gameOver && !game.animating) {
+                // Find tile in target position
+                const tileInTarget = game.tiles.find(tile => 
+                    tile.row === game.targetPos.row && tile.col === game.targetPos.col
+                );
+                
+                if (tileInTarget) {
+                    if (tileInTarget.text === game.correctAnswer) {
+                        sounds.correct();
+                        game.gameOver = true;
+                        game.gameWon = true;
+                        game.restartButton.visible = true;
+                    }
+                }
+            }
+        }
+        
+        // Draw the game
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw target position indicator
+            drawTarget();
+            
+            // Draw grid background
+            drawGridBackground();
+            
+            // Draw tiles
+            drawTiles();
+            
+            // Draw game over message
+            if (game.gameOver) {
+                drawGameOverMessage();
+            }
+            
+            // Draw restart button if visible
+            if (game.restartButton.visible) {
+                drawRestartButton();
+            }
+        }
+        
+        // Draw the question at the top
+        function drawQuestion() {
+            const padding = canvas.width * 0.05;
+            const questionHeight = canvas.height * 0.1;
+            
+            // Draw question background
+            ctx.fillStyle = COLORS.questionBg;
+            drawPixelRect(padding, padding, canvas.width - padding * 2, questionHeight, 4);
+            
+            // Draw question text
+            ctx.font = `${Math.floor(canvas.width * 0.03)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText('Which planet is known as the Red Planet?', 
+                canvas.width / 2, padding + questionHeight / 2);
+        }
+        
+        // Draw the target position indicator
+        function drawTarget() {
+            const targetX = game.gridOffset.x + game.targetPos.col * game.tileSize;
+            const targetY = game.gridOffset.y + game.targetPos.row * game.tileSize;
+            
+            // Flash the target based on frame count
+            if (Math.floor(game.frameCount / 20) % 2 === 0) {
+                ctx.fillStyle = COLORS.targetHighlight;
+            } else {
+                ctx.fillStyle = COLORS.targetBg;
+            }
+            
+            drawPixelRect(targetX, targetY, game.tileSize, game.tileSize, 4);
+            
+            // Draw target indicator
+            const starSize = game.tileSize * 0.2;
+            const centerX = targetX + game.tileSize / 2;
+            const centerY = targetY + game.tileSize / 2;
+            
+            ctx.fillStyle = COLORS.text;
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const angle = (i * 2 * Math.PI / 5) - Math.PI / 2;
+                const outerX = centerX + Math.cos(angle) * starSize;
+                const outerY = centerY + Math.sin(angle) * starSize;
+                
+                if (i === 0) {
+                    ctx.moveTo(outerX, outerY);
+                } else {
+                    ctx.lineTo(outerX, outerY);
+                }
+                
+                const innerAngle = angle + Math.PI / 5;
+                const innerX = centerX + Math.cos(innerAngle) * (starSize / 2);
+                const innerY = centerY + Math.sin(innerAngle) * (starSize / 2);
+                ctx.lineTo(innerX, innerY);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+        
+        // Draw the grid background
+        function drawGridBackground() {
+            // Draw grid cells
+            for (let row = 0; row < game.gridSize; row++) {
+                for (let col = 0; col < game.gridSize; col++) {
+                    const x = game.gridOffset.x + col * game.tileSize;
+                    const y = game.gridOffset.y + row * game.tileSize;
+                    
+                    // Skip the target position (already drawn)
+                    if (row === game.targetPos.row && col === game.targetPos.col) {
+                        continue;
+                    }
+                    
+                    // Draw empty position with darker color
+                    if (row === game.emptyPos.row && col === game.emptyPos.col) {
+                        ctx.fillStyle = COLORS.tileDark;
+                        drawPixelRect(x, y, game.tileSize, game.tileSize, 4);
+                        
+                        // Draw possible move arrows
+                        drawMoveIndicators(x, y);
+                        continue;
+                    }
+                    
+                    // Draw regular cell
+                    ctx.fillStyle = COLORS.tileBg;
+                    drawPixelRect(x, y, game.tileSize, game.tileSize, 4);
+                }
+            }
+        }
+        
+        // Draw arrows indicating possible moves
+        function drawMoveIndicators(x, y) {
+            const arrowSize = game.tileSize * 0.2;
+            const centerX = x + game.tileSize / 2;
+            const centerY = y + game.tileSize / 2;
+            
+            ctx.fillStyle = COLORS.text;
+            
+            // Check each direction for possible moves
+            // Up
+            if (game.emptyPos.row > 0) {
+                drawArrow(centerX, centerY - arrowSize, 0, arrowSize);
+            }
+            
+            // Right
+            if (game.emptyPos.col < game.gridSize - 1) {
+                drawArrow(centerX + arrowSize, centerY, 1, arrowSize);
+            }
+            
+            // Down
+            if (game.emptyPos.row < game.gridSize - 1) {
+                drawArrow(centerX, centerY + arrowSize, 2, arrowSize);
+            }
+            
+            // Left
+            if (game.emptyPos.col > 0) {
+                drawArrow(centerX - arrowSize, centerY, 3, arrowSize);
+            }
+        }
+        
+        // Draw an arrow in specified direction (0=up, 1=right, 2=down, 3=left)
+        function drawArrow(x, y, direction, size) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(direction * Math.PI / 2);
+            
+            ctx.beginPath();
+            ctx.moveTo(0, -size / 2);
+            ctx.lineTo(size / 2, size / 2);
+            ctx.lineTo(-size / 2, size / 2);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        // Draw all tiles
+        function drawTiles() {
+            game.tiles.forEach(tile => {
+                // Draw tile background
+                ctx.fillStyle = COLORS.tileBg;
+                drawPixelRect(tile.x, tile.y, game.tileSize, game.tileSize, 4);
+                
+                // Draw tile text
+                const fontSize = Math.floor(game.tileSize * 0.25);
+                ctx.font = `${fontSize}px sans-serif`;
+                ctx.fillStyle = COLORS.text;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Check if this tile is in the target position
+                const isInTarget = (tile.row === game.targetPos.row && tile.col === game.targetPos.col);
+                
+                if (game.gameOver && isInTarget) {
+                    if (tile.text === game.correctAnswer) {
+                        ctx.fillStyle = COLORS.correct;
+                    } else {
+                        ctx.fillStyle = COLORS.incorrect;
+                    }
+                }
+                
+                ctx.fillText(tile.text, tile.x + game.tileSize / 2, tile.y + game.tileSize / 2);
+            });
+        }
+        
+        // Draw game over message
+        function drawGameOverMessage() {
+            const padding = canvas.width * 0.05;
+            const messageY = game.gridOffset.y + game.gridSize * game.tileSize + padding * 2;
+            
+            ctx.font = `${Math.floor(canvas.width * 0.05)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            if (game.gameWon) {
+                ctx.fillStyle = COLORS.correct;
+                ctx.fillText('Correct! Mars is the Red Planet!', canvas.width / 2, messageY);
+            } else {
+                ctx.fillStyle = COLORS.incorrect;
+                ctx.fillText('Incorrect! Try again!', canvas.width / 2, messageY);
+            }
+        }
+        
+        // Draw restart button
+        function drawRestartButton() {
+            const { x, y, width, height } = game.restartButton;
+            
+            // Draw button background
+            ctx.fillStyle = COLORS.tileBg;
+            drawPixelRect(x, y, width, height, 4);
+            
+            // Draw button text
+            const fontSize = Math.floor(width * 0.2);
+            ctx.font = `${fontSize}px sans-serif`;
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', x + width / 2, y + height / 2);
+        }
+        
+        // Draw a pixelated rectangle
+        function drawPixelRect(x, y, width, height, borderSize) {
+            // Draw main rectangle
+            ctx.fillRect(x, y, width, height);
+            
+            // Draw border
+            ctx.fillStyle = COLORS.border;
+            ctx.fillRect(x, y, width, borderSize); // Top
+            ctx.fillRect(x, y + height - borderSize, width, borderSize); // Bottom
+            ctx.fillRect(x, y, borderSize, height); // Left
+            ctx.fillRect(x + width - borderSize, y, borderSize, height); // Right
+            
+            // Inner highlight
+            ctx.fillStyle = COLORS.tileHighlight;
+            ctx.fillRect(x + borderSize, y + borderSize, borderSize, height - borderSize * 2); // Left inner
+            ctx.fillRect(x + borderSize, y + borderSize, width - borderSize * 2, borderSize); // Top inner
+            
+            // Inner shadow
+            ctx.fillStyle = COLORS.tileDark;
+            ctx.fillRect(x + width - borderSize * 2, y + borderSize, borderSize, height - borderSize * 2); // Right inner
+            ctx.fillRect(x + borderSize, y + height - borderSize * 2, width - borderSize * 2, borderSize); // Bottom inner
+        }
+        
+        // Handle mouse clicks
+        function handleClick(event) {
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clickX = (event.clientX - rect.left) * scaleX;
+            const clickY = (event.clientY - rect.top) * scaleY;
+            
+            // Check if restart button was clicked
+            if (game.restartButton.visible) {
+                const { x, y, width, height } = game.restartButton;
+                if (clickX >= x && clickX <= x + width && clickY >= y && clickY <= y + height) {
+                    resetPuzzle();
+                    game.restartButton.visible = false;
+                    return;
+                }
+            }
+            
+            // If the game is over or animating, ignore clicks
+            if (game.gameOver || game.animating) {
+                return;
+            }
+            
+            // Check if click was on a tile
+            const clickedTile = findClickedTile(clickX, clickY);
+            if (clickedTile) {
+                tryMoveTile(clickedTile);
+            }
+        }
+        
+        // Find which tile was clicked
+        function findClickedTile(x, y) {
+            // Calculate which grid position was clicked
+            const col = Math.floor((x - game.gridOffset.x) / game.tileSize);
+            const row = Math.floor((y - game.gridOffset.y) / game.tileSize);
+            
+            // Check if click is within grid
+            if (row >= 0 && row < game.gridSize && col >= 0 && col < game.gridSize) {
+                // Find tile at this position
+                return game.tiles.find(tile => tile.row === row && tile.col === col);
+            }
+            
+            return null;
+        }
+        
+        // Try to move a tile
+        function tryMoveTile(tile) {
+            // Check if the tile is adjacent to the empty position
+            const isAdjacent = (
+                (tile.row === game.emptyPos.row && Math.abs(tile.col - game.emptyPos.col) === 1) ||
+                (tile.col === game.emptyPos.col && Math.abs(tile.row - game.emptyPos.row) === 1)
+            );
+            
+            if (isAdjacent) {
+                // Swap positions with the empty space
+                const newRow = game.emptyPos.row;
+                const newCol = game.emptyPos.col;
+                
+                // Update empty position
+                game.emptyPos.row = tile.row;
+                game.emptyPos.col = tile.col;
+                
+                // Update tile position and start animation
+                tile.targetX = game.gridOffset.x + newCol * game.tileSize;
+                tile.targetY = game.gridOffset.y + newRow * game.tileSize;
+                tile.row = newRow;
+                tile.col = newCol;
+                tile.animating = true;
+                
+                // Play move sound
+                sounds.move();
+                
+                // Check if a tile was placed in the target position
+                if (newRow === game.targetPos.row && newCol === game.targetPos.col) {
+                    // Wait for animation to complete before checking
+                    setTimeout(() => {
+                        if (tile.text === game.correctAnswer) {
+                            sounds.correct();
+                            game.gameOver = true;
+                            game.gameWon = true;
+                        } else {
+                            sounds.incorrect();
+                            game.gameOver = true;
+                            game.gameWon = false;
+                        }
+                        game.restartButton.visible = true;
+                    }, 300);
+                }
+            }
+        }
+        
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>

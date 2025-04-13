@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Binary-Beam</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 4px solid #444;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Determine if on mobile
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - 8-bit palette
+        const colors = {
+            background: '#0f0f2d',
+            emitter: '#7e9eff',
+            emitterBase: '#40318d',
+            beamTrue: '#66ff66',
+            beamFalse: '#ff6666',
+            trueZone: '#225522',
+            falseZone: '#552222',
+            trueText: '#88ff88',
+            falseText: '#ff8888',
+            questionText: '#ffffff',
+            correctFeedback: '#ffff00',
+            incorrectFeedback: '#ff00ff',
+            restartButton: '#555555',
+            restartText: '#ffffff'
+        };
+        
+        // Game state
+        let gameState = {
+            angle: 0, // Current beam angle
+            beamDirection: 0, // -1 for false, 1 for true
+            isGameOver: false,
+            isCorrect: false,
+            beamLocked: false,
+            beamPulse: 0,
+            restartButton: {
+                x: canvas.width / 2,
+                y: canvas.height / 2 + 100,
+                width: 120,
+                height: 40
+            }
+        };
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        const answer = false; // The correct answer is FALSE
+        
+        // Beam emitter properties
+        const emitter = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            radius: 20,
+            baseWidth: 40,
+            baseHeight: 30
+        };
+        
+        // Target zones
+        const zoneHeight = 120;
+        const zoneY = 150;
+        
+        // Audio context
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'beam':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Draw functions
+        function drawPixelatedRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            const pixelSize = 4;
+            
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    if (Math.random() > 0.05) { // Create slight pixelation effect
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        function drawEmitter() {
+            // Base
+            ctx.fillStyle = colors.emitterBase;
+            ctx.fillRect(
+                emitter.x - emitter.baseWidth / 2,
+                emitter.y, 
+                emitter.baseWidth, 
+                emitter.baseHeight
+            );
+            
+            // Draw pixel details on base
+            for (let i = 0; i < 5; i++) {
+                ctx.fillStyle = i % 2 === 0 ? '#555599' : '#333377';
+                ctx.fillRect(
+                    emitter.x - emitter.baseWidth / 2 + i * 8,
+                    emitter.y + 5,
+                    8,
+                    5
+                );
+            }
+            
+            // Emitter dome
+            ctx.fillStyle = colors.emitter;
+            ctx.beginPath();
+            ctx.arc(emitter.x, emitter.y, emitter.radius, 0, Math.PI, true);
+            ctx.fill();
+            
+            // Pixel details for dome
+            for (let i = -emitter.radius; i < emitter.radius; i += 4) {
+                for (let j = -emitter.radius; j < 0; j += 4) {
+                    if (i*i + j*j < emitter.radius * emitter.radius && Math.random() > 0.3) {
+                        ctx.fillStyle = '#9eb8ff';
+                        if (i*i + j*j > emitter.radius * emitter.radius * 0.7) {
+                            ctx.fillStyle = '#c0d0ff';
+                        }
+                        ctx.fillRect(emitter.x + i, emitter.y + j, 4, 4);
+                    }
+                }
+            }
+        }
+        
+        function drawBeam() {
+            const beamLength = canvas.height - zoneY - 30;
+            const endX = emitter.x + Math.sin(gameState.angle) * beamLength;
+            const endY = emitter.y - Math.cos(gameState.angle) * beamLength;
+            
+            // Determine beam color based on direction
+            let beamColor;
+            if (Math.sin(gameState.angle) > 0.1) {
+                beamColor = colors.beamTrue;
+                gameState.beamDirection = 1; // True
+            } else if (Math.sin(gameState.angle) < -0.1) {
+                beamColor = colors.beamFalse;
+                gameState.beamDirection = -1; // False
+            } else {
+                beamColor = '#aaaaaa';
+                gameState.beamDirection = 0; // Neutral
+            }
+            
+            // Draw beam with pixelation effect
+            ctx.lineWidth = 8 + Math.sin(gameState.beamPulse) * 2;
+            ctx.strokeStyle = beamColor;
+            
+            // Draw pixelated beam
+            const dx = endX - emitter.x;
+            const dy = endY - emitter.y;
+            const steps = 40; // Number of segments in beam
+            
+            for (let i = 0; i < steps; i++) {
+                const ratio = i / steps;
+                const nextRatio = (i + 1) / steps;
+                
+                const x1 = emitter.x + dx * ratio;
+                const y1 = emitter.y + dy * ratio;
+                const x2 = emitter.x + dx * nextRatio;
+                const y2 = emitter.y + dy * nextRatio;
+                
+                // Add some noise to make it more pixelated
+                const jitter = Math.sin(i * 0.5 + gameState.beamPulse * 3) * 2;
+                
+                ctx.beginPath();
+                ctx.moveTo(x1 + jitter, y1 - jitter);
+                ctx.lineTo(x2 + jitter, y2 - jitter);
+                ctx.stroke();
+            }
+        }
+        
+        function drawTargetZones() {
+            // False zone (left)
+            drawPixelatedRect(0, zoneY, canvas.width / 2 - 20, zoneHeight, colors.falseZone);
+            
+            // True zone (right)
+            drawPixelatedRect(canvas.width / 2 + 20, zoneY, canvas.width / 2 - 20, zoneHeight, colors.trueZone);
+            
+            // Zone labels
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            
+            ctx.fillStyle = colors.falseText;
+            ctx.fillText('FALSE', canvas.width / 4, zoneY + zoneHeight / 2 + 10);
+            
+            ctx.fillStyle = colors.trueText;
+            ctx.fillText('TRUE', canvas.width * 3 / 4, zoneY + zoneHeight / 2 + 10);
+            
+            // Target decorations
+            for (let i = 0; i < 4; i++) {
+                // False target
+                ctx.strokeStyle = colors.falseText;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(canvas.width / 4, zoneY + zoneHeight / 2, 40 + i * 15, 0, 2 * Math.PI);
+                ctx.stroke();
+                
+                // True target
+                ctx.strokeStyle = colors.trueText;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(canvas.width * 3 / 4, zoneY + zoneHeight / 2, 40 + i * 15, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.questionText;
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 80);
+        }
+        
+        function drawFeedback() {
+            if (!gameState.isGameOver) return;
+            
+            if (gameState.isCorrect) {
+                ctx.fillStyle = colors.correctFeedback;
+                ctx.font = '36px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('CORRECT!', canvas.width / 2, canvas.height / 2);
+            } else {
+                ctx.fillStyle = colors.incorrectFeedback;
+                ctx.font = '36px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('INCORRECT!', canvas.width / 2, canvas.height / 2);
+                
+                // Show the correct answer
+                ctx.fillStyle = colors.correctFeedback;
+                ctx.font = '24px Arial';
+                ctx.fillText('The answer is ' + (answer ? 'TRUE' : 'FALSE'), canvas.width / 2, canvas.height / 2 + 40);
+            }
+            
+            // Draw restart button
+            ctx.fillStyle = colors.restartButton;
+            ctx.fillRect(
+                gameState.restartButton.x - gameState.restartButton.width / 2,
+                gameState.restartButton.y - gameState.restartButton.height / 2,
+                gameState.restartButton.width,
+                gameState.restartButton.height
+            );
+            
+            ctx.fillStyle = colors.restartText;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('RESTART', gameState.restartButton.x, gameState.restartButton.y + 7);
+        }
+        
+        function drawGame() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawTargetZones();
+            drawQuestion();
+            
+            if (!gameState.isGameOver) {
+                drawBeam();
+            }
+            
+            drawEmitter();
+            drawFeedback();
+            
+            // Update beam pulse animation
+            gameState.beamPulse += 0.1;
+        }
+        
+        function checkAnswer() {
+            if (gameState.beamDirection === 1) { // True selected
+                gameState.isCorrect = answer === true;
+            } else if (gameState.beamDirection === -1) { // False selected
+                gameState.isCorrect = answer === false;
+            } else {
+                return; // No selection made
+            }
+            
+            gameState.isGameOver = true;
+            playSound(gameState.isCorrect ? 'correct' : 'incorrect');
+        }
+        
+        function resetGame() {
+            gameState = {
+                angle: 0,
+                beamDirection: 0,
+                isGameOver: false,
+                isCorrect: false,
+                beamLocked: false,
+                beamPulse: 0,
+                restartButton: {
+                    x: canvas.width / 2,
+                    y: canvas.height / 2 + 100,
+                    width: 120,
+                    height: 40
+                }
+            };
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousemove', function(e) {
+            if (gameState.isGameOver || gameState.beamLocked) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = ((e.clientX - rect.left) / rect.width) * canvas.width;
+            const mouseY = ((e.clientY - rect.top) / rect.height) * canvas.height;
+            
+            // Calculate angle from emitter to mouse
+            const dx = mouseX - emitter.x;
+            const dy = emitter.y - mouseY;
+            gameState.angle = Math.atan2(dx, dy);
+            
+            // Limit angle to point only left or right (with a small neutral zone)
+            if (gameState.angle > Math.PI / 2) gameState.angle = Math.PI / 2;
+            if (gameState.angle < -Math.PI / 2) gameState.angle = -Math.PI / 2;
+            
+            playSound('beam');
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            if (gameState.isGameOver || gameState.beamLocked) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const touchX = ((touch.clientX - rect.left) / rect.width) * canvas.width;
+            const touchY = ((touch.clientY - rect.top) / rect.height) * canvas.height;
+            
+            // Calculate angle from emitter to touch
+            const dx = touchX - emitter.x;
+            const dy = emitter.y - touchY;
+            gameState.angle = Math.atan2(dx, dy);
+            
+            // Limit angle to point only left or right (with a small neutral zone)
+            if (gameState.angle > Math.PI / 2) gameState.angle = Math.PI / 2;
+            if (gameState.angle < -Math.PI / 2) gameState.angle = -Math.PI / 2;
+            
+            playSound('beam');
+        }, { passive: false });
+        
+        canvas.addEventListener('click', function(e) {
+            if (gameState.isGameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = ((e.clientX - rect.left) / rect.width) * canvas.width;
+                const clickY = ((e.clientY - rect.top) / rect.height) * canvas.height;
+                
+                // Check if restart button was clicked
+                if (
+                    clickX >= gameState.restartButton.x - gameState.restartButton.width / 2 &&
+                    clickX <= gameState.restartButton.x + gameState.restartButton.width / 2 &&
+                    clickY >= gameState.restartButton.y - gameState.restartButton.height / 2 &&
+                    clickY <= gameState.restartButton.y + gameState.restartButton.height / 2
+                ) {
+                    resetGame();
+                }
+            } else if (!gameState.beamLocked && gameState.beamDirection !== 0) {
+                gameState.beamLocked = true;
+                setTimeout(checkAnswer, 300);
+            }
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            if (gameState.isGameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.changedTouches[0];
+                const touchX = ((touch.clientX - rect.left) / rect.width) * canvas.width;
+                const touchY = ((touch.clientY - rect.top) / rect.height) * canvas.height;
+                
+                // Check if restart button was touched
+                if (
+                    touchX >= gameState.restartButton.x - gameState.restartButton.width / 2 &&
+                    touchX <= gameState.restartButton.x + gameState.restartButton.width / 2 &&
+                    touchY >= gameState.restartButton.y - gameState.restartButton.height / 2 &&
+                    touchY <= gameState.restartButton.y + gameState.restartButton.height / 2
+                ) {
+                    resetGame();
+                }
+            } else if (!gameState.beamLocked && gameState.beamDirection !== 0) {
+                gameState.beamLocked = true;
+                setTimeout(checkAnswer, 300);
+            }
+        });
+        
+        // Game loop
+        function gameLoop() {
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

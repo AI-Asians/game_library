@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sound Wave TF Game</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #111;
+            overflow: hidden;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            display: none;
+            background-color: #444;
+            color: #fff;
+            border: 4px solid #666;
+            padding: 10px 20px;
+            font-family: sans-serif;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Game constants
+        const isWeb = window.innerWidth >= 800;
+        const CANVAS_WIDTH = isWeb ? 800 : 360;
+        const CANVAS_HEIGHT = isWeb ? 600 : 640;
+        
+        // Colors (8-bit palette)
+        const COLORS = {
+            background: "#0D1B2A",
+            border: "#415A77",
+            waveBase: "#778DA9",
+            waveHighlight: "#E0E1DD",
+            textMain: "#E0E1DD",
+            true: "#2D6A4F",
+            false: "#9D0208",
+            trueHighlight: "#40916C",
+            falseHighlight: "#E63946"
+        };
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Game state
+        let wavePhase = 0;
+        let gameActive = true;
+        let gameResult = null; // null = ongoing, true = correct, false = incorrect
+        
+        // DOM elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas dimensions
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        
+        // Initialize audio context
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Play sound effect
+        function playSound(freq, duration, type = 'square') {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            gainNode.gain.value = 0.3;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            setTimeout(() => {
+                oscillator.stop();
+            }, duration * 1000);
+        }
+        
+        // Draw pixelated text
+        function drawText(text, x, y, size, color) {
+            ctx.font = `${size}px sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.fillText(text, x, y);
+        }
+        
+        // Draw the wave
+        function drawWave(phase) {
+            const waveHeight = CANVAS_HEIGHT * 0.3;
+            const waveWidth = CANVAS_WIDTH;
+            const centerY = CANVAS_HEIGHT * 0.5;
+            
+            // Draw waveform border
+            ctx.fillStyle = COLORS.border;
+            ctx.fillRect(20, centerY - waveHeight - 30, waveWidth - 40, waveHeight * 2 + 60);
+            
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(30, centerY - waveHeight - 20, waveWidth - 60, waveHeight * 2 + 40);
+            
+            // Draw TRUE/FALSE zones
+            // TRUE zone (left side)
+            ctx.fillStyle = COLORS.true;
+            ctx.fillRect(40, centerY - waveHeight - 10, (waveWidth - 100) / 2, waveHeight * 2 + 20);
+            
+            // FALSE zone (right side)
+            ctx.fillStyle = COLORS.false;
+            ctx.fillRect(CANVAS_WIDTH / 2 + 10, centerY - waveHeight - 10, (waveWidth - 100) / 2, waveHeight * 2 + 20);
+            
+            // Draw TRUE/FALSE labels
+            drawText("TRUE", CANVAS_WIDTH * 0.25, centerY, 24, "#fff");
+            drawText("FALSE", CANVAS_WIDTH * 0.75, centerY, 24, "#fff");
+            
+            // Draw the actual waveform
+            ctx.lineWidth = 8;
+            ctx.strokeStyle = COLORS.waveBase;
+            ctx.beginPath();
+            
+            for (let x = 0; x < waveWidth; x += 8) {
+                // Create a complex wave pattern
+                const normalizedX = x / waveWidth;
+                const waveVal = Math.sin(normalizedX * 12 + phase) * 0.5 + 
+                                Math.sin(normalizedX * 6 + phase * 1.5) * 0.3 +
+                                Math.sin(normalizedX * 24 + phase * 0.8) * 0.2;
+                
+                const y = centerY + waveVal * waveHeight;
+                
+                if (x === 0) {
+                    ctx.moveTo(x, Math.round(y));
+                } else {
+                    ctx.lineTo(x, Math.round(y));
+                }
+            }
+            ctx.stroke();
+            
+            // Determine current zone and draw cursor
+            const cursorX = (waveWidth / 2) + Math.sin(phase) * (waveWidth / 2 - 60);
+            const normalizedCursor = cursorX / waveWidth;
+            const cursorWaveVal = Math.sin(normalizedCursor * 12 + phase) * 0.5 + 
+                                 Math.sin(normalizedCursor * 6 + phase * 1.5) * 0.3 +
+                                 Math.sin(normalizedCursor * 24 + phase * 0.8) * 0.2;
+            
+            const cursorY = centerY + cursorWaveVal * waveHeight;
+            
+            // Highlight active zone
+            if (cursorX < CANVAS_WIDTH / 2) {
+                ctx.fillStyle = COLORS.trueHighlight;
+                ctx.fillRect(40, centerY - waveHeight - 10, (waveWidth - 100) / 2, 8);
+                ctx.fillRect(40, centerY + waveHeight + 2, (waveWidth - 100) / 2, 8);
+            } else {
+                ctx.fillStyle = COLORS.falseHighlight;
+                ctx.fillRect(CANVAS_WIDTH / 2 + 10, centerY - waveHeight - 10, (waveWidth - 100) / 2, 8);
+                ctx.fillRect(CANVAS_WIDTH / 2 + 10, centerY + waveHeight + 2, (waveWidth - 100) / 2, 8);
+            }
+            
+            // Draw cursor
+            ctx.fillStyle = "#fff";
+            ctx.beginPath();
+            ctx.arc(cursorX, cursorY, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            
+            return cursorX < CANVAS_WIDTH / 2; // returns true if in TRUE zone
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            const questionY = CANVAS_HEIGHT * 0.15;
+            
+            // Draw question box
+            ctx.fillStyle = COLORS.border;
+            ctx.fillRect(40, questionY - 40, CANVAS_WIDTH - 80, 80);
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(50, questionY - 30, CANVAS_WIDTH - 100, 60);
+            
+            // Draw question text
+            drawText("The Great Wall of China is visible from space.", CANVAS_WIDTH / 2, questionY + 5, 24, COLORS.textMain);
+        }
+        
+        // Draw game result
+        function drawResult(isCorrect) {
+            const resultY = CANVAS_HEIGHT * 0.85;
+            
+            ctx.fillStyle = isCorrect ? COLORS.true : COLORS.false;
+            ctx.fillRect(CANVAS_WIDTH / 2 - 150, resultY - 40, 300, 80);
+            
+            drawText(isCorrect ? "CORRECT!" : "INCORRECT!", CANVAS_WIDTH / 2, resultY + 10, 32, "#fff");
+        }
+        
+        // Main game update function
+        function update() {
+            if (!gameActive) return;
+            
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw the question
+            drawQuestion();
+            
+            // Draw wave and get current zone
+            const inTrueZone = drawWave(wavePhase);
+            
+            // Update wave phase
+            wavePhase += 0.05;
+            
+            // Play wave sound
+            if (Math.floor(wavePhase * 5) % 5 === 0) {
+                playSound(inTrueZone ? 440 : 330, 0.05);
+            }
+            
+            // Draw result if applicable
+            if (gameResult !== null) {
+                drawResult(gameResult);
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Handle player input
+        function handleInput(x, y) {
+            if (!gameActive || gameResult !== null) return;
+            
+            // Determine which zone was tapped
+            const inTrueZone = drawWave(wavePhase);
+            
+            // The correct answer is FALSE (Great Wall not visible from space)
+            const selectedCorrectly = inTrueZone === false;
+            
+            // Set game result
+            gameResult = selectedCorrectly;
+            
+            // Play result sound
+            if (selectedCorrectly) {
+                playSound(880, 0.3, 'square');
+                setTimeout(() => playSound(1320, 0.5, 'square'), 200);
+            } else {
+                playSound(220, 0.5, 'sawtooth');
+            }
+            
+            // Show restart button after a delay
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+                gameActive = false;
+            }, 1500);
+        }
+        
+        // Event Listeners
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            handleInput(x, y);
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            handleInput(x, y);
+        });
+        
+        restartBtn.addEventListener('click', () => {
+            gameResult = null;
+            gameActive = true;
+            wavePhase = 0;
+            restartBtn.style.display = 'none';
+            update();
+        });
+        
+        // Start the game
+        update();
+    </script>
+</body>
+</html>

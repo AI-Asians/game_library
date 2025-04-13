@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital of France - Ingredient Mix Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors (limited palette)
+        const COLORS = {
+            background: '#5D94FB',
+            ground: '#507B2A',
+            cauldron: '#444444',
+            cauldronRim: '#222222',
+            liquid: '#7B4FC4',
+            text: '#FFFFFF',
+            outline: '#000000',
+            eiffel: '#BF9762',
+            bigBen: '#A52A2A',
+            colosseum: '#E5AA7A',
+            statueLibertyBlue: '#44AADD',
+            poof: '#FFFFFF',
+            button: '#FF5555',
+            buttonHover: '#FF8888',
+            buttonText: '#FFFFFF',
+            correctFeedback: '#44FF44',
+            incorrectFeedback: '#FF4444'
+        };
+
+        // Game state
+        let state = {
+            ingredients: [],
+            cauldron: {
+                x: canvas.width / 2,
+                y: canvas.height - 150,
+                width: 120,
+                height: 100,
+                rimHeight: 20,
+                contents: []
+            },
+            dragging: null,
+            dragOffset: { x: 0, y: 0 },
+            message: null,
+            gameOver: false,
+            bubbles: [],
+            poofParticles: [],
+            restartButton: {
+                x: canvas.width / 2 - 50,
+                y: canvas.height - 60,
+                width: 100,
+                height: 40,
+                visible: false
+            },
+            question: "What is the capital of France?",
+            isSuccess: null
+        };
+
+        // Create ingredients
+        function createIngredients() {
+            const size = isMobile ? 50 : 70;
+            const spacing = isMobile ? 60 : 100;
+            const startX = (canvas.width - (3 * spacing)) / 2;
+            const y = canvas.height / 2;
+
+            state.ingredients = [
+                {
+                    name: "Paris",
+                    x: startX,
+                    y: y,
+                    width: size,
+                    height: size,
+                    color: COLORS.eiffel,
+                    originalX: startX,
+                    originalY: y,
+                    isCorrect: true,
+                    type: "eiffel"
+                },
+                {
+                    name: "London",
+                    x: startX + spacing,
+                    y: y,
+                    width: size,
+                    height: size,
+                    color: COLORS.bigBen,
+                    originalX: startX + spacing,
+                    originalY: y,
+                    isCorrect: false,
+                    type: "bigBen"
+                },
+                {
+                    name: "Rome",
+                    x: startX + spacing * 2,
+                    y: y,
+                    width: size,
+                    height: size,
+                    color: COLORS.colosseum,
+                    originalX: startX + spacing * 2,
+                    originalY: y,
+                    isCorrect: false,
+                    type: "colosseum"
+                },
+                {
+                    name: "New York",
+                    x: startX + spacing * 3,
+                    y: y,
+                    width: size,
+                    height: size,
+                    color: COLORS.statueLibertyBlue,
+                    originalX: startX + spacing * 3,
+                    originalY: y,
+                    isCorrect: false,
+                    type: "liberty"
+                }
+            ];
+        }
+
+        // Initialize game
+        function init() {
+            createIngredients();
+            createEventListeners();
+            animate();
+        }
+
+        // Draw pixelated eiffel tower
+        function drawEiffelTower(x, y, width, height) {
+            ctx.fillStyle = COLORS.eiffel;
+            
+            // Base
+            ctx.fillRect(x + width/3, y + height*0.7, width/3, height*0.3);
+            
+            // Tower structure
+            ctx.fillRect(x + width*0.4, y + height*0.4, width*0.2, height*0.3);
+            ctx.fillRect(x + width*0.2, y + height*0.6, width*0.6, height*0.1);
+            
+            // Top
+            ctx.fillRect(x + width*0.45, y + height*0.1, width*0.1, height*0.3);
+            ctx.fillRect(x + width*0.3, y + height*0.3, width*0.4, height*0.1);
+        }
+
+        // Draw pixelated big ben
+        function drawBigBen(x, y, width, height) {
+            ctx.fillStyle = COLORS.bigBen;
+            
+            // Tower base
+            ctx.fillRect(x + width*0.3, y + height*0.3, width*0.4, height*0.7);
+            
+            // Clock face
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(x + width*0.25, y + height*0.15, width*0.5, height*0.15);
+            
+            // Clock details
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(x + width*0.45, y + height*0.2, width*0.1, height*0.05);
+            
+            // Tower top
+            ctx.fillStyle = COLORS.bigBen;
+            ctx.fillRect(x + width*0.4, y, width*0.2, height*0.15);
+        }
+
+        // Draw pixelated colosseum
+        function drawColosseum(x, y, width, height) {
+            ctx.fillStyle = COLORS.colosseum;
+            
+            // Base
+            ctx.fillRect(x + width*0.1, y + height*0.6, width*0.8, height*0.4);
+            
+            // Structure with arches
+            ctx.fillRect(x + width*0.15, y + height*0.4, width*0.7, height*0.2);
+            
+            // Arches
+            ctx.fillStyle = '#000000';
+            for (let i = 0; i < 4; i++) {
+                ctx.fillRect(x + width*(0.2 + i*0.2), y + height*0.45, width*0.1, height*0.15);
+            }
+        }
+
+        // Draw pixelated statue of liberty
+        function drawStatueOfLiberty(x, y, width, height) {
+            ctx.fillStyle = COLORS.statueLibertyBlue;
+            
+            // Base
+            ctx.fillRect(x + width*0.4, y + height*0.7, width*0.2, height*0.3);
+            
+            // Body
+            ctx.fillRect(x + width*0.35, y + height*0.3, width*0.3, height*0.4);
+            
+            // Head
+            ctx.fillRect(x + width*0.4, y + height*0.2, width*0.2, height*0.1);
+            
+            // Crown
+            ctx.fillRect(x + width*0.35, y + height*0.1, width*0.3, height*0.1);
+            
+            // Torch
+            ctx.fillRect(x + width*0.65, y + height*0.25, width*0.1, height*0.1);
+            ctx.fillRect(x + width*0.7, y + height*0.15, width*0.05, height*0.1);
+        }
+
+        // Draw an ingredient
+        function drawIngredient(ingredient) {
+            ctx.save();
+            
+            if (ingredient.type === "eiffel") {
+                drawEiffelTower(ingredient.x, ingredient.y, ingredient.width, ingredient.height);
+            } else if (ingredient.type === "bigBen") {
+                drawBigBen(ingredient.x, ingredient.y, ingredient.width, ingredient.height);
+            } else if (ingredient.type === "colosseum") {
+                drawColosseum(ingredient.x, ingredient.y, ingredient.width, ingredient.height);
+            } else if (ingredient.type === "liberty") {
+                drawStatueOfLiberty(ingredient.x, ingredient.y, ingredient.width, ingredient.height);
+            }
+
+            // Draw ingredient name
+            ctx.fillStyle = COLORS.text;
+            ctx.strokeStyle = COLORS.outline;
+            ctx.lineWidth = 2;
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.strokeText(ingredient.name, ingredient.x + ingredient.width / 2, ingredient.y + ingredient.height + 20);
+            ctx.fillText(ingredient.name, ingredient.x + ingredient.width / 2, ingredient.y + ingredient.height + 20);
+            
+            ctx.restore();
+        }
+
+        // Draw cauldron and its contents
+        function drawCauldron() {
+            const { x, y, width, height, rimHeight } = state.cauldron;
+            
+            // Draw cauldron body
+            ctx.fillStyle = COLORS.cauldron;
+            ctx.fillRect(x - width / 2, y - height, width, height);
+            
+            // Draw liquid
+            const liquidHeight = Math.min(height - rimHeight, 20 + state.cauldron.contents.length * 15);
+            ctx.fillStyle = COLORS.liquid;
+            ctx.fillRect(x - width / 2 + 10, y - liquidHeight, width - 20, liquidHeight - rimHeight);
+            
+            // Draw bubbles
+            state.bubbles.forEach(bubble => {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.beginPath();
+                ctx.arc(bubble.x, bubble.y, bubble.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Draw cauldron rim
+            ctx.fillStyle = COLORS.cauldronRim;
+            ctx.fillRect(x - width / 2 - 10, y - height, width + 20, rimHeight);
+        }
+
+        // Draw poof particles
+        function drawPoofParticles() {
+            state.poofParticles.forEach(particle => {
+                ctx.fillStyle = `rgba(255, 255, 255, ${particle.alpha})`;
+                ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            });
+        }
+
+        // Draw restart button
+        function drawRestartButton() {
+            if (!state.restartButton.visible) return;
+            
+            const { x, y, width, height } = state.restartButton;
+            const isHovered = isPointInRect(
+                state.mouseX || 0, 
+                state.mouseY || 0, 
+                x, y, width, height
+            );
+            
+            ctx.fillStyle = isHovered ? COLORS.buttonHover : COLORS.button;
+            ctx.fillRect(x, y, width, height);
+            
+            ctx.fillStyle = COLORS.buttonText;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', x + width / 2, y + height / 2);
+        }
+
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw ground
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, canvas.height - 100, canvas.width, 100);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.text;
+            ctx.strokeStyle = COLORS.outline;
+            ctx.lineWidth = 3;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.strokeText(state.question, canvas.width / 2, 50);
+            ctx.fillText(state.question, canvas.width / 2, 50);
+            
+            // Draw cauldron and ingredients
+            drawCauldron();
+            state.ingredients.forEach(ingredient => {
+                if (!state.cauldron.contents.includes(ingredient)) {
+                    drawIngredient(ingredient);
+                }
+            });
+            
+            // Draw instructions
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px sans-serif';
+            ctx.fillText("Drag the correct city into the cauldron!", canvas.width / 2, 90);
+            
+            // Draw message if game is over
+            if (state.message) {
+                ctx.fillStyle = state.isSuccess ? COLORS.correctFeedback : COLORS.incorrectFeedback;
+                ctx.strokeStyle = COLORS.outline;
+                ctx.lineWidth = 4;
+                ctx.font = '32px sans-serif';
+                ctx.strokeText(state.message, canvas.width / 2, canvas.height / 2 - 80);
+                ctx.fillText(state.message, canvas.width / 2, canvas.height / 2 - 80);
+            }
+            
+            // Draw poof effect
+            drawPoofParticles();
+            
+            // Draw restart button
+            drawRestartButton();
+            
+            // Draw dragged ingredient on top
+            if (state.dragging) {
+                drawIngredient(state.dragging);
+            }
+        }
+
+        // Update bubbles
+        function updateBubbles() {
+            // Add new bubbles randomly
+            if (state.cauldron.contents.length > 0 && Math.random() < 0.1) {
+                const { x, y, width } = state.cauldron;
+                const bubbleX = x - width/2 + 20 + Math.random() * (width - 40);
+                const liquidTop = y - Math.min(state.cauldron.height - state.cauldron.rimHeight, 
+                                              20 + state.cauldron.contents.length * 15);
+                
+                state.bubbles.push({
+                    x: bubbleX,
+                    y: liquidTop + Math.random() * 20,
+                    size: 3 + Math.random() * 5,
+                    speed: 0.5 + Math.random() * 1.5
+                });
+            }
+            
+            // Update bubble positions
+            state.bubbles.forEach(bubble => {
+                bubble.y -= bubble.speed;
+                bubble.x += Math.sin(Date.now() / 500 + bubble.x) * 0.5;
+            });
+            
+            // Remove bubbles that reach the top
+            state.bubbles = state.bubbles.filter(bubble => {
+                const liquidTop = state.cauldron.y - Math.min(state.cauldron.height - state.cauldron.rimHeight, 
+                                                            20 + state.cauldron.contents.length * 15);
+                return bubble.y > liquidTop - bubble.size;
+            });
+        }
+
+        // Update poof particles
+        function updatePoofParticles() {
+            state.poofParticles.forEach(particle => {
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.alpha -= 0.02;
+                particle.size -= 0.2;
+            });
+            
+            state.poofParticles = state.poofParticles.filter(p => p.alpha > 0 && p.size > 0);
+        }
+
+        // Create poof effect
+        function createPoofEffect(x, y) {
+            for (let i = 0; i < 30; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                state.poofParticles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 5 + Math.random() * 10,
+                    alpha: 1
+                });
+            }
+        }
+
+        // Animation loop
+        function animate() {
+            updateBubbles();
+            updatePoofParticles();
+            draw();
+            requestAnimationFrame(animate);
+        }
+
+        // Helper function to check if a point is inside a rectangle
+        function isPointInRect(px, py, rx, ry, rw, rh) {
+            return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+        }
+
+        // Check if an ingredient is over the cauldron
+        function isOverCauldron(ingredient) {
+            const ingredientCenterX = ingredient.x + ingredient.width / 2;
+            const ingredientBottom = ingredient.y + ingredient.height;
+            
+            return Math.abs(ingredientCenterX - state.cauldron.x) < state.cauldron.width / 2 &&
+                   ingredientBottom > state.cauldron.y - state.cauldron.height &&
+                   ingredientBottom < state.cauldron.y;
+        }
+
+        // Drop ingredient into cauldron
+        function dropIntoCauldron(ingredient) {
+            if (!state.cauldron.contents.includes(ingredient)) {
+                createPoofEffect(state.cauldron.x, state.cauldron.y - state.cauldron.height / 2);
+                playSound(300, 0.2);
+                
+                state.cauldron.contents.push(ingredient);
+                
+                // Check if correct answer
+                setTimeout(() => {
+                    if (ingredient.isCorrect) {
+                        state.message = "Correct! Paris is the capital of France!";
+                        state.isSuccess = true;
+                        state.gameOver = true;
+                        state.restartButton.visible = true;
+                        playSound(600, 0.1, "square");
+                        setTimeout(() => playSound(800, 0.1, "square"), 100);
+                        setTimeout(() => playSound(1000, 0.2, "square"), 200);
+                        createPoofEffect(state.cauldron.x, state.cauldron.y - state.cauldron.height / 2);
+                    } else {
+                        state.message = "Incorrect! Try again.";
+                        state.isSuccess = false;
+                        state.gameOver = true;
+                        state.restartButton.visible = true;
+                        playSound(200, 0.1, "sawtooth");
+                        setTimeout(() => playSound(150, 0.2, "sawtooth"), 100);
+                    }
+                }, 500);
+            }
+        }
+
+        // Simple sound generator
+        function playSound(frequency, duration, type = "sine") {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = 0.5;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.start();
+                
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration * 1000);
+            } catch (e) {
+                console.log("Audio not supported");
+            }
+        }
+
+        // Reset game
+        function resetGame() {
+            state.cauldron.contents = [];
+            state.dragging = null;
+            state.message = null;
+            state.gameOver = false;
+            state.restartButton.visible = false;
+            state.isSuccess = null;
+            state.poofParticles = [];
+            state.bubbles = [];
+            
+            // Reset ingredient positions
+            state.ingredients.forEach(ingredient => {
+                ingredient.x = ingredient.originalX;
+                ingredient.y = ingredient.originalY;
+            });
+        }
+
+        // Event handlers
+        function createEventListeners() {
+            // Track mouse position
+            canvas.addEventListener('mousemove', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                state.mouseX = e.clientX - rect.left;
+                state.mouseY = e.clientY - rect.top;
+                
+                if (state.dragging) {
+                    state.dragging.x = state.mouseX - state.dragOffset.x;
+                    state.dragging.y = state.mouseY - state.dragOffset.y;
+                }
+            });
+            
+            // Mouse down - start drag
+            canvas.addEventListener('mousedown', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Check for restart button
+                if (state.restartButton.visible && 
+                    isPointInRect(mouseX, mouseY, 
+                                 state.restartButton.x, 
+                                 state.restartButton.y, 
+                                 state.restartButton.width, 
+                                 state.restartButton.height)) {
+                    resetGame();
+                    return;
+                }
+                
+                // Don't allow dragging if game is over
+                if (state.gameOver) return;
+                
+                // Check for draggable ingredients
+                for (let i = state.ingredients.length - 1; i >= 0; i--) {
+                    const ingredient = state.ingredients[i];
+                    if (!state.cauldron.contents.includes(ingredient) &&
+                        isPointInRect(mouseX, mouseY, 
+                                     ingredient.x, ingredient.y, 
+                                     ingredient.width, ingredient.height)) {
+                        state.dragging = ingredient;
+                        state.dragOffset = {
+                            x: mouseX - ingredient.x,
+                            y: mouseY - ingredient.y
+                        };
+                        playSound(400, 0.1);
+                        break;
+                    }
+                }
+            });
+            
+            // Mouse up - drop
+            canvas.addEventListener('mouseup', () => {
+                if (state.dragging) {
+                    if (isOverCauldron(state.dragging)) {
+                        dropIntoCauldron(state.dragging);
+                    } else {
+                        // Return to original position
+                        state.dragging.x = state.dragging.originalX;
+                        state.dragging.y = state.dragging.originalY;
+                    }
+                    state.dragging = null;
+                }
+            });
+            
+            // Touch events for mobile
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                const touchX = touch.clientX - rect.left;
+                const touchY = touch.clientY - rect.top;
+                
+                state.mouseX = touchX;
+                state.mouseY = touchY;
+                
+                // Check for restart button
+                if (state.restartButton.visible && 
+                    isPointInRect(touchX, touchY, 
+                                 state.restartButton.x, 
+                                 state.restartButton.y, 
+                                 state.restartButton.width, 
+                                 state.restartButton.height)) {
+                    resetGame();
+                    return;
+                }
+                
+                // Don't allow dragging if game is over
+                if (state.gameOver) return;
+                
+                // Check for draggable ingredients
+                for (let i = state.ingredients.length - 1; i >= 0; i--) {
+                    const ingredient = state.ingredients[i];
+                    if (!state.cauldron.contents.includes(ingredient) &&
+                        isPointInRect(touchX, touchY, 
+                                     ingredient.x, ingredient.y, 
+                                     ingredient.width, ingredient.height)) {
+                        state.dragging = ingredient;
+                        state.dragOffset = {
+                            x: touchX - ingredient.x,
+                            y: touchY - ingredient.y
+                        };
+                        playSound(400, 0.1);
+                        break;
+                    }
+                }
+            }, { passive: false });
+            
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (state.dragging) {
+                    const rect = canvas.getBoundingClientRect();
+                    const touch = e.touches[0];
+                    const touchX = touch.clientX - rect.left;
+                    const touchY = touch.clientY - rect.top;
+                    
+                    state.mouseX = touchX;
+                    state.mouseY = touchY;
+                    
+                    state.dragging.x = touchX - state.dragOffset.x;
+                    state.dragging.y = touchY - state.dragOffset.y;
+                }
+            }, { passive: false });
+            
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (state.dragging) {
+                    if (isOverCauldron(state.dragging)) {
+                        dropIntoCauldron(state.dragging);
+                    } else {
+                        // Return to original position
+                        state.dragging.x = state.dragging.originalX;
+                        state.dragging.y = state.dragging.originalY;
+                    }
+                    state.dragging = null;
+                }
+            }, { passive: false });
+        }
+
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>

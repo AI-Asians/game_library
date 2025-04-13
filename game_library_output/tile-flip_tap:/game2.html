@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet Quiz - 8-bit Adventure</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+    // Game initialization
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size based on device
+    const isMobile = window.innerWidth < 600;
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Color palette (8-bit style)
+    const colors = {
+        background: '#0f380f',
+        question: '#8bac0f',
+        tileFront: '#306230',
+        tileBack: '#9bbc0f',
+        tilePattern: '#0f380f',
+        tileHighlight: '#ffffff',
+        correct: '#8bac0f',
+        incorrect: '#e83028',
+        text: '#ffffff',
+        shadow: '#0f380f'
+    };
+    
+    // Audio context for retro sounds
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Play retro sound
+    function playSound(freq, duration, type = 'square') {
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator.type = type;
+        oscillator.frequency.value = freq;
+        
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + duration);
+    }
+    
+    // Tile class
+    class Tile {
+        constructor(x, y, width, height, answer, isCorrect) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.answer = answer;
+            this.isCorrect = isCorrect;
+            this.flipped = false;
+            this.flipping = false;
+            this.flipProgress = 0;
+            this.revealed = false;
+        }
+        
+        draw() {
+            ctx.save();
+            ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+            
+            if (this.flipping) {
+                // Simulate chunky animation by only using a few frames
+                const scaleX = this.flipProgress < 0.5 ? 1 - this.flipProgress * 2 : (this.flipProgress - 0.5) * 2;
+                ctx.scale(scaleX, 1);
+            }
+            
+            // Draw tile
+            if (!this.flipping || this.flipProgress < 0.5) {
+                // Back of tile (pattern)
+                ctx.fillStyle = colors.tileBack;
+                ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+                
+                // Pixel art pattern on back
+                ctx.fillStyle = colors.tilePattern;
+                const patternSize = this.width / 8;
+                for (let i = 0; i < 8; i++) {
+                    for (let j = 0; j < 8; j++) {
+                        if ((i + j) % 2 === 0) {
+                            ctx.fillRect(
+                                -this.width / 2 + i * patternSize, 
+                                -this.height / 2 + j * patternSize, 
+                                patternSize, patternSize
+                            );
+                        }
+                    }
+                }
+                
+                // Tile border
+                ctx.strokeStyle = colors.tileHighlight;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(-this.width / 2, -this.height / 2, this.width, this.height);
+            } else {
+                // Front of tile (answer)
+                ctx.fillStyle = this.isCorrect ? colors.correct : colors.incorrect;
+                ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+                
+                // Answer text
+                ctx.fillStyle = colors.text;
+                ctx.font = Math.floor(this.width / 8) + 'px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Text shadow (8-bit style)
+                ctx.fillStyle = colors.shadow;
+                ctx.fillText(this.answer, 2, 2);
+                
+                // Main text
+                ctx.fillStyle = colors.text;
+                ctx.fillText(this.answer, 0, 0);
+                
+                // Icon for answer
+                if (this.isCorrect) {
+                    drawPixelStar(0, this.height / 4, this.width / 8);
+                } else {
+                    drawPixelX(0, this.height / 4, this.width / 10);
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        flip() {
+            if (!this.flipped && !this.flipping) {
+                this.flipping = true;
+                playSound(this.isCorrect ? 440 : 220, 0.2);
+                
+                // Simple animation for tile flipping
+                const flipInterval = setInterval(() => {
+                    this.flipProgress += 0.25; // Chunky animation, just 4 frames
+                    
+                    if (this.flipProgress >= 1) {
+                        this.flipping = false;
+                        this.flipped = true;
+                        this.revealed = true;
+                        clearInterval(flipInterval);
+                        
+                        // Play additional sound when fully revealed
+                        if (this.isCorrect) {
+                            playSound(880, 0.3);
+                            setTimeout(() => playSound(1320, 0.5), 100);
+                        }
+                    }
+                }, 100); // Chunky timing
+            }
+        }
+        
+        isPointInside(x, y) {
+            return x >= this.x && x <= this.x + this.width &&
+                   y >= this.y && y <= this.y + this.height;
+        }
+    }
+    
+    // Helper functions for pixel art
+    function drawPixelStar(x, y, size) {
+        ctx.fillStyle = '#ffffff';
+        
+        // Simple 5-point pixel star
+        const points = [
+            [0, -size], [size/3, -size/3], [size, 0],
+            [size/3, size/3], [size/2, size], [0, size/2],
+            [-size/2, size], [-size/3, size/3], [-size, 0],
+            [-size/3, -size/3]
+        ];
+        
+        ctx.beginPath();
+        ctx.moveTo(x + points[0][0], y + points[0][1]);
+        for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(x + points[i][0], y + points[i][1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+    }
+    
+    function drawPixelX(x, y, size) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = size / 3;
+        
+        // Pixelated X
+        ctx.beginPath();
+        ctx.moveTo(x - size, y - size);
+        ctx.lineTo(x + size, y + size);
+        ctx.moveTo(x + size, y - size);
+        ctx.lineTo(x - size, y + size);
+        ctx.stroke();
+    }
+    
+    // Game variables
+    const answers = ["Mars", "Venus", "Earth", "Jupiter"];
+    const correctIndex = 0; // Mars is the correct answer
+    let tiles = [];
+    let gameOver = false;
+    
+    // Initialize tiles
+    function initializeTiles() {
+        tiles = [];
+        gameOver = false;
+        
+        const tileWidth = isMobile ? 150 : 180;
+        const tileHeight = isMobile ? 120 : 150;
+        const padding = isMobile ? 15 : 20;
+        
+        // Calculate grid layout based on number of answers
+        const cols = isMobile ? 2 : Math.min(answers.length, 3);
+        const rows = Math.ceil(answers.length / cols);
+        
+        // Calculate starting position to center the grid
+        const gridWidth = cols * tileWidth + (cols - 1) * padding;
+        const gridHeight = rows * tileHeight + (rows - 1) * padding;
+        const startX = (canvas.width - gridWidth) / 2;
+        const startY = (canvas.height - gridHeight) / 2 + 40; // Add some space for question
+        
+        // Create tiles
+        for (let i = 0; i < answers.length; i++) {
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            const x = startX + col * (tileWidth + padding);
+            const y = startY + row * (tileHeight + padding);
+            
+            tiles.push(new Tile(
+                x, y, tileWidth, tileHeight,
+                answers[i], i === correctIndex
+            ));
+        }
+    }
+    
+    // Restart button
+    const restartButton = {
+        x: 0,
+        y: 0,
+        width: isMobile ? 100 : 120,
+        height: isMobile ? 40 : 50,
+        
+        draw() {
+            this.x = canvas.width - this.width - 10;
+            this.y = 10;
+            
+            // Button background
+            ctx.fillStyle = '#306230';
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            
+            // Button border
+            ctx.strokeStyle = colors.tileHighlight;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(this.x, this.y, this.width, this.height);
+            
+            // Button text
+            ctx.fillStyle = colors.text;
+            ctx.font = (isMobile ? 16 : 20) + 'px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', this.x + this.width / 2, this.y + this.height / 2);
+        },
+        
+        isPointInside(x, y) {
+            return x >= this.x && x <= this.x + this.width &&
+                   y >= this.y && y <= this.y + this.height;
+        }
+    };
+    
+    // Handle user input
+    canvas.addEventListener('click', (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+        const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+        
+        // Check restart button
+        if (restartButton.isPointInside(x, y)) {
+            initializeTiles();
+            playSound(660, 0.1);
+            return;
+        }
+        
+        // Check tile clicks only if game is not over
+        if (!gameOver) {
+            for (const tile of tiles) {
+                if (!tile.flipped && !tile.flipping && tile.isPointInside(x, y)) {
+                    tile.flip();
+                    
+                    // End game if correct or incorrect
+                    if (tile.isCorrect) {
+                        setTimeout(() => {
+                            gameOver = true;
+                            // Reveal all tiles after correct answer
+                            tiles.forEach(t => {
+                                if (!t.revealed) t.flip();
+                            });
+                        }, 300);
+                    } else {
+                        gameOver = true;
+                    }
+                    break;
+                }
+            }
+        }
+    });
+    
+    // Game loop
+    function gameLoop() {
+        // Clear canvas
+        ctx.fillStyle = colors.background;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw question
+        ctx.fillStyle = colors.question;
+        ctx.font = (isMobile ? 20 : 28) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText("Which planet is known as the Red Planet?", canvas.width / 2, 50);
+        
+        // Draw tiles
+        tiles.forEach(tile => tile.draw());
+        
+        // Draw restart button
+        restartButton.draw();
+        
+        // Loop
+        requestAnimationFrame(gameLoop);
+    }
+    
+    // Initialize and start game
+    initializeTiles();
+    gameLoop();
+</script>
+</body>
+</html>

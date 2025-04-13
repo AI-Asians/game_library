@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phase-Tap Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background-color: #000;
+    }
+    @media (max-width: 500px) {
+      canvas {
+        width: 360px;
+        height: 640px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // Setup canvas
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const isMobile = window.innerWidth <= 500;
+    
+    // Set canvas size
+    canvas.width = isMobile ? 360 : 800;
+    canvas.height = isMobile ? 640 : 600;
+    
+    // Game variables
+    const colors = [
+      '#000000', '#342879', '#44348C', '#4E40A3', '#6659D3', '#7C6EEF', 
+      '#8679FF', '#A499FF', '#B5A9FF', '#763B29', '#883A2F', '#98473A', 
+      '#AC5446', '#C16552', '#D47561', '#E38B76', '#F5A48B', '#1B5195'
+    ];
+    
+    const question = "The Great Wall of China is visible from space.";
+    const OPTIONS = {
+      TRUE: { text: "TRUE", correct: false, x: canvas.width * 0.3, y: canvas.height * 0.6 },
+      FALSE: { text: "FALSE", correct: true, x: canvas.width * 0.7, y: canvas.height * 0.6 }
+    };
+    
+    let gameState = "playing"; // playing, correct, incorrect
+    let phaseTime = 0;
+    let phaseDirection = { true: 1, false: -1 }; // 1 = fading in, -1 = fading out
+    let phaseOpacity = { true: 0, false: 0.5 };
+    let phaseSpeed = { true: 0.018, false: 0.015 };
+    let phaseOffset = { true: 0, false: Math.PI / 2 };
+    
+    // Audio context
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    // Generate sound effects
+    function playSound(type) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      switch(type) {
+        case 'correct':
+          oscillator.type = 'square';
+          oscillator.frequency.setValueAtTime(520, audioCtx.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.2);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.3);
+          break;
+        case 'incorrect':
+          oscillator.type = 'sawtooth';
+          oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+          oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.3);
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.4);
+          break;
+        case 'phase':
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+          oscillator.start();
+          oscillator.stop(audioCtx.currentTime + 0.1);
+          break;
+      }
+    }
+    
+    // Draw pixelated text
+    function drawPixelText(text, x, y, size, color) {
+      ctx.save();
+      ctx.font = `${size}px Arial`;
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    }
+    
+    // Draw answer option with 8-bit style phasing effect
+    function drawOption(option, opacity) {
+      const boxWidth = canvas.width * 0.25;
+      const boxHeight = canvas.height * 0.15;
+      const x = option.x - boxWidth / 2;
+      const y = option.y - boxHeight / 2;
+      
+      // Calculate stepped opacity (0, 0.25, 0.5, 0.75, 1)
+      const steppedOpacity = Math.floor(opacity * 4) / 4;
+      
+      // Create dithering pattern based on the opacity
+      ctx.save();
+      
+      // Draw option box with dithering
+      ctx.fillStyle = colors[1];
+      ctx.fillRect(x, y, boxWidth, boxHeight);
+      
+      // Draw inner box with pixelated border
+      const borderSize = 4;
+      ctx.fillStyle = colors[5];
+      ctx.fillRect(x + borderSize, y + borderSize, boxWidth - borderSize * 2, boxHeight - borderSize * 2);
+      
+      // Apply dithering pattern
+      if (steppedOpacity < 1) {
+        ctx.fillStyle = colors[0];
+        const patternSize = 4;
+        
+        for (let i = 0; i < boxWidth; i += patternSize) {
+          for (let j = 0; j < boxHeight; j += patternSize) {
+            // Different dithering patterns based on opacity
+            if (steppedOpacity <= 0.25) {
+              if ((i + j) % (patternSize * 2) === 0) {
+                ctx.fillRect(x + i, y + j, patternSize, patternSize);
+              }
+            } else if (steppedOpacity <= 0.5) {
+              if ((i + j) % (patternSize * 2) === 0 || (i + patternSize + j) % (patternSize * 2) === 0) {
+                ctx.fillRect(x + i, y + j, patternSize, patternSize);
+              }
+            } else if (steppedOpacity <= 0.75) {
+              if ((i + j) % (patternSize * 2) !== 0) {
+                ctx.fillRect(x + i, y + j, patternSize, patternSize);
+              }
+            }
+          }
+        }
+      }
+      
+      // Shimmer effect when phasing
+      if (opacity > 0.4 && opacity < 0.9) {
+        ctx.fillStyle = colors[8];
+        const shimmerSize = 2;
+        for (let i = 0; i < 5; i++) {
+          const shimmerX = x + Math.random() * boxWidth;
+          const shimmerY = y + Math.random() * boxHeight;
+          ctx.fillRect(shimmerX, shimmerY, shimmerSize, shimmerSize);
+        }
+      }
+      
+      // Draw text
+      const textColor = opacity > 0.5 ? colors[17] : colors[7];
+      drawPixelText(option.text, option.x, option.y, boxHeight * 0.4, textColor);
+      
+      ctx.restore();
+    }
+    
+    // Draw restart button
+    function drawRestartButton() {
+      const btnWidth = canvas.width * 0.3;
+      const btnHeight = canvas.height * 0.08;
+      const btnX = canvas.width / 2 - btnWidth / 2;
+      const btnY = canvas.height * 0.75;
+      
+      ctx.fillStyle = colors[6];
+      ctx.fillRect(btnX, btnY, btnWidth, btnHeight);
+      
+      ctx.fillStyle = colors[1];
+      ctx.fillRect(btnX + 4, btnY + 4, btnWidth - 8, btnHeight - 8);
+      
+      drawPixelText("RESTART", canvas.width / 2, btnY + btnHeight / 2, btnHeight * 0.5, colors[7]);
+      
+      return { x: btnX, y: btnY, width: btnWidth, height: btnHeight };
+    }
+    
+    // Draw game result
+    function drawResult(success) {
+      ctx.fillStyle = success ? colors[12] : colors[10];
+      const boxWidth = canvas.width * 0.7;
+      const boxHeight = canvas.height * 0.2;
+      const boxX = canvas.width / 2 - boxWidth / 2;
+      const boxY = canvas.height * 0.4 - boxHeight / 2;
+      
+      // Draw outer box
+      ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+      
+      // Draw inner box
+      ctx.fillStyle = success ? colors[14] : colors[13];
+      ctx.fillRect(boxX + 6, boxY + 6, boxWidth - 12, boxHeight - 12);
+      
+      // Draw text
+      const resultText = success ? "CORRECT!" : "WRONG!";
+      drawPixelText(resultText, canvas.width / 2, boxY + boxHeight / 2, boxHeight * 0.4, "#FFFFFF");
+    }
+    
+    // Handle click/tap
+    function handleClick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+      
+      if (gameState === "playing") {
+        // Check if TRUE option clicked
+        const trueOption = OPTIONS.TRUE;
+        const trueBoxWidth = canvas.width * 0.25;
+        const trueBoxHeight = canvas.height * 0.15;
+        if (
+          clickX > trueOption.x - trueBoxWidth / 2 &&
+          clickX < trueOption.x + trueBoxWidth / 2 &&
+          clickY > trueOption.y - trueBoxHeight / 2 &&
+          clickY < trueOption.y + trueBoxHeight / 2
+        ) {
+          gameState = trueOption.correct ? "correct" : "incorrect";
+          playSound(gameState);
+        }
+        
+        // Check if FALSE option clicked
+        const falseOption = OPTIONS.FALSE;
+        const falseBoxWidth = canvas.width * 0.25;
+        const falseBoxHeight = canvas.height * 0.15;
+        if (
+          clickX > falseOption.x - falseBoxWidth / 2 &&
+          clickX < falseOption.x + falseBoxWidth / 2 &&
+          clickY > falseOption.y - falseBoxHeight / 2 &&
+          clickY < falseOption.y + falseBoxHeight / 2
+        ) {
+          gameState = falseOption.correct ? "correct" : "incorrect";
+          playSound(gameState);
+        }
+      } else {
+        // Check if restart button clicked
+        const restartBtn = drawRestartButton();
+        if (
+          clickX > restartBtn.x &&
+          clickX < restartBtn.x + restartBtn.width &&
+          clickY > restartBtn.y &&
+          clickY < restartBtn.y + restartBtn.height
+        ) {
+          gameState = "playing";
+          phaseOpacity = { true: 0, false: 0.5 };
+          playSound('phase');
+        }
+      }
+    }
+    
+    canvas.addEventListener('click', handleClick);
+    
+    // Game loop
+    function gameLoop() {
+      // Clear canvas
+      ctx.fillStyle = colors[0];
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw background grid
+      ctx.strokeStyle = colors[1];
+      ctx.lineWidth = 1;
+      const gridSize = 20;
+      
+      for (let i = 0; i < canvas.width; i += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, canvas.height);
+        ctx.stroke();
+      }
+      
+      for (let i = 0; i < canvas.height; i += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(canvas.width, i);
+        ctx.stroke();
+      }
+      
+      // Draw question
+      const questionY = canvas.height * 0.25;
+      
+      // Draw question box
+      const questionWidth = canvas.width * 0.9;
+      const questionHeight = canvas.height * 0.15;
+      const questionX = canvas.width / 2 - questionWidth / 2;
+      
+      ctx.fillStyle = colors[3];
+      ctx.fillRect(questionX, questionY - questionHeight / 2, questionWidth, questionHeight);
+      
+      ctx.fillStyle = colors[4];
+      ctx.fillRect(questionX + 4, questionY - questionHeight / 2 + 4, questionWidth - 8, questionHeight - 8);
+      
+      // Draw question text
+      drawPixelText(question, canvas.width / 2, questionY, questionHeight * 0.25, colors[7]);
+      
+      if (gameState === "playing") {
+        // Update phase timing
+        phaseTime += 0.03;
+        
+        // Update opacities with phasing effect
+        ['true', 'false'].forEach(key => {
+          // Sine wave oscillation for smooth phasing
+          const oscillation = Math.sin(phaseTime * phaseSpeed[key] * 5 + phaseOffset[key]);
+          phaseOpacity[key] = (oscillation + 1) / 2; // Convert -1 to 1 range to 0 to 1
+          
+          // Play subtle sound at peak opacity
+          if (phaseOpacity[key] > 0.98 && phaseOpacity[key] <= 1) {
+            playSound('phase');
+          }
+        });
+        
+        // Draw options with phasing effect
+        drawOption(OPTIONS.TRUE, phaseOpacity.true);
+        drawOption(OPTIONS.FALSE, phaseOpacity.false);
+      } else {
+        // Draw result
+        drawResult(gameState === "correct");
+        
+        // Draw restart button
+        drawRestartButton();
+      }
+      
+      // Create arcade-like screen effect
+      ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
+      for (let i = 0; i < canvas.height; i += 3) {
+        ctx.fillRect(0, i, canvas.width, 1);
+      }
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

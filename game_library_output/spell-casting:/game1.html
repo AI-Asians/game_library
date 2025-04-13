@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spell Casting Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #0a0a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #442244;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Setup Canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Adjust for mobile if needed
+        if (window.innerWidth <= 600) {
+            canvas.width = 360;
+            canvas.height = 640;
+        }
+
+        // Game state variables
+        let gameActive = true;
+        let gameOver = false;
+        let success = false;
+        let isDrawing = false;
+        let currentPath = [];
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // Spell patterns (simple coordinates to represent each answer)
+        const spellPatterns = [
+            { // Paris (correct answer) - pentagram shape
+                name: "Paris",
+                pattern: [[0, -50], [47, 39], [-47, -15], [47, -15], [-47, 39], [0, -50]],
+                isCorrect: true
+            },
+            { // London - circle shape
+                name: "London",
+                pattern: []
+            },
+            { // Rome - triangle shape
+                name: "Rome",
+                pattern: [[0, -50], [43, 40], [-43, 40], [0, -50]]
+            },
+            { // Berlin - square shape
+                name: "Berlin",
+                pattern: [[-40, -40], [40, -40], [40, 40], [-40, 40], [-40, -40]]
+            }
+        ];
+
+        // Generate circle pattern points
+        for (let i = 0; i < 360; i += 30) {
+            const radian = i * Math.PI / 180;
+            spellPatterns[1].pattern.push([Math.cos(radian) * 40, Math.sin(radian) * 40]);
+        }
+        spellPatterns[1].pattern.push([spellPatterns[1].pattern[0][0], spellPatterns[1].pattern[0][1]]);
+
+        // Particle systems
+        const particles = [];
+        const trailParticles = [];
+
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(600, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.3);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'draw') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(300 + Math.random() * 100, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+
+        // Draw a pixelated line
+        function drawPixelLine(x1, y1, x2, y2, color) {
+            const dx = Math.abs(x2 - x1);
+            const dy = Math.abs(y2 - y1);
+            const sx = x1 < x2 ? 1 : -1;
+            const sy = y1 < y2 ? 1 : -1;
+            let err = dx - dy;
+            
+            while (true) {
+                // Draw a chunky pixel
+                ctx.fillStyle = color;
+                ctx.fillRect(Math.floor(x1/4)*4, Math.floor(y1/4)*4, 4, 4);
+                
+                if (x1 === x2 && y1 === y2) break;
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x1 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y1 += sy;
+                }
+            }
+        }
+
+        // Create trail particle
+        function createTrailParticle(x, y) {
+            if (Math.random() > 0.3) return; // Only create some particles for performance
+            
+            trailParticles.push({
+                x: x + (Math.random() * 8 - 4),
+                y: y + (Math.random() * 8 - 4),
+                size: Math.floor(Math.random() * 3) + 2,
+                color: '#8844ff',
+                life: 12
+            });
+        }
+
+        // Create spell success particles
+        function createSpellSuccessParticles(x, y, color) {
+            for (let i = 0; i < 50; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: Math.floor(Math.random() * 4) + 2,
+                    color: color,
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+
+        // Update particles
+        function updateParticles() {
+            // Update spell particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // Update trail particles
+            for (let i = trailParticles.length - 1; i >= 0; i--) {
+                const p = trailParticles[i];
+                p.life--;
+                
+                if (p.life <= 0) {
+                    trailParticles.splice(i, 1);
+                }
+            }
+        }
+
+        // Draw particles
+        function drawParticles() {
+            // Draw spell particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(Math.floor(p.x/4)*4, Math.floor(p.y/4)*4, p.size, p.size);
+            });
+            
+            // Draw trail particles
+            trailParticles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 12;
+                ctx.fillRect(Math.floor(p.x/4)*4, Math.floor(p.y/4)*4, p.size, p.size);
+            });
+            ctx.globalAlpha = 1;
+        }
+
+        // Convert global coordinates to pattern space
+        function toPatternSpace(x, y) {
+            return [x - canvas.width/2, y - canvas.height/2 + 50];
+        }
+
+        // Draw the current path
+        function drawCurrentPath() {
+            if (currentPath.length < 2) return;
+            
+            for (let i = 1; i < currentPath.length; i++) {
+                drawPixelLine(
+                    currentPath[i-1][0] + canvas.width/2, 
+                    currentPath[i-1][1] + canvas.height/2 - 50,
+                    currentPath[i][0] + canvas.width/2, 
+                    currentPath[i][1] + canvas.height/2 - 50,
+                    '#aa44ff'
+                );
+            }
+        }
+
+        // Draw spell pattern guide
+        function drawSpellPattern(pattern, x, y, name, highlight) {
+            if (pattern.length < 2) return;
+            
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Draw connecting lines
+            ctx.strokeStyle = highlight ? '#ffff44' : '#884488';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(pattern[0][0], pattern[0][1]);
+            
+            for (let i = 1; i < pattern.length; i++) {
+                ctx.lineTo(pattern[i][0], pattern[i][1]);
+            }
+            
+            ctx.stroke();
+            
+            // Draw connection points
+            for (let i = 0; i < pattern.length; i++) {
+                ctx.fillStyle = highlight ? '#ffff88' : '#aa44aa';
+                ctx.fillRect(pattern[i][0] - 3, pattern[i][1] - 3, 6, 6);
+            }
+            
+            // Draw label
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(name, 0, 70);
+            
+            ctx.restore();
+        }
+
+        // Calculate pattern similarity (simple version)
+        function calculatePatternSimilarity(userPattern, targetPattern) {
+            if (userPattern.length < 5) return 0; // Too short to match
+            
+            // Check if endpoints match
+            const startSimilar = Math.abs(userPattern[0][0] - targetPattern[0][0]) < 25 && 
+                                Math.abs(userPattern[0][1] - targetPattern[0][1]) < 25;
+                                
+            const endSimilar = Math.abs(userPattern[userPattern.length-1][0] - targetPattern[targetPattern.length-1][0]) < 25 && 
+                              Math.abs(userPattern[userPattern.length-1][1] - targetPattern[targetPattern.length-1][1]) < 25;
+            
+            // Check if pattern has similar shape (very basic check)
+            let shapeSimilar = true;
+            const checkPoints = [0.25, 0.5, 0.75]; // Check at these ratios along the pattern
+            
+            for (const ratio of checkPoints) {
+                const userIndex = Math.floor(userPattern.length * ratio);
+                const targetIndex = Math.floor(targetPattern.length * ratio);
+                
+                if (Math.abs(userPattern[userIndex][0] - targetPattern[targetIndex][0]) > 30 ||
+                    Math.abs(userPattern[userIndex][1] - targetPattern[targetIndex][1]) > 30) {
+                    shapeSimilar = false;
+                    break;
+                }
+            }
+            
+            // Return overall similarity score
+            if (startSimilar && endSimilar && shapeSimilar) {
+                return 1;
+            }
+            return 0;
+        }
+
+        // Check which pattern the player drew
+        function checkPattern() {
+            for (const pattern of spellPatterns) {
+                const similarity = calculatePatternSimilarity(currentPath, pattern.pattern);
+                if (similarity > 0.5) {
+                    success = pattern.isCorrect;
+                    gameOver = true;
+                    
+                    // Create success/fail particles
+                    for (let i = 0; i < currentPath.length; i += 3) {
+                        const x = currentPath[i][0] + canvas.width/2;
+                        const y = currentPath[i][1] + canvas.height/2 - 50;
+                        createSpellSuccessParticles(x, y, success ? '#44ff88' : '#ff4444');
+                    }
+                    
+                    // Play success/fail sound
+                    playSound(success ? 'correct' : 'wrong');
+                    return;
+                }
+            }
+            
+            // Clear the path if no match
+            currentPath = [];
+        }
+
+        // Restart the game
+        function restartGame() {
+            gameActive = true;
+            gameOver = false;
+            success = false;
+            currentPath = [];
+            particles.length = 0;
+            trailParticles.length = 0;
+        }
+
+        // Draw the background with 8-bit style
+        function drawBackground() {
+            // Draw starry background
+            ctx.fillStyle = '#221133';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add some pixel "stars"
+            ctx.fillStyle = '#6644aa';
+            for (let i = 0; i < 100; i++) {
+                const x = Math.floor(Math.random() * canvas.width / 4) * 4;
+                const y = Math.floor(Math.random() * canvas.height / 4) * 4;
+                const size = Math.floor(Math.random() * 2) + 1;
+                ctx.fillRect(x, y, size * 2, size * 2);
+            }
+            
+            // Draw a few brighter stars
+            ctx.fillStyle = '#aa88ff';
+            for (let i = 0; i < 20; i++) {
+                const x = Math.floor(Math.random() * canvas.width / 4) * 4;
+                const y = Math.floor(Math.random() * canvas.height / 4) * 4;
+                ctx.fillRect(x, y, 2, 2);
+            }
+        }
+
+        // Draw the restart button
+        function drawRestartButton() {
+            ctx.fillStyle = '#442266';
+            ctx.fillRect(canvas.width/2 - 60, canvas.height - 70, 120, 40);
+            ctx.strokeStyle = '#aa88ff';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(canvas.width/2 - 60, canvas.height - 70, 120, 40);
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', canvas.width/2, canvas.height - 50);
+        }
+
+        // Main render function
+        function render() {
+            // Clear canvas with background
+            drawBackground();
+            
+            // Draw the question
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width/2, 60);
+            
+            // Draw spell patterns
+            const positions = [
+                [canvas.width/4, canvas.height/2],
+                [canvas.width*3/4, canvas.height/2],
+                [canvas.width/4, canvas.height*3/4 - 50],
+                [canvas.width*3/4, canvas.height*3/4 - 50]
+            ];
+            
+            for (let i = 0; i < spellPatterns.length; i++) {
+                drawSpellPattern(
+                    spellPatterns[i].pattern, 
+                    positions[i][0], 
+                    positions[i][1],
+                    spellPatterns[i].name,
+                    gameOver && ((success && spellPatterns[i].isCorrect) || (!success && !spellPatterns[i].isCorrect))
+                );
+            }
+            
+            // Draw casting area
+            ctx.strokeStyle = '#442266';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(canvas.width/2 - 150, canvas.height/2 - 150, 300, 300);
+            
+            ctx.fillStyle = 'rgba(100, 50, 150, 0.3)';
+            ctx.fillRect(canvas.width/2 - 150, canvas.height/2 - 150, 300, 300);
+            
+            // Draw casting instructions
+            if (!gameOver) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Draw a spell symbol here', canvas.width/2, canvas.height/2 - 170);
+                ctx.fillText('to select your answer', canvas.width/2, canvas.height/2 - 150);
+            }
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw current drawing path
+            drawCurrentPath();
+            
+            // Draw cursor trail when mouse is over canvas
+            if (isDrawing) {
+                ctx.fillStyle = '#aa44ff';
+                ctx.fillRect(mouseX - 2, mouseY - 2, 4, 4);
+            }
+            
+            // Draw game over state
+            if (gameOver) {
+                ctx.fillStyle = success ? 'rgba(0, 255, 0, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(success ? 'Correct!' : 'Wrong!', canvas.width/2, canvas.height/2 - 20);
+                
+                drawRestartButton();
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            updateParticles();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Input events
+        canvas.addEventListener('mousedown', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            mouseX = x;
+            mouseY = y;
+            
+            if (gameOver) {
+                // Check if restart button is clicked
+                if (x > canvas.width/2 - 60 && x < canvas.width/2 + 60 &&
+                    y > canvas.height - 70 && y < canvas.height - 30) {
+                    restartGame();
+                }
+                return;
+            }
+            
+            // Check if inside casting area
+            if (x > canvas.width/2 - 150 && x < canvas.width/2 + 150 &&
+                y > canvas.height/2 - 150 && y < canvas.height/2 + 150) {
+                isDrawing = true;
+                currentPath = [toPatternSpace(x, y)];
+                playSound('draw');
+            }
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            mouseX = x;
+            mouseY = y;
+            
+            if (isDrawing) {
+                createTrailParticle(x, y);
+                currentPath.push(toPatternSpace(x, y));
+                
+                // Play drawing sound occasionally
+                if (Math.random() > 0.9) {
+                    playSound('draw');
+                }
+            }
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            if (isDrawing) {
+                isDrawing = false;
+                checkPattern();
+            }
+        });
+
+        canvas.addEventListener('mouseout', function() {
+            isDrawing = false;
+        });
+
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            
+            mouseX = x;
+            mouseY = y;
+            
+            if (gameOver) {
+                // Check if restart button is clicked
+                if (x > canvas.width/2 - 60 && x < canvas.width/2 + 60 &&
+                    y > canvas.height - 70 && y < canvas.height - 30) {
+                    restartGame();
+                }
+                return;
+            }
+            
+            // Check if inside casting area
+            if (x > canvas.width/2 - 150 && x < canvas.width/2 + 150 &&
+                y > canvas.height/2 - 150 && y < canvas.height/2 + 150) {
+                isDrawing = true;
+                currentPath = [toPatternSpace(x, y)];
+                playSound('draw');
+            }
+        });
+
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            
+            mouseX = x;
+            mouseY = y;
+            
+            if (isDrawing) {
+                createTrailParticle(x, y);
+                currentPath.push(toPatternSpace(x, y));
+                
+                // Play drawing sound occasionally
+                if (Math.random() > 0.9) {
+                    playSound('draw');
+                }
+            }
+        });
+
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            if (isDrawing) {
+                isDrawing = false;
+                checkPattern();
+            }
+        });
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Magical Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set dimensions based on device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors - Limited 8-bit style palette
+        const COLORS = {
+            background: '#0a0a23',
+            text: '#ffffff',
+            correct: '#5aff5a',
+            incorrect: '#ff5a5a',
+            highlight: '#ffaa00',
+            rune1: '#ff3355',
+            rune2: '#33ddff',
+            rune3: '#aaff33',
+            rune4: '#dd55ff'
+        };
+        
+        // Audio context for 8-bit sounds
+        let audioCtx;
+        
+        // Game state
+        let question = "Which planet is known as the Red Planet?";
+        let options = ["Earth", "Mars", "Venus", "Jupiter"];
+        let correctAnswer = 1; // Mars index
+        let gameOver = false;
+        let restartBtn = {
+            x: canvas.width / 2 - 60,
+            y: canvas.height / 2 + 150,
+            width: 120,
+            height: 40
+        };
+        
+        // Rune patterns for each answer
+        const runePatterns = [
+            // Earth - Circle
+            [{x: 0, y: -50}, {x: 50, y: -50}, {x: 50, y: 0}, {x: 50, y: 50}, {x: 0, y: 50}, {x: -50, y: 50}, {x: -50, y: 0}, {x: -50, y: -50}, {x: 0, y: -50}],
+            // Mars - Triangle
+            [{x: 0, y: -50}, {x: 50, y: 50}, {x: -50, y: 50}, {x: 0, y: -50}],
+            // Venus - Square
+            [{x: -40, y: -40}, {x: 40, y: -40}, {x: 40, y: 40}, {x: -40, y: 40}, {x: -40, y: -40}],
+            // Jupiter - Star
+            [{x: 0, y: -50}, {x: 15, y: -15}, {x: 50, y: -15}, {x: 20, y: 10}, {x: 30, y: 45}, {x: 0, y: 25}, {x: -30, y: 45}, {x: -20, y: 10}, {x: -50, y: -15}, {x: -15, y: -15}, {x: 0, y: -50}]
+        ];
+        
+        // Tracing state
+        let currentRune = null;
+        let tracing = false;
+        let tracePoints = [];
+        let traceProgress = 0;
+        let runeComplete = [false, false, false, false];
+        let particles = [];
+        let lastPoint = {x: 0, y: 0};
+        
+        // Initialize audio
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Play sound effects
+        function playSound(freq, type, duration) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Draw pixelated rectangle (8-bit style)
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            
+            // Draw pixelated rectangles by using multiple small blocks
+            const pixelSize = 4;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    const pWidth = Math.min(pixelSize, width - i);
+                    const pHeight = Math.min(pixelSize, height - j);
+                    ctx.fillRect(Math.floor(x + i), Math.floor(y + j), pWidth, pHeight);
+                }
+            }
+        }
+        
+        // Draw pixelated text (simulating 8-bit look)
+        function drawPixelText(text, x, y, size, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+            ctx.font = `bold ${size}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+        
+        // Draw a rune pattern
+        function drawRune(patternIndex, centerX, centerY, scale, color, progress = 1, highlight = false) {
+            const pattern = runePatterns[patternIndex];
+            
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            
+            // Draw the pattern outline
+            ctx.beginPath();
+            ctx.strokeStyle = highlight ? COLORS.highlight : color;
+            ctx.lineWidth = 3;
+            
+            const pointsToDraw = Math.ceil(pattern.length * progress);
+            
+            for (let i = 0; i < pointsToDraw; i++) {
+                const point = pattern[i];
+                if (i === 0) {
+                    ctx.moveTo(point.x * scale, point.y * scale);
+                } else {
+                    ctx.lineTo(point.x * scale, point.y * scale);
+                }
+            }
+            
+            ctx.stroke();
+            
+            // Draw the rune nodes
+            for (let i = 0; i < pattern.length; i++) {
+                if (i <= pointsToDraw) {
+                    const point = pattern[i];
+                    ctx.beginPath();
+                    ctx.fillStyle = highlight ? COLORS.highlight : color;
+                    // Pixelated circle by drawing a small rectangle
+                    ctx.fillRect(point.x * scale - 3, point.y * scale - 3, 6, 6);
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        // Create a particle
+        function createParticle(x, y, color) {
+            return {
+                x: x,
+                y: y,
+                size: Math.random() * 5 + 3,
+                color: color,
+                vx: (Math.random() - 0.5) * 3,
+                vy: (Math.random() - 0.5) * 3,
+                life: Math.random() * 20 + 10
+            };
+        }
+        
+        // Update and draw particles
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Check if a point is close to a pattern point
+        function isPointNearPatternPoint(point, patternPoint, centerX, centerY, scale, threshold = 30) {
+            const dx = point.x - (patternPoint.x * scale + centerX);
+            const dy = point.y - (patternPoint.y * scale + centerY);
+            return Math.sqrt(dx * dx + dy * dy) < threshold;
+        }
+        
+        // Check if a drawn pattern matches a rune pattern
+        function checkPatternMatch(drawnPoints, patternIndex, centerX, centerY, scale) {
+            const pattern = runePatterns[patternIndex];
+            let currentPatternPoint = 0;
+            
+            // Tolerance for pattern matching
+            const distanceTolerance = 30;
+            
+            for (let i = 0; i < drawnPoints.length; i++) {
+                const point = drawnPoints[i];
+                
+                // Check if this point is close to the next point in the pattern
+                if (currentPatternPoint < pattern.length) {
+                    const patternPoint = pattern[currentPatternPoint];
+                    const targetX = patternPoint.x * scale + centerX;
+                    const targetY = patternPoint.y * scale + centerY;
+                    
+                    const dx = point.x - targetX;
+                    const dy = point.y - targetY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < distanceTolerance) {
+                        currentPatternPoint++;
+                        
+                        // Create particles at match points
+                        for (let j = 0; j < 5; j++) {
+                            particles.push(createParticle(point.x, point.y, 
+                                patternIndex === 0 ? COLORS.rune1 : 
+                                patternIndex === 1 ? COLORS.rune2 : 
+                                patternIndex === 2 ? COLORS.rune3 : COLORS.rune4));
+                        }
+                    }
+                }
+            }
+            
+            // Pattern matches if we've hit at least 75% of the points
+            return currentPatternPoint >= pattern.length * 0.75;
+        }
+        
+        // Draw the game screen
+        function draw() {
+            // Clear the canvas with the background color
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            drawPixelText(question, canvas.width / 2, 50, 20, COLORS.text);
+            
+            // Draw rune circles
+            const centerY = canvas.height / 2;
+            const spacing = canvas.width / 5;
+            
+            for (let i = 0; i < options.length; i++) {
+                const centerX = spacing + i * spacing;
+                
+                // Draw the option text
+                drawPixelText(options[i], centerX, centerY + 100, 18, COLORS.text);
+                
+                // Draw the rune
+                const runeColor = i === 0 ? COLORS.rune1 : 
+                                  i === 1 ? COLORS.rune2 : 
+                                  i === 2 ? COLORS.rune3 : COLORS.rune4;
+                
+                // Determine if this rune is being traced or completed
+                const isCurrentRune = currentRune === i && tracing;
+                const progress = isCurrentRune ? traceProgress : (runeComplete[i] ? 1 : 0.3);
+                const highlight = isCurrentRune || runeComplete[i];
+                
+                drawRune(i, centerX, centerY, 1, runeColor, progress, highlight);
+                
+                // Draw start point indicator
+                if (!runeComplete[i] && !gameOver) {
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillRect(centerX + runePatterns[i][0].x - 4, centerY + runePatterns[i][0].y - 4, 8, 8);
+                    drawPixelText("Start", centerX + runePatterns[i][0].x, centerY + runePatterns[i][0].y - 15, 12, "#ffffff");
+                }
+            }
+            
+            // Draw current trace
+            if (tracing && tracePoints.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = "#ffcc00";
+                ctx.lineWidth = 3;
+                ctx.moveTo(tracePoints[0].x, tracePoints[0].y);
+                
+                for (let i = 1; i < tracePoints.length; i++) {
+                    ctx.lineTo(tracePoints[i].x, tracePoints[i].y);
+                    
+                    // Add trailing particles
+                    if (i % 3 === 0) {
+                        particles.push(createParticle(tracePoints[i].x, tracePoints[i].y, "#ffcc00"));
+                    }
+                }
+                
+                ctx.stroke();
+            }
+            
+            // Draw wand cursor trail
+            if (lastPoint.x && lastPoint.y) {
+                ctx.fillStyle = "#ffcc7788";
+                ctx.beginPath();
+                ctx.arc(lastPoint.x, lastPoint.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Update and draw particles
+            updateParticles();
+            
+            // Draw game over message and restart button
+            if (gameOver) {
+                const resultColor = runeComplete[correctAnswer] ? COLORS.correct : COLORS.incorrect;
+                const resultText = runeComplete[correctAnswer] ? "Correct!" : "Wrong Answer!";
+                
+                drawPixelText(resultText, canvas.width / 2, centerY - 120, 24, resultColor);
+                
+                // Draw restart button
+                drawPixelRect(restartBtn.x, restartBtn.y, restartBtn.width, restartBtn.height, "#444466");
+                drawPixelText("Restart", canvas.width / 2, restartBtn.y + 20, 18, COLORS.text);
+            }
+        }
+        
+        // Handle mouse/touch down
+        function handleStart(x, y) {
+            if (gameOver) {
+                // Check restart button
+                if (x >= restartBtn.x && x <= restartBtn.x + restartBtn.width &&
+                    y >= restartBtn.y && y <= restartBtn.y + restartBtn.height) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            const centerY = canvas.height / 2;
+            const spacing = canvas.width / 5;
+            
+            // Check if starting on a rune start point
+            for (let i = 0; i < options.length; i++) {
+                if (runeComplete[i]) continue; // Skip completed runes
+                
+                const centerX = spacing + i * spacing;
+                const startPoint = runePatterns[i][0];
+                
+                if (isPointNearPatternPoint({x, y}, startPoint, centerX, centerY, 1)) {
+                    currentRune = i;
+                    tracing = true;
+                    tracePoints = [{x, y}];
+                    traceProgress = 0.1;
+                    playSound(200 + i * 50, 'square', 0.1);
+                    break;
+                }
+            }
+        }
+        
+        // Handle mouse/touch move
+        function handleMove(x, y) {
+            lastPoint = {x, y};
+            
+            if (!tracing || gameOver) return;
+            
+            tracePoints.push({x, y});
+            
+            const centerY = canvas.height / 2;
+            const spacing = canvas.width / 5;
+            const centerX = spacing + currentRune * spacing;
+            
+            // Update trace progress based on pattern following
+            const pattern = runePatterns[currentRune];
+            for (let i = 0; i < pattern.length; i++) {
+                if (isPointNearPatternPoint({x, y}, pattern[i], centerX, centerY, 1)) {
+                    traceProgress = Math.max(traceProgress, (i + 1) / pattern.length);
+                }
+            }
+            
+            // Create trail particles
+            if (Math.random() > 0.7) {
+                const runeColors = [COLORS.rune1, COLORS.rune2, COLORS.rune3, COLORS.rune4];
+                particles.push(createParticle(x, y, runeColors[currentRune]));
+            }
+        }
+        
+        // Handle mouse/touch up
+        function handleEnd() {
+            if (!tracing || gameOver) return;
+            
+            const centerY = canvas.height / 2;
+            const spacing = canvas.width / 5;
+            const centerX = spacing + currentRune * spacing;
+            
+            // Check if pattern matches
+            if (checkPatternMatch(tracePoints, currentRune, centerX, centerY, 1)) {
+                runeComplete[currentRune] = true;
+                
+                // Play success sound
+                playSound(500, 'sine', 0.3);
+                
+                // Create success particles
+                for (let i = 0; i < 30; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const distance = Math.random() * 40 + 20;
+                    const x = centerX + Math.cos(angle) * distance;
+                    const y = centerY + Math.sin(angle) * distance;
+                    const runeColors = [COLORS.rune1, COLORS.rune2, COLORS.rune3, COLORS.rune4];
+                    particles.push(createParticle(x, y, runeColors[currentRune]));
+                }
+                
+                // Check if game is over (answered correctly or incorrectly)
+                if (currentRune === correctAnswer || runeComplete.filter(Boolean).length > 0) {
+                    gameOver = true;
+                    
+                    // Play game over sound
+                    if (currentRune === correctAnswer) {
+                        playSound(800, 'sine', 0.4);
+                        setTimeout(() => playSound(1000, 'sine', 0.4), 200);
+                    } else {
+                        playSound(200, 'sawtooth', 0.4);
+                        setTimeout(() => playSound(150, 'sawtooth', 0.6), 200);
+                    }
+                }
+            } else {
+                // Play fail sound
+                playSound(200, 'sawtooth', 0.2);
+            }
+            
+            tracing = false;
+            tracePoints = [];
+            currentRune = null;
+        }
+        
+        // Reset the game
+        function resetGame() {
+            gameOver = false;
+            runeComplete = [false, false, false, false];
+            tracing = false;
+            tracePoints = [];
+            currentRune = null;
+            particles = [];
+        }
+        
+        // Mouse/touch event handlers
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            handleStart(x, y);
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            handleMove(x, y);
+        });
+        
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('mouseleave', handleEnd);
+        
+        // Touch events
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            handleStart(x, y);
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            handleMove(x, y);
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            handleEnd();
+        });
+        
+        // Game loop
+        function gameLoop() {
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        resetGame();
+        gameLoop();
+    </script>
+</body>
+</html>

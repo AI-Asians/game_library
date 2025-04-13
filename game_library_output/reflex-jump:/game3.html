@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Jump</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            display: none;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 3px solid #555;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Game Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (limited palette)
+        const COLORS = {
+            SKY: '#5C94FC',
+            GROUND: '#00A800',
+            MOUNTAINS: '#AC7C00',
+            PLATFORM: '#FCA044',
+            CORRECT_PLATFORM: '#94FC54',
+            WRONG_PLATFORM: '#FC5454',
+            CHARACTER: '#FCFCFC',
+            TEXT: '#FFFFFF',
+            SHADOW: 'rgba(0, 0, 0, 0.5)'
+        };
+        
+        // Game variables
+        let gameOver = false;
+        let gameWon = false;
+        let jumpPressed = false;
+        let canJump = true;
+        let jumpMeter = 0;
+        let jumpMeterDirection = 1;
+        
+        // Question
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "London", correct: false },
+            { text: "Paris", correct: true },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+        
+        // Shuffle answers
+        const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+        
+        // Player character
+        const character = {
+            x: 50,
+            y: canvas.height - 100,
+            width: 20,
+            height: 24,
+            velY: 0,
+            speed: 3,
+            jumping: false,
+            facingRight: true,
+            frameCount: 0,
+            animFrame: 0
+        };
+        
+        // Platforms
+        const platformWidth = isMobile ? 120 : 180;
+        const platformHeight = 30;
+        const platformGap = isMobile ? 100 : 200;
+        
+        let platforms = [];
+        
+        function initPlatforms() {
+            platforms = [];
+            let startX = 230;
+            
+            shuffledAnswers.forEach((answer, index) => {
+                platforms.push({
+                    x: startX + index * platformGap,
+                    y: canvas.height - 120 - (index % 2) * 40,
+                    width: platformWidth,
+                    height: platformHeight,
+                    text: answer.text,
+                    correct: answer.correct,
+                    falling: false
+                });
+            });
+        }
+        
+        // Background
+        const mountains = [];
+        const numMountains = isMobile ? 5 : 10;
+        for (let i = 0; i < numMountains; i++) {
+            mountains.push({
+                x: i * (canvas.width / numMountains),
+                height: 50 + Math.random() * 70
+            });
+        }
+        
+        let mountainOffset = 0;
+        
+        // Particles
+        let particles = [];
+        
+        function createParticles(x, y, color, amount) {
+            for (let i = 0; i < amount; i++) {
+                particles.push({
+                    x,
+                    y,
+                    size: 3 + Math.random() * 3,
+                    color,
+                    velX: (Math.random() - 0.5) * 5,
+                    velY: -Math.random() * 6,
+                    gravity: 0.25,
+                    life: 30 + Math.random() * 20
+                });
+            }
+        }
+        
+        // Sound effects
+        function playJumpSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function playCorrectSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                for (let i = 0; i < 2; i++) {
+                    setTimeout(() => {
+                        const oscillator = audioCtx.createOscillator();
+                        const gainNode = audioCtx.createGain();
+                        
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(523.25 + i * 261.63, audioCtx.currentTime);
+                        
+                        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                        
+                        oscillator.connect(gainNode);
+                        gainNode.connect(audioCtx.destination);
+                        
+                        oscillator.start();
+                        oscillator.stop(audioCtx.currentTime + 0.3);
+                    }, i * 150);
+                }
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        function playWrongSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.3);
+                
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+        
+        // Game functions
+        function update() {
+            if (gameOver) return;
+            
+            character.frameCount++;
+            if (character.frameCount > 10) {
+                character.animFrame = (character.animFrame + 1) % 2;
+                character.frameCount = 0;
+            }
+            
+            // Move character
+            character.x += character.speed;
+            
+            // Update jump meter
+            if (canJump) {
+                jumpMeter += 0.03 * jumpMeterDirection;
+                if (jumpMeter >= 1) jumpMeterDirection = -1;
+                if (jumpMeter <= 0) jumpMeterDirection = 1;
+            }
+            
+            // Apply gravity
+            character.velY += 0.5;
+            character.y += character.velY;
+            
+            // Check if character is on a platform
+            let onPlatform = false;
+            
+            platforms.forEach(platform => {
+                // Update falling platforms
+                if (platform.falling) {
+                    platform.y += 5;
+                }
+                
+                // Check collision with platform
+                if (!platform.falling && 
+                    character.x + character.width > platform.x && 
+                    character.x < platform.x + platform.width &&
+                    character.y + character.height > platform.y && 
+                    character.y + character.height < platform.y + platform.height / 2 + 1 &&
+                    character.velY > 0) {
+                    
+                    character.y = platform.y - character.height;
+                    character.velY = 0;
+                    character.jumping = false;
+                    onPlatform = true;
+                    canJump = true;
+                    
+                    // Check if the platform is correct or incorrect
+                    if (character.x > platform.x + 10 && character.x < platform.x + platform.width - 10) {
+                        if (platform.correct) {
+                            gameWon = true;
+                            gameOver = true;
+                            createParticles(character.x + character.width/2, character.y + character.height/2, COLORS.CORRECT_PLATFORM, 30);
+                            playCorrectSound();
+                            setTimeout(() => restartBtn.style.display = 'block', 1000);
+                        } else {
+                            platform.falling = true;
+                            createParticles(platform.x + platform.width/2, platform.y, COLORS.WRONG_PLATFORM, 20);
+                            playWrongSound();
+                            gameOver = true;
+                            setTimeout(() => restartBtn.style.display = 'block', 1000);
+                        }
+                    }
+                }
+            });
+            
+            // Jump when space is pressed and character can jump
+            if (jumpPressed && canJump && onPlatform) {
+                character.velY = -10 - jumpMeter * 3; // Jump height affected by meter
+                character.jumping = true;
+                canJump = false;
+                jumpPressed = false;
+                playJumpSound();
+                createParticles(character.x + character.width/2, character.y + character.height, '#FFFFFF', 5);
+            }
+            
+            // Reset jump pressed state
+            jumpPressed = false;
+            
+            // Check if character fell off the screen
+            if (character.y > canvas.height) {
+                gameOver = true;
+                playWrongSound();
+                setTimeout(() => restartBtn.style.display = 'block', 1000);
+            }
+            
+            // Update parallax background
+            mountainOffset -= 0.5;
+            if (mountainOffset < -canvas.width) {
+                mountainOffset = 0;
+            }
+            
+            // Update particles
+            particles = particles.filter(particle => {
+                particle.x += particle.velX;
+                particle.y += particle.velY;
+                particle.velY += particle.gravity;
+                particle.life--;
+                return particle.life > 0;
+            });
+        }
+        
+        function drawCharacter() {
+            const x = character.x;
+            const y = character.y;
+            const w = character.width;
+            const h = character.height;
+            
+            // Body
+            ctx.fillStyle = COLORS.CHARACTER;
+            ctx.fillRect(x, y, w, h);
+            
+            // Eyes
+            ctx.fillStyle = '#000000';
+            if (character.facingRight) {
+                ctx.fillRect(x + w - 6, y + 6, 3, 3);
+            } else {
+                ctx.fillRect(x + 3, y + 6, 3, 3);
+            }
+            
+            // Legs
+            if (!character.jumping) {
+                if (character.animFrame === 0) {
+                    ctx.fillRect(x + 4, y + h, 4, 4);
+                    ctx.fillRect(x + w - 8, y + h, 4, 4);
+                } else {
+                    ctx.fillRect(x + 2, y + h, 4, 4);
+                    ctx.fillRect(x + w - 6, y + h, 4, 4);
+                }
+            } else {
+                ctx.fillRect(x + 4, y + h, 3, 6);
+                ctx.fillRect(x + w - 7, y + h, 3, 6);
+            }
+            
+            // Expression based on game state
+            if (gameWon) {
+                // Happy face
+                ctx.fillRect(x + w/2 - 2, y + h/2 + 4, 4, 2);
+            } else if (gameOver && !gameWon) {
+                // Sad face
+                ctx.fillRect(x + w/2 - 2, y + h/2 + 6, 4, 2);
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.SKY;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw mountains (parallax background)
+            ctx.fillStyle = COLORS.MOUNTAINS;
+            mountains.forEach(mountain => {
+                const drawX = (mountain.x + mountainOffset) % canvas.width;
+                ctx.beginPath();
+                ctx.moveTo(drawX - 50, canvas.height - 80);
+                ctx.lineTo(drawX + 50, canvas.height - 80 - mountain.height);
+                ctx.lineTo(drawX + 150, canvas.height - 80);
+                ctx.fill();
+            });
+            
+            // Draw ground
+            ctx.fillStyle = COLORS.GROUND;
+            ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+            
+            // Draw platforms
+            platforms.forEach(platform => {
+                ctx.fillStyle = platform.falling ? COLORS.WRONG_PLATFORM : 
+                               (platform.correct ? COLORS.CORRECT_PLATFORM : COLORS.PLATFORM);
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                
+                // Draw text on platform
+                ctx.fillStyle = COLORS.TEXT;
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(platform.text, platform.x + platform.width / 2, platform.y + platform.height / 2 + 5);
+            });
+            
+            // Draw jump meter if can jump
+            if (canJump && !gameOver) {
+                ctx.fillStyle = COLORS.SHADOW;
+                ctx.fillRect(character.x, character.y - 15, character.width, 6);
+                
+                const meterWidth = character.width * jumpMeter;
+                ctx.fillStyle = jumpMeter > 0.7 ? '#FC5454' : (jumpMeter > 0.3 ? '#FCFC54' : '#94FC54');
+                ctx.fillRect(character.x, character.y - 15, meterWidth, 6);
+            }
+            
+            // Draw character
+            drawCharacter();
+            
+            // Draw particles
+            particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    Math.floor(particle.x), 
+                    Math.floor(particle.y), 
+                    Math.floor(particle.size), 
+                    Math.floor(particle.size)
+                );
+            });
+            
+            // Draw question at top
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 30);
+            
+            // Draw jump instructions
+            if (!gameOver) {
+                ctx.font = '14px Arial';
+                ctx.fillText('Press SPACE or TAP to jump', canvas.width / 2, canvas.height - 20);
+            }
+            
+            // Draw result text
+            if (gameOver) {
+                ctx.font = '24px Arial';
+                ctx.fillStyle = gameWon ? COLORS.CORRECT_PLATFORM : COLORS.WRONG_PLATFORM;
+                ctx.fillText(
+                    gameWon ? 'Correct!' : 'Wrong!', 
+                    canvas.width / 2, 
+                    70
+                );
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function restart() {
+            gameOver = false;
+            gameWon = false;
+            character.x = 50;
+            character.y = canvas.height - 100;
+            character.velY = 0;
+            character.jumping = false;
+            particles = [];
+            canJump = true;
+            jumpMeter = 0;
+            initPlatforms();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !jumpPressed) {
+                jumpPressed = true;
+            }
+        });
+        
+        canvas.addEventListener('click', () => {
+            jumpPressed = true;
+        });
+        
+        restartBtn.addEventListener('click', restart);
+        
+        // Initialize game
+        initPlatforms();
+        gameLoop();
+    </script>
+</body>
+</html>

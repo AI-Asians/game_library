@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz</title>
+    <style>
+        body { 
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Color palette (limited to 16 colors for 8-bit aesthetic)
+        const COLORS = {
+            bg: '#0f380f',      // dark green background
+            slot: '#8bac0f',    // light green slot
+            text: '#9bbc0f',    // pale green text
+            highlight: '#306230', // darker green highlight
+            question: '#e0f8d0', // light text
+            correct: '#9bbc0f', // correct answer highlight
+            incorrect: '#ac3232', // incorrect answer highlight
+            border: '#306230',  // border color
+            button: '#8bac0f',  // button color
+            buttonText: '#0f380f', // button text
+            flash: '#e0f8d0'    // flashing color
+        };
+        
+        // Game state
+        const state = {
+            options: ["Paris", "London", "Berlin", "Madrid", "Rome"], // Answer options
+            correctAnswer: "Paris",
+            currentIndex: 0,
+            isSpinning: true,
+            gameOver: false,
+            isCorrect: null,
+            cycleSpeed: 400, // ms per option
+            lastCycleTime: 0,
+            flashCorrect: false,
+            flashTimer: 0
+        };
+        
+        // Sound effects
+        const createBeepSound = (frequency, duration, volume = 0.1, type = 'square') => {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        };
+        
+        const sounds = {
+            tick: () => createBeepSound(220, 50, 0.05),
+            correct: () => createBeepSound(660, 200, 0.1),
+            incorrect: () => createBeepSound(110, 300, 0.1),
+            flash: () => createBeepSound(440, 50, 0.05)
+        };
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            // Draw chunky pixels (4px each)
+            const pixelSize = 1;
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillRect(
+                        Math.floor(x + i), 
+                        Math.floor(y + j), 
+                        pixelSize, 
+                        pixelSize
+                    );
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.question;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("What is the capital of France?", canvas.width / 2, 150);
+        }
+        
+        function drawSlotMachine() {
+            // Draw slot machine frame
+            drawPixelRect(canvas.width / 2 - 150, canvas.height / 2 - 50, 300, 100, COLORS.border);
+            drawPixelRect(canvas.width / 2 - 145, canvas.height / 2 - 45, 290, 90, COLORS.slot);
+            
+            // Draw current option
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '32px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Flash effect when correct answer is showing
+            if (state.options[state.currentIndex] === state.correctAnswer && state.isSpinning) {
+                if (state.flashCorrect) {
+                    drawPixelRect(canvas.width / 2 - 140, canvas.height / 2 - 40, 280, 80, COLORS.flash);
+                    sounds.flash();
+                }
+                state.flashTimer++;
+                if (state.flashTimer > 3) {
+                    state.flashCorrect = !state.flashCorrect;
+                    state.flashTimer = 0;
+                }
+            } else {
+                state.flashCorrect = false;
+            }
+            
+            ctx.fillText(state.options[state.currentIndex], canvas.width / 2, canvas.height / 2);
+            
+            // Draw click here indicator
+            if (state.isSpinning) {
+                ctx.fillStyle = COLORS.flash;
+                ctx.font = '20px sans-serif';
+                ctx.fillText("Click to stop!", canvas.width / 2, canvas.height / 2 + 70);
+                
+                // Tick marks to show movement
+                const tickWidth = 20;
+                const tickSpacing = 40;
+                const startX = canvas.width / 2 - 140;
+                for (let i = 0; i < 7; i++) {
+                    drawPixelRect(startX + i * tickSpacing, canvas.height / 2 - 45, 
+                                 tickWidth, 10, i % 2 === 0 ? COLORS.border : COLORS.highlight);
+                    drawPixelRect(startX + i * tickSpacing, canvas.height / 2 + 35, 
+                                 tickWidth, 10, i % 2 === 0 ? COLORS.border : COLORS.highlight);
+                }
+            }
+        }
+        
+        function drawGameOver() {
+            if (!state.gameOver) return;
+            
+            // Draw result background
+            drawPixelRect(canvas.width / 2 - 160, canvas.height / 2 - 120, 320, 240, state.isCorrect ? COLORS.correct : COLORS.incorrect);
+            drawPixelRect(canvas.width / 2 - 155, canvas.height / 2 - 115, 310, 230, COLORS.bg);
+            
+            // Draw result text
+            ctx.fillStyle = state.isCorrect ? COLORS.correct : COLORS.incorrect;
+            ctx.font = '36px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(state.isCorrect ? "Correct!" : "Incorrect!", canvas.width / 2, canvas.height / 2 - 50);
+            
+            // Draw restart button
+            drawPixelRect(canvas.width / 2 - 100, canvas.height / 2 + 20, 200, 60, COLORS.button);
+            ctx.fillStyle = COLORS.buttonText;
+            ctx.font = '24px sans-serif';
+            ctx.fillText("Play Again", canvas.width / 2, canvas.height / 2 + 50);
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawQuestion();
+            drawSlotMachine();
+            drawGameOver();
+        }
+        
+        // Game logic
+        function update(timestamp) {
+            if (state.isSpinning && !state.gameOver) {
+                if (timestamp - state.lastCycleTime > state.cycleSpeed) {
+                    state.currentIndex = (state.currentIndex + 1) % state.options.length;
+                    state.lastCycleTime = timestamp;
+                    sounds.tick();
+                }
+            }
+        }
+        
+        function gameLoop(timestamp) {
+            update(timestamp);
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle user interaction
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (event.clientX - rect.left) / (rect.right - rect.left) * canvas.width;
+            const y = (event.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height;
+            
+            if (state.gameOver) {
+                // Check if click is on restart button
+                if (x > canvas.width / 2 - 100 && x < canvas.width / 2 + 100 &&
+                    y > canvas.height / 2 + 20 && y < canvas.height / 2 + 80) {
+                    // Reset game
+                    state.isSpinning = true;
+                    state.gameOver = false;
+                    state.isCorrect = null;
+                    state.currentIndex = 0;
+                }
+            } else if (state.isSpinning) {
+                // Stop spinning and check answer
+                state.isSpinning = false;
+                state.isCorrect = state.options[state.currentIndex] === state.correctAnswer;
+                
+                // Play sound
+                if (state.isCorrect) {
+                    sounds.correct();
+                } else {
+                    sounds.incorrect();
+                }
+                
+                // Game over after a short delay
+                setTimeout(() => {
+                    state.gameOver = true;
+                }, 500);
+            }
+        });
+        
+        // Start the game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

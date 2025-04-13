@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Planet Platform Builder</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Constants
+        const COLORS = {
+            sky: '#000033',
+            ground: '#663300',
+            platform: '#777777',
+            character: '#0077FF',
+            text: '#FFFFFF',
+            correct: '#00FF00',
+            incorrect: '#FF0000',
+            goal: '#FFFF00'
+        };
+        
+        // Game state
+        let state = {
+            character: { x: 50, y: 400, width: 24, height: 32, jumping: false, yVelocity: 0 },
+            platforms: [{ x: 30, y: 450, width: 100, height: 20 }],
+            goal: { x: 700, y: 450, width: 40, height: 40 },
+            nextPlatform: { x: 200, y: 450, width: 100, height: 20, placed: false },
+            gameOver: false,
+            success: false,
+            restart: { x: 350, y: 400, width: 100, height: 40, visible: false },
+            answered: false,
+            question: "Which planet is known as the Red Planet?",
+            options: [
+                { text: "Mars", correct: true, x: 150, y: 200, width: 120, height: 40 },
+                { text: "Venus", correct: false, x: 340, y: 200, width: 120, height: 40 },
+                { text: "Jupiter", correct: false, x: 530, y: 200, width: 120, height: 40 }
+            ],
+            selectedOption: null,
+            characterSprite: {
+                frameX: 0,
+                frameCount: 2,
+                animationSpeed: 10,
+                frameCounter: 0
+            }
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.1;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 0.1); // C5
+            setTimeout(() => playSound(659.25, 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 0.2), 200); // G5
+        }
+        
+        function playIncorrectSound() {
+            playSound(392.00, 0.1); // G4
+            setTimeout(() => playSound(349.23, 0.2), 100); // F4
+        }
+        
+        function playJumpSound() {
+            playSound(460, 0.1, 'sine');
+        }
+        
+        function playLandSound() {
+            playSound(220, 0.1, 'sine');
+        }
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), width, height);
+            
+            // Add pixel details for 8-bit look
+            ctx.fillStyle = lightenColor(color, 30);
+            ctx.fillRect(Math.floor(x), Math.floor(y), width, 2);
+            ctx.fillRect(Math.floor(x), Math.floor(y), 2, height);
+            
+            ctx.fillStyle = darkenColor(color, 30);
+            ctx.fillRect(Math.floor(x), Math.floor(y + height - 2), width, 2);
+            ctx.fillRect(Math.floor(x + width - 2), Math.floor(y), 2, height);
+        }
+        
+        function lightenColor(color, amount) {
+            return color === '#FFFFFF' ? color : '#FFFFFF';
+        }
+        
+        function darkenColor(color, amount) {
+            return color === '#000000' ? color : '#000000';
+        }
+        
+        function drawCharacter(x, y, width, height, jumping) {
+            // Character body
+            drawPixelRect(x, y, width, height, COLORS.character);
+            
+            // Character face
+            if (state.success) {
+                // Happy face
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(x + 6, y + 8, 4, 4);
+                ctx.fillRect(x + 14, y + 8, 4, 4);
+                ctx.fillRect(x + 6, y + 18, 12, 2);
+            } else if (state.gameOver) {
+                // Sad face
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(x + 6, y + 8, 4, 4);
+                ctx.fillRect(x + 14, y + 8, 4, 4);
+                ctx.fillRect(x + 6, y + 22, 12, 2);
+            } else {
+                // Normal face
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(x + 6, y + 8, 4, 4);
+                ctx.fillRect(x + 14, y + 8, 4, 4);
+                ctx.fillRect(x + 8, y + 18, 8, 2);
+            }
+            
+            // Animate character legs
+            state.characterSprite.frameCounter++;
+            if (state.characterSprite.frameCounter >= state.characterSprite.animationSpeed) {
+                state.characterSprite.frameX = (state.characterSprite.frameX + 1) % state.characterSprite.frameCount;
+                state.characterSprite.frameCounter = 0;
+            }
+            
+            // Draw legs
+            if (state.characterSprite.frameX === 0) {
+                drawPixelRect(x + 4, y + height, 6, 4, COLORS.character);
+                drawPixelRect(x + 14, y + height, 6, 4, COLORS.character);
+            } else {
+                drawPixelRect(x + 6, y + height, 6, 4, COLORS.character);
+                drawPixelRect(x + 12, y + height, 6, 4, COLORS.character);
+            }
+        }
+        
+        function drawPlatform(x, y, width, height) {
+            drawPixelRect(x, y, width, height, COLORS.platform);
+            
+            // Add pixelated texture
+            ctx.fillStyle = darkenColor(COLORS.platform, 20);
+            for (let i = 0; i < width; i += 8) {
+                for (let j = 0; j < height; j += 8) {
+                    if ((i + j) % 16 === 0) {
+                        ctx.fillRect(x + i, y + j, 4, 4);
+                    }
+                }
+            }
+        }
+        
+        function drawGoal(x, y, width, height) {
+            drawPixelRect(x, y, width, height, COLORS.goal);
+            
+            // Draw flag pole
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(x + width / 2 - 2, y - 30, 4, 30);
+            
+            // Draw flag
+            ctx.fillStyle = '#FF0000';
+            ctx.beginPath();
+            ctx.moveTo(x + width / 2, y - 30);
+            ctx.lineTo(x + width / 2 + 15, y - 20);
+            ctx.lineTo(x + width / 2, y - 10);
+            ctx.fill();
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(state.question, canvas.width / 2, 100);
+            
+            // Draw options
+            state.options.forEach(option => {
+                const color = state.answered ? 
+                    (option.correct ? COLORS.correct : COLORS.incorrect) : 
+                    (state.selectedOption === option ? '#AAAAFF' : '#444444');
+                
+                drawPixelRect(option.x, option.y, option.width, option.height, color);
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(option.text, option.x + option.width / 2, option.y + option.height / 2 + 6);
+            });
+        }
+        
+        function drawRestartButton() {
+            if (state.restart.visible) {
+                drawPixelRect(state.restart.x, state.restart.y, state.restart.width, state.restart.height, '#444444');
+                
+                ctx.fillStyle = COLORS.text;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', state.restart.x + state.restart.width / 2, state.restart.y + state.restart.height / 2 + 5);
+            }
+        }
+        
+        function drawGame() {
+            // Clear the canvas
+            ctx.fillStyle = COLORS.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw ground
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, 500, canvas.width, 100);
+            
+            // Draw goal
+            drawGoal(state.goal.x, state.goal.y, state.goal.width, state.goal.height);
+            
+            // Draw platforms
+            state.platforms.forEach(platform => {
+                drawPlatform(platform.x, platform.y, platform.width, platform.height);
+            });
+            
+            // Draw next platform if not placed
+            if (!state.nextPlatform.placed) {
+                ctx.globalAlpha = 0.5;
+                drawPlatform(state.nextPlatform.x, state.nextPlatform.y, state.nextPlatform.width, state.nextPlatform.height);
+                ctx.globalAlpha = 1.0;
+            }
+            
+            // Draw character
+            drawCharacter(state.character.x, state.character.y, state.character.width, state.character.height, state.character.jumping);
+            
+            // Draw question and options
+            drawQuestion();
+            
+            // Draw restart button
+            drawRestartButton();
+        }
+        
+        // Game logic
+        function resetGame() {
+            state = {
+                character: { x: 50, y: 400, width: 24, height: 32, jumping: false, yVelocity: 0 },
+                platforms: [{ x: 30, y: 450, width: 100, height: 20 }],
+                goal: { x: 700, y: 450, width: 40, height: 40 },
+                nextPlatform: { x: 200, y: 450, width: 100, height: 20, placed: false },
+                gameOver: false,
+                success: false,
+                restart: { x: 350, y: 400, width: 100, height: 40, visible: false },
+                answered: false,
+                question: "Which planet is known as the Red Planet?",
+                options: [
+                    { text: "Mars", correct: true, x: 150, y: 200, width: 120, height: 40 },
+                    { text: "Venus", correct: false, x: 340, y: 200, width: 120, height: 40 },
+                    { text: "Jupiter", correct: false, x: 530, y: 200, width: 120, height: 40 }
+                ],
+                selectedOption: null,
+                characterSprite: {
+                    frameX: 0,
+                    frameCount: 2,
+                    animationSpeed: 10,
+                    frameCounter: 0
+                }
+            };
+        }
+        
+        function updateCharacter() {
+            if (state.character.jumping) {
+                state.character.yVelocity += 0.5; // Gravity
+                state.character.y += state.character.yVelocity;
+                
+                // Check if character lands on a platform
+                let onPlatform = false;
+                for (const platform of state.platforms) {
+                    if (
+                        state.character.y + state.character.height >= platform.y &&
+                        state.character.y + state.character.height <= platform.y + 10 &&
+                        state.character.x + state.character.width > platform.x &&
+                        state.character.x < platform.x + platform.width
+                    ) {
+                        state.character.y = platform.y - state.character.height;
+                        state.character.jumping = false;
+                        state.character.yVelocity = 0;
+                        onPlatform = true;
+                        playLandSound();
+                        break;
+                    }
+                }
+                
+                // Check if character lands on the goal
+                if (
+                    state.character.y + state.character.height >= state.goal.y &&
+                    state.character.y + state.character.height <= state.goal.y + 10 &&
+                    state.character.x + state.character.width > state.goal.x &&
+                    state.character.x < state.goal.x + state.goal.width
+                ) {
+                    state.character.y = state.goal.y - state.character.height;
+                    state.character.jumping = false;
+                    state.character.yVelocity = 0;
+                    state.success = true;
+                    state.gameOver = true;
+                    state.restart.visible = true;
+                    playCorrectSound();
+                }
+                
+                // Check if character falls off the screen
+                if (state.character.y > canvas.height) {
+                    state.gameOver = true;
+                    state.restart.visible = true;
+                    playIncorrectSound();
+                }
+            }
+        }
+        
+        function placeNextPlatform() {
+            if (!state.nextPlatform.placed) {
+                state.platforms.push({
+                    x: state.nextPlatform.x,
+                    y: state.nextPlatform.y,
+                    width: state.nextPlatform.width,
+                    height: state.nextPlatform.height
+                });
+                state.nextPlatform.placed = true;
+            }
+        }
+        
+        function handleAnswerSelection(option) {
+            state.selectedOption = option;
+            state.answered = true;
+            
+            if (option.correct) {
+                placeNextPlatform();
+                state.character.jumping = true;
+                state.character.yVelocity = -10;
+                playJumpSound();
+                playCorrectSound();
+            } else {
+                state.gameOver = true;
+                state.restart.visible = true;
+                playIncorrectSound();
+            }
+        }
+        
+        // User input
+        canvas.addEventListener('click', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+            
+            // Check if restart button is clicked
+            if (
+                state.restart.visible &&
+                mouseX >= state.restart.x &&
+                mouseX <= state.restart.x + state.restart.width &&
+                mouseY >= state.restart.y &&
+                mouseY <= state.restart.y + state.restart.height
+            ) {
+                resetGame();
+                return;
+            }
+            
+            // Check if an option is clicked
+            if (!state.answered && !state.gameOver) {
+                for (const option of state.options) {
+                    if (
+                        mouseX >= option.x &&
+                        mouseX <= option.x + option.width &&
+                        mouseY >= option.y &&
+                        mouseY <= option.y + option.height
+                    ) {
+                        handleAnswerSelection(option);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Game loop
+        function gameLoop() {
+            if (!state.gameOver) {
+                updateCharacter();
+            }
+            
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

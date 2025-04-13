@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Morse Code True/False Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #333;
+        }
+        @media (max-width: 800px) {
+            canvas {
+                width: 360px;
+                height: 640px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        let gameState = {
+            answered: false,
+            correct: null,
+            restartButton: { x: 350, y: 450, width: 100, height: 40 },
+            dotKey: { x: 200, y: 350, width: 120, height: 120, pressed: false },
+            dashKey: { x: 480, y: 350, width: 120, height: 120, pressed: false },
+            sparkTime: 0,
+            sparkPosition: { x: 0, y: 0 }
+        };
+
+        // Colors (limited palette)
+        const COLORS = {
+            background: "#222034",
+            text: "#FFFFFF",
+            dotKey: "#45283c",
+            dotKeyPressed: "#663931",
+            dashKey: "#306082",
+            dashKeyPressed: "#5a6988",
+            keyBrass: "#d9a066",
+            keyBaseMetal: "#8b956d",
+            keyBaseWood: "#4d3b35",
+            spark: "#faef5e",
+            correct: "#4aa54a",
+            incorrect: "#be4a55",
+            panelBg: "#111111",
+            panelFrame: "#595652",
+            buttonBg: "#45283c",
+            buttonHover: "#663931"
+        };
+
+        // Sound synthesis
+        function playSound(frequency, duration, type = 'sine') {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = frequency;
+                gainNode.gain.value = 0.3;
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration * 1000);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+
+        // Draw a pixelated rectangle
+        function pixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));
+        }
+
+        // Draw pixelated text
+        function pixelText(text, x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText(text, x, y);
+        }
+
+        // Draw telegraph key
+        function drawKey(x, y, width, height, pressed, isDot) {
+            // Base
+            pixelRect(x + 20, y + 100, width - 40, 20, COLORS.keyBaseWood);
+            
+            // Lever
+            const leverY = pressed ? y + 35 : y + 25;
+            const keyColor = isDot 
+                ? (pressed ? COLORS.dotKeyPressed : COLORS.dotKey)
+                : (pressed ? COLORS.dashKeyPressed : COLORS.dashKey);
+            
+            // Metal parts
+            pixelRect(x + width/2 - 10, y + 60, 20, 40, COLORS.keyBaseMetal);
+            pixelRect(x + 30, leverY, width - 60, 10, COLORS.keyBaseMetal);
+            pixelRect(x + width/2 - 15, leverY + 10, 30, 5, COLORS.keyBaseMetal);
+            
+            // Knob
+            pixelRect(x + 30, leverY - 25, width - 60, 25, keyColor);
+            pixelRect(x + 35, leverY - 30, width - 70, 10, COLORS.keyBrass);
+            
+            // Symbol
+            const symbol = isDot ? "•" : "—";
+            pixelText(symbol, x + width/2, leverY - 10, 24, "#ffffff");
+            
+            // Label
+            const label = isDot ? "TRUE (DOT)" : "FALSE (DASH)";
+            pixelText(label, x + width/2, y + 140, 14, "#ffffff");
+        }
+
+        // Draw spark effect
+        function drawSpark(x, y) {
+            ctx.fillStyle = COLORS.spark;
+            
+            // Draw pixelated spark
+            const sparkSize = 3;
+            const sparkOffsets = [
+                {x: 0, y: 0},
+                {x: -5, y: -2},
+                {x: 3, y: -4},
+                {x: -2, y: 2},
+                {x: 4, y: 1}
+            ];
+            
+            for (let offset of sparkOffsets) {
+                pixelRect(
+                    x + offset.x + Math.floor(Math.random() * 3) - 1,
+                    y + offset.y + Math.floor(Math.random() * 3) - 1,
+                    sparkSize, sparkSize, COLORS.spark
+                );
+            }
+        }
+
+        // Draw the game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question panel
+            pixelRect(150, 100, 500, 100, COLORS.panelBg);
+            pixelRect(150, 100, 500, 10, COLORS.panelFrame);
+            pixelRect(150, 190, 500, 10, COLORS.panelFrame);
+            pixelRect(150, 100, 10, 100, COLORS.panelFrame);
+            pixelRect(640, 100, 10, 100, COLORS.panelFrame);
+            
+            // Draw question
+            pixelText("Water boils at 100 degrees Celsius at sea level.", 400, 150, 18, COLORS.text);
+            
+            // Draw morse display panel
+            pixelRect(300, 220, 200, 60, COLORS.panelBg);
+            pixelRect(300, 220, 200, 10, COLORS.panelFrame);
+            pixelRect(300, 270, 200, 10, COLORS.panelFrame);
+            pixelRect(300, 220, 10, 60, COLORS.panelFrame);
+            pixelRect(490, 220, 10, 60, COLORS.panelFrame);
+            
+            // Draw instructions
+            pixelText("Send your answer using", 400, 60, 20, COLORS.text);
+            pixelText("the telegraph keys below", 400, 85, 20, COLORS.text);
+            
+            // Draw telegraph keys
+            drawKey(gameState.dotKey.x, gameState.dotKey.y, gameState.dotKey.width, gameState.dotKey.height, gameState.dotKey.pressed, true);
+            drawKey(gameState.dashKey.x, gameState.dashKey.y, gameState.dashKey.width, gameState.dashKey.height, gameState.dashKey.pressed, false);
+            
+            // Draw answer indicator if answered
+            if (gameState.answered) {
+                const resultText = gameState.correct ? "CORRECT!" : "INCORRECT!";
+                const resultColor = gameState.correct ? COLORS.correct : COLORS.incorrect;
+                pixelText(resultText, 400, 250, 24, resultColor);
+                
+                // Draw restart button
+                pixelRect(gameState.restartButton.x, gameState.restartButton.y, 
+                         gameState.restartButton.width, gameState.restartButton.height, 
+                         COLORS.buttonBg);
+                pixelText("RESTART", gameState.restartButton.x + gameState.restartButton.width / 2, 
+                         gameState.restartButton.y + 25, 16, COLORS.text);
+            } else {
+                // Show waiting for input
+                pixelText("AWAITING SIGNAL...", 400, 250, 18, "#8b956d");
+            }
+            
+            // Draw spark effect if active
+            if (gameState.sparkTime > 0) {
+                drawSpark(gameState.sparkPosition.x, gameState.sparkPosition.y);
+                gameState.sparkTime--;
+            }
+        }
+
+        // Handle mouse/touch input
+        function handlePointerDown(x, y) {
+            // Check dot key
+            if (!gameState.answered && 
+                x > gameState.dotKey.x && x < gameState.dotKey.x + gameState.dotKey.width &&
+                y > gameState.dotKey.y && y < gameState.dotKey.y + gameState.dotKey.height) {
+                
+                gameState.dotKey.pressed = true;
+                gameState.sparkTime = 10;
+                gameState.sparkPosition = { 
+                    x: gameState.dotKey.x + gameState.dotKey.width / 2,
+                    y: gameState.dotKey.y + 50
+                };
+                playSound(880, 0.15, 'square');
+                
+                // Since water does boil at 100°C at sea level, TRUE is correct
+                gameState.answered = true;
+                gameState.correct = true;
+                
+                setTimeout(() => {
+                    gameState.dotKey.pressed = false;
+                }, 200);
+            }
+            
+            // Check dash key
+            if (!gameState.answered && 
+                x > gameState.dashKey.x && x < gameState.dashKey.x + gameState.dashKey.width &&
+                y > gameState.dashKey.y && y < gameState.dashKey.y + gameState.dashKey.height) {
+                
+                gameState.dashKey.pressed = true;
+                gameState.sparkTime = 10;
+                gameState.sparkPosition = { 
+                    x: gameState.dashKey.x + gameState.dashKey.width / 2,
+                    y: gameState.dashKey.y + 50
+                };
+                playSound(440, 0.3, 'square');
+                
+                // Since water does boil at 100°C at sea level, FALSE is incorrect
+                gameState.answered = true;
+                gameState.correct = false;
+                
+                setTimeout(() => {
+                    gameState.dashKey.pressed = false;
+                }, 200);
+            }
+            
+            // Check restart button
+            if (gameState.answered && 
+                x > gameState.restartButton.x && x < gameState.restartButton.x + gameState.restartButton.width &&
+                y > gameState.restartButton.y && y < gameState.restartButton.y + gameState.restartButton.height) {
+                
+                // Play click sound
+                playSound(660, 0.1, 'sine');
+                
+                // Reset game state
+                gameState = {
+                    answered: false,
+                    correct: null,
+                    restartButton: gameState.restartButton,
+                    dotKey: { x: 200, y: 350, width: 120, height: 120, pressed: false },
+                    dashKey: { x: 480, y: 350, width: 120, height: 120, pressed: false },
+                    sparkTime: 0,
+                    sparkPosition: { x: 0, y: 0 }
+                };
+            }
+        }
+
+        // Set up event listeners
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            handlePointerDown(x, y);
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.touches[0].clientX - rect.left) * scaleX;
+            const y = (e.touches[0].clientY - rect.top) * scaleY;
+            handlePointerDown(x, y);
+        });
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (!gameState.answered) {
+                // 'T' or arrow left for Dot (True)
+                if (e.key === 'T' || e.key === 't' || e.key === 'ArrowLeft') {
+                    handlePointerDown(gameState.dotKey.x + 10, gameState.dotKey.y + 10);
+                }
+                // 'F' or arrow right for Dash (False)
+                else if (e.key === 'F' || e.key === 'f' || e.key === 'ArrowRight') {
+                    handlePointerDown(gameState.dashKey.x + 10, gameState.dashKey.y + 10);
+                }
+            } else if (e.key === 'Enter' || e.key === ' ') {
+                // Restart with Enter or Space
+                handlePointerDown(gameState.restartButton.x + 10, gameState.restartButton.y + 10);
+            }
+        });
+
+        // Game loop
+        function gameLoop() {
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

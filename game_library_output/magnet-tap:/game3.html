@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magnet-Tap Educational Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 5px 10px;
+            background-color: #444;
+            color: #fff;
+            border: 2px solid #666;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Colors (limited palette)
+        const colors = {
+            background: '#0f380f',
+            magnet: '#8bac0f',
+            magnetGlow: '#9bbc0f',
+            trueOption: '#306230',
+            falseOption: '#882000',
+            text: '#e0f8d0',
+            question: '#d8e8c8'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        const correctAnswer = false; // The statement is false
+        
+        // Magnet properties
+        const magnet = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: canvas.width * 0.07,
+            glowRadius: canvas.width * 0.09,
+            pulseAmount: 0,
+            pulseSpeed: 0.05
+        };
+        
+        // Answer options
+        const options = [
+            {
+                text: "TRUE",
+                x: canvas.width * 0.25,
+                y: canvas.height * 0.15,
+                radius: canvas.width * 0.06,
+                speedX: 0,
+                speedY: 0,
+                isCorrect: correctAnswer,
+                angle: Math.random() * Math.PI * 2,
+                angleSpeed: 0.01 + Math.random() * 0.02,
+                distanceFromCenter: canvas.width * 0.35
+            },
+            {
+                text: "FALSE",
+                x: canvas.width * 0.75,
+                y: canvas.height * 0.15,
+                radius: canvas.width * 0.06,
+                speedX: 0,
+                speedY: 0,
+                isCorrect: !correctAnswer,
+                angle: Math.random() * Math.PI * 2 + Math.PI,
+                angleSpeed: 0.01 + Math.random() * 0.02,
+                distanceFromCenter: canvas.width * 0.35
+            }
+        ];
+        
+        // Initialize positions
+        options.forEach(option => {
+            option.x = magnet.x + Math.cos(option.angle) * option.distanceFromCenter;
+            option.y = magnet.y + Math.sin(option.angle) * option.distanceFromCenter;
+        });
+        
+        // Audio context for sound effects
+        let audioCtx;
+        
+        // Initialize audio
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Play sound effects
+        function playSound(type) {
+            if (!audioCtx) initAudio();
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(392, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(523, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(180, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(120, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'pull') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Draw pixel-style rectangle
+        function drawPixelRect(x, y, width, height, color) {
+            // Create a pixelated effect by drawing blocks
+            const pixelSize = Math.max(3, Math.floor(canvas.width / 100));
+            for (let i = 0; i < width; i += pixelSize) {
+                for (let j = 0; j < height; j += pixelSize) {
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                }
+            }
+        }
+        
+        // Draw pixel circle
+        function drawPixelCircle(centerX, centerY, radius, color) {
+            const pixelSize = Math.max(2, Math.floor(canvas.width / 120));
+            const radiusSquared = radius * radius;
+            
+            for (let y = -radius; y <= radius; y += pixelSize) {
+                for (let x = -radius; x <= radius; x += pixelSize) {
+                    if (x * x + y * y <= radiusSquared) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(centerX + x, centerY + y, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        // Draw magnetic field lines
+        function drawMagneticField() {
+            const lines = 16;
+            const maxLength = magnet.radius * 3;
+            
+            for (let i = 0; i < lines; i++) {
+                const angle = (i / lines) * Math.PI * 2;
+                const startX = magnet.x + Math.cos(angle) * magnet.radius;
+                const startY = magnet.y + Math.sin(angle) * magnet.radius;
+                const endX = magnet.x + Math.cos(angle) * (maxLength + magnet.pulseAmount * 10);
+                const endY = magnet.y + Math.sin(angle) * (maxLength + magnet.pulseAmount * 10);
+                
+                ctx.strokeStyle = colors.magnetGlow;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            }
+        }
+        
+        // Update game logic
+        function update() {
+            if (gameOver) return;
+            
+            // Update magnet pulse
+            magnet.pulseAmount = Math.sin(Date.now() * 0.003) * 0.5 + 0.5;
+            
+            // Update attraction force
+            options.forEach(option => {
+                if (gameOver) return;
+                
+                // Calculate distance to magnet
+                const dx = magnet.x - option.x;
+                const dy = magnet.y - option.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Move along curved path
+                option.angle += option.angleSpeed;
+                option.distanceFromCenter -= 0.3 + (1 - distance / (canvas.width * 0.4)) * 1.5;
+                option.distanceFromCenter = Math.max(0, option.distanceFromCenter);
+                
+                option.x = magnet.x + Math.cos(option.angle) * option.distanceFromCenter;
+                option.y = magnet.y + Math.sin(option.angle) * option.distanceFromCenter;
+                
+                // Check if option reached the magnet
+                if (distance < magnet.radius) {
+                    gameOver = true;
+                    if (option.isCorrect) {
+                        gameWon = true;
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    restartBtn.style.display = 'block';
+                }
+            });
+            
+            if (Math.random() < 0.05 && !gameOver) {
+                playSound('pull');
+            }
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = colors.question;
+            ctx.font = `${Math.max(16, canvas.width * 0.03)}px sans-serif`;
+            ctx.textAlign = 'center';
+            
+            // Draw wrapped text for question
+            const maxWidth = canvas.width * 0.8;
+            const words = question.split(' ');
+            let line = '';
+            let y = canvas.height * 0.1;
+            const lineHeight = ctx.measureText('M').width * 1.5;
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                if (metrics.width > maxWidth && i > 0) {
+                    ctx.fillText(line, canvas.width / 2, y);
+                    line = words[i] + ' ';
+                    y += lineHeight;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, canvas.width / 2, y);
+            
+            // Draw magnetic field
+            drawMagneticField();
+            
+            // Draw magnet
+            drawPixelCircle(magnet.x, magnet.y, magnet.radius + magnet.pulseAmount * 5, colors.magnetGlow);
+            drawPixelCircle(magnet.x, magnet.y, magnet.radius, colors.magnet);
+            
+            // Draw answer options
+            options.forEach(option => {
+                // Draw option background
+                const optionColor = option.text === "TRUE" ? colors.trueOption : colors.falseOption;
+                drawPixelCircle(option.x, option.y, option.radius, optionColor);
+                
+                // Draw option text
+                ctx.fillStyle = colors.text;
+                ctx.font = `${Math.max(14, canvas.width * 0.025)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(option.text, option.x, option.y);
+            });
+            
+            // Draw game result
+            if (gameOver) {
+                ctx.fillStyle = gameWon ? 'rgba(48, 98, 48, 0.7)' : 'rgba(136, 32, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = colors.text;
+                ctx.font = `${Math.max(20, canvas.width * 0.04)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    gameWon ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle user input
+        canvas.addEventListener('click', function(e) {
+            if (gameOver) return;
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) / (rect.right - rect.left) * canvas.width;
+            const clickY = (e.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height;
+            
+            // Check if an option was clicked
+            options.forEach(option => {
+                const dx = clickX - option.x;
+                const dy = clickY - option.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance <= option.radius) {
+                    gameOver = true;
+                    if (option.isCorrect) {
+                        gameWon = true;
+                        playSound('correct');
+                    } else {
+                        playSound('wrong');
+                    }
+                    restartBtn.style.display = 'block';
+                }
+            });
+        });
+        
+        // Restart game
+        restartBtn.addEventListener('click', function() {
+            gameOver = false;
+            gameWon = false;
+            
+            // Reset options
+            options.forEach(option => {
+                option.angle = Math.random() * Math.PI * 2;
+                option.distanceFromCenter = canvas.width * 0.35;
+                option.x = magnet.x + Math.cos(option.angle) * option.distanceFromCenter;
+                option.y = magnet.y + Math.sin(option.angle) * option.distanceFromCenter;
+                option.speedX = 0;
+                option.speedY = 0;
+            });
+            
+            restartBtn.style.display = 'none';
+        });
+        
+        // Start game
+        gameLoop();
+        
+        // Add touch support for mobile
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('click', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        }, false);
+    </script>
+</body>
+</html>

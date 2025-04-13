@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bridge-Tap TF Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 10px;
+            padding: 8px 16px;
+            background-color: #555;
+            color: white;
+            border: 3px solid #888;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Set canvas size
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+        
+        // Game variables
+        const colors = {
+            sky: '#5C94FC',
+            platform: '#8F563B',
+            platformTop: '#D2B48C',
+            lava: '#E6482E',
+            bridge: '#A0522D',
+            bridgeTop: '#CD853F'
+        };
+        
+        // Platform dimensions
+        const platformHeight = canvas.height * 0.25;
+        const platformWidth = canvas.width * 0.32;
+        const gapWidth = canvas.width - (platformWidth * 2);
+        
+        // Question
+        const question = "The Great Wall of China is visible from space.";
+        const answer = false; // The correct answer is FALSE
+        
+        // Game state
+        let gameState = {
+            bridgeWidth: 0,
+            isBuilding: false,
+            gameOver: false,
+            success: false,
+            playerX: platformWidth * 0.3,
+            playerY: canvas.height - platformHeight - 30,
+            playerDirection: 1,
+            animFrame: 0,
+            frameCount: 0,
+            result: null
+        };
+        
+        // Restart button
+        const restartBtn = document.getElementById('restartBtn');
+        restartBtn.addEventListener('click', restartGame);
+        
+        // Sound effects
+        function playSound(type) {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'build':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+                case 'success':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+                case 'fail':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(311.13, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.frequency.setValueAtTime(233.08, audioContext.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(174.61, audioContext.currentTime + 0.2);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', startBuilding);
+        canvas.addEventListener('mouseup', stopBuilding);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            startBuilding();
+        });
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            stopBuilding();
+        });
+        
+        function startBuilding() {
+            if (!gameState.gameOver && !gameState.isBuilding) {
+                gameState.isBuilding = true;
+            }
+        }
+        
+        function stopBuilding() {
+            if (!gameState.gameOver && gameState.isBuilding) {
+                gameState.isBuilding = false;
+                checkBridge();
+            }
+        }
+        
+        function checkBridge() {
+            const perfectWidth = gapWidth;
+            const tolerance = platformWidth * 0.15;
+            
+            if (Math.abs(gameState.bridgeWidth - perfectWidth) <= tolerance) {
+                // Success - bridge connects perfectly
+                gameState.success = true;
+                playSound('success');
+                
+                // Check if player reached the correct answer
+                const playerReachedFalse = true; // Because player is moving right to FALSE platform
+                gameState.result = (playerReachedFalse === answer);
+            } else if (gameState.bridgeWidth < perfectWidth - tolerance) {
+                // Bridge too short - player falls
+                gameState.playerDirection = 3; // falling
+                playSound('fail');
+                gameState.result = false;
+            } else {
+                // Bridge too long - bridge collapses
+                gameState.playerDirection = 3; // falling
+                playSound('fail');
+                gameState.result = false;
+            }
+            
+            gameState.gameOver = true;
+            
+            // Show restart button after 2 seconds
+            setTimeout(() => {
+                restartBtn.style.display = 'block';
+            }, 2000);
+        }
+        
+        function restartGame() {
+            gameState = {
+                bridgeWidth: 0,
+                isBuilding: false,
+                gameOver: false,
+                success: false,
+                playerX: platformWidth * 0.3,
+                playerY: canvas.height - platformHeight - 30,
+                playerDirection: 1,
+                animFrame: 0,
+                frameCount: 0,
+                result: null
+            };
+            restartBtn.style.display = 'none';
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            // Sky
+            ctx.fillStyle = colors.sky;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Lava/gap
+            ctx.fillStyle = colors.lava;
+            ctx.fillRect(platformWidth, canvas.height - platformHeight - 30, gapWidth, 50);
+            
+            // Add lava bubbles
+            ctx.fillStyle = '#FF8C5A';
+            for (let i = 0; i < 8; i++) {
+                const bubbleX = platformWidth + (gapWidth * (i/8)) + Math.sin(Date.now() / 500 + i) * 10;
+                const bubbleY = canvas.height - platformHeight - 10 + Math.cos(Date.now() / 300 + i) * 5;
+                const radius = 3 + Math.sin(Date.now() / 200 + i * 2) * 2;
+                ctx.beginPath();
+                ctx.arc(bubbleX, bubbleY, radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        function drawPlatforms() {
+            // Left platform (TRUE)
+            ctx.fillStyle = colors.platform;
+            ctx.fillRect(0, canvas.height - platformHeight, platformWidth, platformHeight);
+            
+            // Left platform top
+            ctx.fillStyle = colors.platformTop;
+            ctx.fillRect(0, canvas.height - platformHeight, platformWidth, 10);
+            
+            // Right platform (FALSE)
+            ctx.fillStyle = colors.platform;
+            ctx.fillRect(canvas.width - platformWidth, canvas.height - platformHeight, platformWidth, platformHeight);
+            
+            // Right platform top
+            ctx.fillStyle = colors.platformTop;
+            ctx.fillRect(canvas.width - platformWidth, canvas.height - platformHeight, platformWidth, 10);
+            
+            // Platform labels
+            ctx.font = '20px sans-serif';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            
+            // TRUE sign
+            drawPixelatedBox(platformWidth * 0.5, canvas.height - platformHeight - 40, 80, 30, '#555', '#777');
+            ctx.fillText("TRUE", platformWidth * 0.5, canvas.height - platformHeight - 20);
+            
+            // FALSE sign
+            drawPixelatedBox(canvas.width - platformWidth * 0.5, canvas.height - platformHeight - 40, 80, 30, '#555', '#777');
+            ctx.fillText("FALSE", canvas.width - platformWidth * 0.5, canvas.height - platformHeight - 20);
+        }
+        
+        function drawPixelatedBox(x, y, width, height, color, borderColor) {
+            const pixelSize = 4;
+            
+            // Main box
+            ctx.fillStyle = color;
+            ctx.fillRect(x - width/2, y - height/2, width, height);
+            
+            // Border (pixelated)
+            ctx.fillStyle = borderColor;
+            
+            // Top border
+            for (let i = 0; i < width; i += pixelSize) {
+                ctx.fillRect(x - width/2 + i, y - height/2, pixelSize, pixelSize);
+            }
+            
+            // Bottom border
+            for (let i = 0; i < width; i += pixelSize) {
+                ctx.fillRect(x - width/2 + i, y + height/2 - pixelSize, pixelSize, pixelSize);
+            }
+            
+            // Left border
+            for (let i = 0; i < height; i += pixelSize) {
+                ctx.fillRect(x - width/2, y - height/2 + i, pixelSize, pixelSize);
+            }
+            
+            // Right border
+            for (let i = 0; i < height; i += pixelSize) {
+                ctx.fillRect(x + width/2 - pixelSize, y - height/2 + i, pixelSize, pixelSize);
+            }
+        }
+        
+        function drawBridge() {
+            if (gameState.bridgeWidth > 0) {
+                // Bridge body
+                ctx.fillStyle = colors.bridge;
+                ctx.fillRect(platformWidth, canvas.height - platformHeight - 5, gameState.bridgeWidth, 15);
+                
+                // Bridge top
+                ctx.fillStyle = colors.bridgeTop;
+                ctx.fillRect(platformWidth, canvas.height - platformHeight - 5, gameState.bridgeWidth, 5);
+                
+                // Pixelated bridge texture
+                const planksSpacing = 12;
+                ctx.fillStyle = '#8B4513';
+                for (let i = 0; i < gameState.bridgeWidth; i += planksSpacing) {
+                    ctx.fillRect(platformWidth + i, canvas.height - platformHeight - 5, 2, 15);
+                }
+            }
+            
+            // Bridge vibration when building
+            if (gameState.isBuilding && !gameState.gameOver) {
+                const vibrationAmount = Math.sin(Date.now() / 50) * 2;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fillRect(platformWidth + gameState.bridgeWidth - 5, canvas.height - platformHeight - 5 + vibrationAmount, 10, 15);
+            }
+        }
+        
+        function drawPlayer() {
+            const playerSize = 24;
+            ctx.fillStyle = '#3355FF';
+            
+            // Basic player sprite
+            if (gameState.playerDirection === 3) {
+                // Falling animation
+                ctx.fillRect(gameState.playerX, gameState.playerY, playerSize, playerSize);
+                
+                // Eyes
+                ctx.fillStyle = 'white';
+                ctx.fillRect(gameState.playerX + 5, gameState.playerY + 6, 4, 4);
+                ctx.fillRect(gameState.playerX + 15, gameState.playerY + 6, 4, 4);
+                
+                // Shocked mouth
+                ctx.fillStyle = 'black';
+                ctx.fillRect(gameState.playerX + 8, gameState.playerY + 16, 8, 6);
+            } else {
+                // Walking animation
+                ctx.fillRect(gameState.playerX, gameState.playerY, playerSize, playerSize);
+                
+                // Eyes
+                ctx.fillStyle = 'white';
+                ctx.fillRect(gameState.playerX + 15, gameState.playerY + 6, 4, 4);
+                ctx.fillRect(gameState.playerX + 5, gameState.playerY + 6, 4, 4);
+                
+                // Mouth
+                ctx.fillStyle = 'black';
+                ctx.fillRect(gameState.playerX + 8, gameState.playerY + 16, 8, 2);
+                
+                // Legs with walking animation
+                ctx.fillStyle = '#2233CC';
+                if (gameState.animFrame === 0) {
+                    ctx.fillRect(gameState.playerX + 4, gameState.playerY + playerSize, 6, 6);
+                    ctx.fillRect(gameState.playerX + 14, gameState.playerY + playerSize, 6, 6);
+                } else {
+                    ctx.fillRect(gameState.playerX + 6, gameState.playerY + playerSize, 6, 6);
+                    ctx.fillRect(gameState.playerX + 12, gameState.playerY + playerSize, 6, 6);
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            const lineHeight = 24;
+            const boxPadding = 16;
+            
+            // Measure text to create appropriate box
+            ctx.font = '20px sans-serif';
+            const textWidth = ctx.measureText(question).width;
+            const boxWidth = Math.min(Math.max(textWidth + boxPadding * 2, canvas.width * 0.7), canvas.width - 40);
+            const boxHeight = lineHeight + boxPadding * 2;
+            
+            // Draw pixelated box
+            drawPixelatedBox(canvas.width / 2, 50, boxWidth, boxHeight, '#333', '#555');
+            
+            // Draw text
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw instructions
+            ctx.font = '16px sans-serif';
+            ctx.fillStyle = '#CCC';
+            ctx.fillText("Tap/click and hold to build bridge", canvas.width / 2, 90);
+        }
+        
+        function drawResult() {
+            if (gameState.result !== null) {
+                const resultText = gameState.result ? "CORRECT!" : "WRONG!";
+                const textColor = gameState.result ? "#2ECC71" : "#E74C3C";
+                
+                ctx.font = 'bold 32px sans-serif';
+                ctx.fillStyle = textColor;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(resultText, canvas.width / 2, canvas.height / 2 - 40);
+                
+                // Show the correct answer if wrong
+                if (!gameState.result) {
+                    ctx.font = '20px sans-serif';
+                    ctx.fillStyle = 'white';
+                    ctx.fillText("The correct answer is: " + (answer ? "TRUE" : "FALSE"), 
+                                canvas.width / 2, canvas.height / 2);
+                }
+            }
+        }
+        
+        // Game loop
+        function update() {
+            // Bridge building
+            if (gameState.isBuilding && !gameState.gameOver) {
+                gameState.bridgeWidth += 3;
+                if (gameState.frameCount % 5 === 0) {
+                    playSound('build');
+                }
+            }
+            
+            // Player animation and movement
+            if (gameState.success) {
+                // Walk across bridge
+                gameState.playerX += 2;
+                
+                // Update walking animation every 10 frames
+                if (gameState.frameCount % 10 === 0) {
+                    gameState.animFrame = gameState.animFrame === 0 ? 1 : 0;
+                }
+            } else if (gameState.gameOver && !gameState.success) {
+                // Falling animation
+                gameState.playerY += 5;
+            }
+            
+            gameState.frameCount++;
+        }
+        
+        function render() {
+            drawBackground();
+            drawPlatforms();
+            drawBridge();
+            drawPlayer();
+            drawQuestion();
+            if (gameState.gameOver) {
+                drawResult();
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Planet Race</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 2px solid #333;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        button {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 8px 16px;
+            background: #444;
+            color: #fff;
+            border: 2px solid #666;
+            display: none;
+            font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">Restart</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - retro palette
+        const COLORS = {
+            background: '#0f380f',
+            road: '#8bac0f',
+            lane: '#306230',
+            finish: '#e0f8d0',
+            player: '#9bbc0f',
+            text: '#e0f8d0',
+            correct: '#0f8800',
+            incorrect: '#881000'
+        };
+        
+        // Game parameters
+        const LANE_COUNT = 4;
+        const LANE_WIDTH = canvas.width / LANE_COUNT;
+        const PLAYER_SIZE = isMobile ? 30 : 40;
+        const PLAYER_SPEED = isMobile ? 85 : 100;
+        const OBSTACLE_WIDTH = isMobile ? 20 : 30;
+        const OBSTACLE_HEIGHT = isMobile ? 15 : 20;
+        
+        // Game state
+        let gameOver = false;
+        let correctLane = Math.floor(Math.random() * LANE_COUNT);
+        let currentLane = Math.floor(LANE_COUNT / 2);
+        let playerY = canvas.height - PLAYER_SIZE * 1.5;
+        let obstaclePositions = [];
+        let gameTime = 0;
+        let result = "";
+        
+        // Answer options
+        const answers = ["Mercury", "Venus", "Earth", "Mars"];
+        
+        // Initialize obstacle positions
+        function initObstacles() {
+            obstaclePositions = [];
+            // Create random obstacles in each lane
+            for (let lane = 0; lane < LANE_COUNT; lane++) {
+                for (let i = 0; i < 3; i++) {
+                    // Don't put obstacles at finish line or start position
+                    let yPos = canvas.height * (0.2 + Math.random() * 0.5);
+                    obstaclePositions.push({
+                        x: lane * LANE_WIDTH + LANE_WIDTH/2 - OBSTACLE_WIDTH/2,
+                        y: yPos,
+                        lane: lane
+                    });
+                }
+            }
+        }
+        
+        // Create simple audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effect functions
+        function playTone(frequency, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            oscillator.start();
+            
+            setTimeout(() => {
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+                setTimeout(() => oscillator.stop(), 100);
+            }, duration);
+        }
+        
+        function playMoveSound() {
+            playTone(220, 50);
+        }
+        
+        function playCorrectSound() {
+            playTone(440, 100);
+            setTimeout(() => playTone(660, 150), 100);
+        }
+        
+        function playIncorrectSound() {
+            playTone(150, 200, 'sawtooth');
+        }
+        
+        // Draw 8-bit style player car
+        function drawPlayer() {
+            const x = currentLane * LANE_WIDTH + LANE_WIDTH/2 - PLAYER_SIZE/2;
+            
+            // Car body
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(x, playerY, PLAYER_SIZE, PLAYER_SIZE);
+            
+            // Windows
+            ctx.fillStyle = '#306230';
+            ctx.fillRect(x + PLAYER_SIZE*0.15, playerY + PLAYER_SIZE*0.2, PLAYER_SIZE*0.7, PLAYER_SIZE*0.3);
+            
+            // Wheels
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x - 5, playerY + 5, 5, PLAYER_SIZE/3);
+            ctx.fillRect(x - 5, playerY + PLAYER_SIZE - PLAYER_SIZE/3 - 5, 5, PLAYER_SIZE/3);
+            ctx.fillRect(x + PLAYER_SIZE, playerY + 5, 5, PLAYER_SIZE/3);
+            ctx.fillRect(x + PLAYER_SIZE, playerY + PLAYER_SIZE - PLAYER_SIZE/3 - 5, 5, PLAYER_SIZE/3);
+        }
+        
+        // Draw the race track
+        function drawTrack() {
+            // Background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw simple pixel mountains in the background
+            ctx.fillStyle = '#306230';
+            for (let i = 0; i < 5; i++) {
+                const mountainWidth = canvas.width / 3;
+                const mountainHeight = canvas.height * 0.15;
+                const x = i * mountainWidth - mountainWidth/2;
+                ctx.beginPath();
+                ctx.moveTo(x, canvas.height * 0.3);
+                ctx.lineTo(x + mountainWidth/2, canvas.height * 0.3 - mountainHeight);
+                ctx.lineTo(x + mountainWidth, canvas.height * 0.3);
+                ctx.fill();
+            }
+            
+            // Road
+            ctx.fillStyle = COLORS.road;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Lane dividers
+            for (let i = 1; i < LANE_COUNT; i++) {
+                const x = i * LANE_WIDTH;
+                ctx.strokeStyle = COLORS.lane;
+                ctx.lineWidth = 3;
+                ctx.setLineDash([20, 15]);
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // Finish line
+            const finishY = 50;
+            ctx.fillStyle = COLORS.finish;
+            ctx.fillRect(0, finishY, canvas.width, 20);
+            
+            // Checkered pattern for finish line
+            ctx.fillStyle = '#000';
+            const checkerSize = 10;
+            for (let x = 0; x < canvas.width; x += checkerSize * 2) {
+                for (let y = finishY; y < finishY + 20; y += checkerSize) {
+                    ctx.fillRect(x + (Math.floor((y - finishY) / checkerSize) % 2) * checkerSize, y, checkerSize, checkerSize);
+                }
+            }
+            
+            // Draw answer options at the top of each lane
+            ctx.font = `${isMobile ? 14 : 16}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = COLORS.text;
+            for (let i = 0; i < LANE_COUNT; i++) {
+                const x = i * LANE_WIDTH + LANE_WIDTH / 2;
+                ctx.fillText(answers[i], x, 30);
+            }
+        }
+        
+        // Draw obstacles
+        function drawObstacles() {
+            ctx.fillStyle = '#306230';
+            obstaclePositions.forEach(obstacle => {
+                ctx.fillRect(obstacle.x, obstacle.y, OBSTACLE_WIDTH, OBSTACLE_HEIGHT);
+            });
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            const question = "Which planet is known as the Red Planet?";
+            ctx.font = `${isMobile ? 16 : 18}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = COLORS.text;
+            
+            // Add a semi-transparent background for the question
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            const textWidth = isMobile ? canvas.width - 20 : canvas.width * 0.8;
+            const textHeight = 30;
+            ctx.fillRect(canvas.width/2 - textWidth/2, canvas.height - 70, textWidth, textHeight);
+            
+            // Draw the question text
+            ctx.fillStyle = COLORS.text;
+            ctx.fillText(question, canvas.width / 2, canvas.height - 50);
+        }
+        
+        // Check collision with obstacles
+        function checkObstacleCollision() {
+            const playerX = currentLane * LANE_WIDTH + LANE_WIDTH/2 - PLAYER_SIZE/2;
+            
+            for (let obstacle of obstaclePositions) {
+                if (
+                    playerX < obstacle.x + OBSTACLE_WIDTH &&
+                    playerX + PLAYER_SIZE > obstacle.x &&
+                    playerY < obstacle.y + OBSTACLE_HEIGHT &&
+                    playerY + PLAYER_SIZE > obstacle.y
+                ) {
+                    // Slight bounce back
+                    playerY += 20;
+                    playMoveSound();
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Check if player reached the finish line
+        function checkFinish() {
+            if (playerY <= 70) {
+                gameOver = true;
+                if (currentLane === correctLane) {
+                    result = "Correct!";
+                    playCorrectSound();
+                } else {
+                    result = "Wrong! Try again.";
+                    playIncorrectSound();
+                }
+                restartBtn.style.display = 'block';
+            }
+        }
+        
+        // Game loop
+        function update(deltaTime) {
+            if (gameOver) return;
+            
+            // Move player forward
+            playerY -= PLAYER_SPEED * deltaTime;
+            
+            // Check collision
+            checkObstacleCollision();
+            
+            // Check if player reached finish line
+            checkFinish();
+        }
+        
+        // Draw game over screen
+        function drawGameOver() {
+            ctx.fillStyle = currentLane === correctLane ? COLORS.correct : COLORS.incorrect;
+            ctx.fillRect(currentLane * LANE_WIDTH, 0, LANE_WIDTH, canvas.height);
+            
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.fillText(result, canvas.width / 2, canvas.height / 2);
+            
+            if (currentLane !== correctLane) {
+                ctx.fillText(`The correct answer is ${answers[correctLane]}`, canvas.width / 2, canvas.height / 2 + 40);
+            }
+        }
+        
+        // Render function
+        function render() {
+            drawTrack();
+            drawObstacles();
+            drawPlayer();
+            drawQuestion();
+            
+            if (gameOver) {
+                drawGameOver();
+            }
+        }
+        
+        // Main game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            gameTime += deltaTime;
+            
+            update(deltaTime);
+            render();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle player input
+        function handleKeyDown(e) {
+            if (gameOver) return;
+            
+            if (e.key === 'ArrowLeft' && currentLane > 0) {
+                currentLane--;
+                playMoveSound();
+            } else if (e.key === 'ArrowRight' && currentLane < LANE_COUNT - 1) {
+                currentLane++;
+                playMoveSound();
+            }
+        }
+        
+        // Handle touch/mouse input
+        function handleTap(e) {
+            if (gameOver) return;
+            
+            let x;
+            if (e.type === 'touchstart') {
+                x = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+            } else {
+                x = e.clientX - canvas.getBoundingClientRect().left;
+            }
+            
+            const tapLane = Math.floor(x / LANE_WIDTH);
+            if (tapLane >= 0 && tapLane < LANE_COUNT && tapLane !== currentLane) {
+                currentLane = tapLane;
+                playMoveSound();
+            }
+        }
+        
+        // Restart game
+        function restart() {
+            gameOver = false;
+            playerY = canvas.height - PLAYER_SIZE * 1.5;
+            correctLane = Math.floor(Math.random() * LANE_COUNT);
+            currentLane = Math.floor(LANE_COUNT / 2);
+            result = "";
+            gameTime = 0;
+            initObstacles();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Set up event listeners
+        document.addEventListener('keydown', handleKeyDown);
+        canvas.addEventListener('mousedown', handleTap);
+        canvas.addEventListener('touchstart', handleTap);
+        restartBtn.addEventListener('click', restart);
+        
+        // Initialize game
+        function init() {
+            // Set correct answer (Mars)
+            correctLane = answers.indexOf("Mars");
+            initObstacles();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

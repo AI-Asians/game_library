@@ -1,0 +1,100 @@
+# UPDATED PROMPT
+
+**INSTRUCTIONS**
+
+Write code for an educational mini game made with HTML5 canvas featuring ONE QUESTION that is of type MCQ.  
+ The game must start immediately in a playable state when loaded (no start screen).
+
+No fancy game-over screen—only include a simple restart button without extra UI elements.
+
+No complex UI beyond what's explicitly requested below.
+
+Keep the code as simple and minimal as possible—minimize lines of code and do not introduce unnecessary complexity.
+
+---
+
+**QUESTION**
+
+Use exactly this ONE question in the game:  
+ Which planet is known as the Red Planet?
+
+Ensure the question does not overflow the screen.
+
+---
+
+**DEVICE OPTIMIZATION**
+
+This game will be played on web, so please ensure it is optimized and tested accordingly.  
+ Fixed Canvas Size:
+
+* For web: 800×600 pixels
+
+* For mobile: 360×640 pixels
+
+  ---
+
+**GAME MECHANIC: Ingredient-Mix**  
+ Description of mechanic: 
+
+* Players must combine/mix different ingredients or elements to create the correct answer
+* Players drag and drop different planetary elements (gases, colors, features) into a mixing bowl or container
+* The planetary elements should be visually distinct and represent characteristics of different planets
+* The mixing container should show a visual reaction when ingredients are added
+* Players need to select the correct combination of elements that represent Mars (the Red Planet)
+* A "mix" or "combine" button should appear once ingredients are added
+* Success is achieved by selecting and mixing the correct elements that represent Mars
+
+---
+
+**IMPORTANT STYLING & AESTHETIC REQUIREMENTS**
+
+Retro 8-bit Pixel Art style throughout (like classic NES/Game Boy).
+
+All graphics should be pixelated, with a limited color palette (16–32 colors).
+
+Animations should have a chunky, low-frame-rate "8-bit" feel.
+
+UI elements must resemble an old-school arcade interface.
+
+Do NOT use a pixel font. Use a simple, standard web-safe font (for example, Arial or sans-serif). Keep the font usage minimal, with no additional libraries required.
+
+The mixing container should look like a retro science beaker or cauldron with pixelated bubbles or effects when ingredients are added.
+
+Ingredient items should have distinct pixelated icons that clearly represent planetary elements (red dust, ice caps, rocky terrain, etc.).
+
+When ingredients are mixed, create a pixel-art "poof" or "blend" animation that reveals the resulting planet.
+
+---
+
+**SOUND**
+
+Let the model decide what retro-style sound effects to include, but use only a few simple beep-like effects (keep them minimal in code). No external sound libraries or large code snippets required.
+
+---
+
+**GAMEPLAY REQUIREMENTS**
+
+Gameplay must be completable in UNDER 10 SECONDS.
+
+No score-tracking of any kind. The game ends immediately as soon as the player hits the correct or incorrect answer.
+
+Focus on ADDICTIVE, FUN timing with satisfying feedback.
+
+No external dependencies—generate or simulate any needed sound effects in code with minimal overhead.
+
+Simple enough for anyone to understand immediately with minimal instructions.
+
+Ingredients should snap into place when dragged near the mixing container.
+
+Mixing animation should be quick but visually satisfying with 8-bit style effects.
+
+The final result should clearly indicate whether the player created Mars (correct) or a different planet (incorrect).
+
+---
+
+**DELIVERABLE**
+
+The code must be fully functional, efficient, and tested to work on web.  
+ The code must be kept as short as reasonably possible—avoid unnecessary lines.
+
+Provide a single HTML file that is ready to run when downloaded and opened.

@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Galaxy-Jump MCQ Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #6a5acd;
+            color: white;
+            border: 3px solid #9370db;
+            font-family: Arial, sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const question = "What is the capital of France?";
+        const answers = ["Paris", "London", "Berlin", "Rome"];
+        const correctAnswer = "Paris";
+        
+        // Color palette (limited for 8-bit feel)
+        const colors = {
+            background: "#0a0022",
+            stars: ["#ffffff", "#9baab9", "#6a89b5", "#b56ac2"],
+            platforms: ["#9370db", "#5f4b8b", "#483d8b", "#7b68ee"],
+            player: "#5ac2b5",
+            text: "#ffffff",
+            correctFeedback: "#50ff50",
+            incorrectFeedback: "#ff5050"
+        };
+        
+        // Game state
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Player
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            width: 20,
+            height: 30,
+            speedX: 0,
+            speedY: 0,
+            jumping: false,
+            facingRight: true,
+            jetpackActive: false,
+            jetpackFuel: 100,
+            jetpackParticles: []
+        };
+        
+        // Platforms/Answers
+        const platformWidth = isMobile ? 100 : 160;
+        const platformHeight = 40;
+        let platforms = [];
+        
+        // Stars for background
+        const stars = [];
+        const numStars = 80;
+        
+        // Sound functions
+        function playJumpSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3);
+        }
+        
+        function playCorrectSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.4);
+        }
+        
+        function playIncorrectSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.3);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.4);
+        }
+        
+        function playJetpackSound() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(80, audioContext.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+        }
+        
+        // Initialize stars
+        for (let i = 0; i < numStars; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 3 + 1,
+                twinkle: Math.random() * 0.05,
+                alpha: Math.random() * 0.8 + 0.2,
+                color: colors.stars[Math.floor(Math.random() * colors.stars.length)]
+            });
+        }
+        
+        // Shuffle answers and create platforms
+        function initPlatforms() {
+            platforms = [];
+            
+            // Shuffle answers
+            const shuffledAnswers = [...answers];
+            for (let i = shuffledAnswers.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledAnswers[i], shuffledAnswers[j]] = [shuffledAnswers[j], shuffledAnswers[i]];
+            }
+            
+            // Create platforms
+            const platformSpacing = canvas.height / 6;
+            for (let i = 0; i < shuffledAnswers.length; i++) {
+                platforms.push({
+                    x: (canvas.width / 5) + (Math.random() * (canvas.width / 2)),
+                    y: canvas.height - (i + 1) * platformSpacing - 50,
+                    width: platformWidth,
+                    height: platformHeight,
+                    answer: shuffledAnswers[i],
+                    color: colors.platforms[i % colors.platforms.length],
+                    offsetX: Math.random() * 2 - 1,
+                    shakeFactor: Math.random() * 0.5 + 0.5,
+                    breaking: false,
+                    breakProgress: 0
+                });
+            }
+        }
+        
+        // Handle keyboard input
+        const keys = {};
+        
+        window.addEventListener('keydown', function(e) {
+            keys[e.key] = true;
+            
+            // Jump
+            if ((e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w') && !player.jumping && !gameOver) {
+                player.speedY = -12;
+                player.jumping = true;
+                playJumpSound();
+            }
+        });
+        
+        window.addEventListener('keyup', function(e) {
+            keys[e.key] = false;
+        });
+        
+        // Touch controls for mobile
+        let touchStartX = 0;
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            touchStartX = e.touches[0].clientX;
+            
+            // Jump on tap if not jumping
+            if (!player.jumping && !gameOver) {
+                player.speedY = -12;
+                player.jumping = true;
+                playJumpSound();
+            }
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touchX = e.touches[0].clientX;
+            const diff = touchX - touchStartX;
+            
+            if (diff > 10) {
+                // Move right
+                keys.ArrowRight = true;
+                keys.ArrowLeft = false;
+            } else if (diff < -10) {
+                // Move left
+                keys.ArrowLeft = true;
+                keys.ArrowRight = false;
+            } else {
+                keys.ArrowLeft = false;
+                keys.ArrowRight = false;
+            }
+            
+            // Jetpack on hold
+            if (player.jumping && player.jetpackFuel > 0) {
+                player.jetpackActive = true;
+            }
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            keys.ArrowLeft = false;
+            keys.ArrowRight = false;
+            player.jetpackActive = false;
+        });
+        
+        // Restart game
+        restartButton.addEventListener('click', function() {
+            gameOver = false;
+            gameWon = false;
+            player.x = canvas.width / 2;
+            player.y = canvas.height - 100;
+            player.speedX = 0;
+            player.speedY = 0;
+            player.jumping = false;
+            player.jetpackFuel = 100;
+            initPlatforms();
+            restartButton.style.display = 'none';
+        });
+        
+        // Initialize platforms
+        initPlatforms();
+        
+        // Game loop
+        function update() {
+            if (!gameOver) {
+                // Player controls
+                if (keys.ArrowLeft || keys.a) {
+                    player.speedX = -5;
+                    player.facingRight = false;
+                } else if (keys.ArrowRight || keys.d) {
+                    player.speedX = 5;
+                    player.facingRight = true;
+                } else {
+                    player.speedX = 0;
+                }
+                
+                // Jetpack
+                if ((keys.ArrowUp || keys.w) && player.jumping && player.jetpackFuel > 0) {
+                    player.jetpackActive = true;
+                } else {
+                    player.jetpackActive = false;
+                }
+                
+                if (player.jetpackActive) {
+                    player.speedY -= 0.3;
+                    player.jetpackFuel -= 1;
+                    
+                    // Add jetpack particles
+                    if (Math.random() > 0.5) {
+                        player.jetpackParticles.push({
+                            x: player.facingRight ? player.x : player.x + player.width,
+                            y: player.y + player.height - 5,
+                            speedX: (Math.random() * 2 - 1) + (player.facingRight ? -1 : 1),
+                            speedY: Math.random() * 1 + 1,
+                            size: Math.random() * 4 + 2,
+                            alpha: 1
+                        });
+                        
+                        playJetpackSound();
+                    }
+                }
+                
+                // Update jetpack particles
+                for (let i = player.jetpackParticles.length - 1; i >= 0; i--) {
+                    const particle = player.jetpackParticles[i];
+                    particle.x += particle.speedX;
+                    particle.y += particle.speedY;
+                    particle.alpha -= 0.05;
+                    
+                    if (particle.alpha <= 0) {
+                        player.jetpackParticles.splice(i, 1);
+                    }
+                }
+                
+                // Apply gravity
+                player.speedY += 0.5; // Lower gravity for space feel
+                
+                // Update player position
+                player.x += player.speedX;
+                player.y += player.speedY;
+                
+                // Screen boundaries
+                if (player.x < 0) player.x = 0;
+                if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+                
+                // Check for platform collisions
+                let onPlatform = false;
+                
+                for (let i = 0; i < platforms.length; i++) {
+                    const platform = platforms[i];
+                    
+                    // Update platform position (moving platforms)
+                    platform.x += platform.offsetX * platform.shakeFactor;
+                    
+                    // Reverse direction if platform reaches edge
+                    if (platform.x <= 0 || platform.x + platform.width >= canvas.width) {
+                        platform.offsetX *= -1;
+                    }
+                    
+                    // Check for collision with platform
+                    if (player.y + player.height > platform.y && 
+                        player.y < platform.y + platform.height &&
+                        player.x + player.width > platform.x && 
+                        player.x < platform.x + platform.width) {
+                        
+                        // Player is standing on platform
+                        if (player.speedY > 0 && player.y + player.height - player.speedY <= platform.y) {
+                            player.y = platform.y - player.height;
+                            player.speedY = 0;
+                            player.jumping = false;
+                            onPlatform = true;
+                            
+                            // Check answer
+                            if (platform.answer === correctAnswer) {
+                                gameOver = true;
+                                gameWon = true;
+                                playCorrectSound();
+                                restartButton.style.display = 'block';
+                            } else {
+                                // Wrong answer - platform starts breaking
+                                platform.breaking = true;
+                                playIncorrectSound();
+                            }
+                        }
+                    }
+                    
+                    // Update breaking platforms
+                    if (platform.breaking) {
+                        platform.breakProgress += 0.05;
+                        if (platform.breakProgress >= 1) {
+                            platforms.splice(i, 1);
+                            i--;
+                        }
+                    }
+                }
+                
+                // Player fell
+                if (player.y > canvas.height) {
+                    gameOver = true;
+                    playIncorrectSound();
+                    restartButton.style.display = 'block';
+                }
+                
+                // Update stars (twinkle effect)
+                for (let i = 0; i < stars.length; i++) {
+                    stars[i].alpha += Math.sin(Date.now() * 0.001 + i) * stars[i].twinkle;
+                    if (stars[i].alpha > 1) stars[i].alpha = 1;
+                    if (stars[i].alpha < 0.2) stars[i].alpha = 0.2;
+                }
+            }
+            
+            // Draw everything
+            draw();
+            
+            // Continue game loop
+            requestAnimationFrame(update);
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            for (let i = 0; i < stars.length; i++) {
+                ctx.fillStyle = stars[i].color;
+                ctx.globalAlpha = stars[i].alpha;
+                ctx.fillRect(
+                    Math.floor(stars[i].x), 
+                    Math.floor(stars[i].y), 
+                    Math.floor(stars[i].size), 
+                    Math.floor(stars[i].size)
+                );
+            }
+            ctx.globalAlpha = 1;
+            
+            // Draw platforms
+            for (let i = 0; i < platforms.length; i++) {
+                const platform = platforms[i];
+                
+                // Draw platform
+                ctx.fillStyle = platform.color;
+                
+                if (platform.breaking) {
+                    // Draw breaking platform with cracks
+                    const segments = 5;
+                    const segmentWidth = platform.width / segments;
+                    for (let j = 0; j < segments; j++) {
+                        if (Math.random() > platform.breakProgress) {
+                            ctx.fillRect(
+                                platform.x + j * segmentWidth, 
+                                platform.y + (Math.random() * platform.breakProgress * 10), 
+                                segmentWidth - 2, 
+                                platform.height
+                            );
+                        }
+                    }
+                } else {
+                    // Draw normal platform
+                    ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                    
+                    // Platform border (pixel art style)
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillRect(platform.x, platform.y, platform.width, 2);
+                    ctx.fillStyle = "#3a2d6b";
+                    ctx.fillRect(platform.x, platform.y + platform.height - 2, platform.width, 2);
+                }
+                
+                // Draw answer text
+                ctx.fillStyle = colors.text;
+                ctx.font = `${isMobile ? 16 : 20}px Arial`;
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    platform.answer, 
+                    platform.x + platform.width / 2, 
+                    platform.y + platform.height / 2 + 6
+                );
+            }
+            
+            // Draw jetpack particles
+            for (let i = 0; i < player.jetpackParticles.length; i++) {
+                const particle = player.jetpackParticles[i];
+                ctx.fillStyle = `rgba(255, 120, 50, ${particle.alpha})`;
+                ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+            }
+            
+            // Draw player (8-bit style astronaut)
+            ctx.fillStyle = colors.player;
+            
+            // Body
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            
+            // Helmet visor
+            ctx.fillStyle = "#3a9bd2";
+            ctx.fillRect(
+                player.x + (player.facingRight ? 5 : 2), 
+                player.y + 5, 
+                player.width - 7, 
+                8
+            );
+            
+            // Jetpack
+            ctx.fillStyle = "#ff7832";
+            ctx.fillRect(
+                player.facingRight ? player.x - 5 : player.x + player.width - 2, 
+                player.y + 10, 
+                7, 
+                15
+            );
+            
+            // Draw question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 18 : 24}px Arial`;
+            ctx.textAlign = "center";
+            ctx.fillText(question, canvas.width / 2, 40);
+            
+            // Draw jetpack fuel meter
+            ctx.fillStyle = "#333333";
+            ctx.fillRect(20, 20, 104, 14);
+            ctx.fillStyle = player.jetpackFuel > 30 ? "#33bbff" : "#ff5555";
+            ctx.fillRect(22, 22, player.jetpackFuel, 10);
+            
+            // Game over message
+            if (gameOver) {
+                ctx.fillStyle = gameWon ? colors.correctFeedback : colors.incorrectFeedback;
+                ctx.font = "30px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    gameWon ? "Correct!" : "Wrong!", 
+                    canvas.width / 2, 
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        // Start game
+        update();
+    </script>
+</body>
+</html>

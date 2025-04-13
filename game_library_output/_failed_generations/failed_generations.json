@@ -1,0 +1,476 @@
+[
+  {
+    "gameType": "tf",
+    "mechanicName": "Swipe-Sort (T/F):",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:22:57.297Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Swipe-Sort (T/F):",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:22:57.301Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Swipe-Sort (T/F):",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:22:57.301Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Quick-Dodge (T/F):",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:24:04.151Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Quick-Dodge (T/F):",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:24:04.151Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Quick-Dodge (T/F):",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:24:04.152Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Tilt-Balance (T/F):",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:24:04.152Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Tilt-Balance (T/F):",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:25:10.797Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Tilt-Balance (T/F):",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:25:10.798Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Tap-Defend (T/F):",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:25:10.798Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Tap-Defend (T/F):",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:25:10.799Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Tap-Defend (T/F):",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:25:10.799Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Grow/Shrink Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:27:40.011Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Grow/Shrink Tap:",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:27:40.012Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Grow/Shrink Tap:",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:27:40.012Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Cut/Connect Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:33:57.380Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Cut/Connect Tap:",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:35:01.182Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Cut/Connect Tap:",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:35:01.182Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Fill/Empty Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:35:01.183Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Fill/Empty Tap:",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:35:01.184Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Fill/Empty Tap:",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:35:01.184Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Yes/No Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:35:01.188Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Yes/No Tap:",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:35:01.188Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Yes/No Tap:",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:35:01.189Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Path-Paint Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:35:41.299Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Plant/Weed Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:39:34.417Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Plant/Weed Tap:",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:39:34.417Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Plant/Weed Tap:",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:39:34.418Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Sun/Moon Tap:",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:39:34.419Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Sun/Moon Tap:",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:40:44.313Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Sun/Moon Tap:",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:40:44.314Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Momentum-Sling: Slingshot objects (mouse drag/release) with precise angle and power to hit True/False targets. Slingshot centered. \\[As provided\\]",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:41:56.967Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Momentum-Sling: Slingshot objects (mouse drag/release) with precise angle and power to hit True/False targets. Slingshot centered. \\[As provided\\]",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:41:56.968Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Momentum-Sling: Slingshot objects (mouse drag/release) with precise angle and power to hit True/False targets. Slingshot centered. \\[As provided\\]",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:43:13.100Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Gate-Keeper: Press a key (e.g., Left Arrow for False, Right Arrow for True) to open the corresponding gate for an approaching object/character.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:43:13.101Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Gate-Keeper: Press a key (e.g., Left Arrow for False, Right Arrow for True) to open the corresponding gate for an approaching object/character.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:44:30.774Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Gate-Keeper: Press a key (e.g., Left Arrow for False, Right Arrow for True) to open the corresponding gate for an approaching object/character.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:44:30.775Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Deflection: Control a paddle (mouse/keys); hit a ball into the \"True\" goal or \"False\" goal based on the statement.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:45:48.434Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Deflection: Control a paddle (mouse/keys); hit a ball into the \"True\" goal or \"False\" goal based on the statement.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:45:48.436Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Deflection: Control a paddle (mouse/keys); hit a ball into the \"True\" goal or \"False\" goal based on the statement.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:45:48.437Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Polarity-Switch: Press a key (e.g., Spacebar) to switch player polarity (attract/repel); navigate towards True or away from False zones/objects.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:45:48.437Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Polarity-Switch: Press a key (e.g., Spacebar) to switch player polarity (attract/repel); navigate towards True or away from False zones/objects.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:45:48.438Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Polarity-Switch: Press a key (e.g., Spacebar) to switch player polarity (attract/repel); navigate towards True or away from False zones/objects.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:45:48.443Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Balance-Beam: Use Left/Right arrow keys to shift weight on a beam; keep balance if statement is True, deliberately unbalance if False (or vice versa).",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:48:20.652Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Balance-Beam: Use Left/Right arrow keys to shift weight on a beam; keep balance if statement is True, deliberately unbalance if False (or vice versa).",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:48:20.652Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Balance-Beam: Use Left/Right arrow keys to shift weight on a beam; keep balance if statement is True, deliberately unbalance if False (or vice versa).",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:49:36.316Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Grow/Shrink Key: Press Up Arrow to grow (True), Down Arrow to shrink (False); match size needed to pass obstacles based on statement.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:50:52.866Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Grow/Shrink Key: Press Up Arrow to grow (True), Down Arrow to shrink (False); match size needed to pass obstacles based on statement.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:50:52.866Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Grow/Shrink Key: Press Up Arrow to grow (True), Down Arrow to shrink (False); match size needed to pass obstacles based on statement.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:50:52.867Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Light/Dark Toggle: Press Spacebar to toggle between Light (True) and Dark (False) modes; reveal hidden paths or objects based on statement.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:51:48.674Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Light/Dark Toggle: Press Spacebar to toggle between Light (True) and Dark (False) modes; reveal hidden paths or objects based on statement.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:51:48.675Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Light/Dark Toggle: Press Spacebar to toggle between Light (True) and Dark (False) modes; reveal hidden paths or objects based on statement.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:51:48.675Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Build/Destroy: Click to Build a bridge segment (True) or Destroy an obstacle (False) based on the statement to allow passage.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:51:48.676Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Build/Destroy: Click to Build a bridge segment (True) or Destroy an obstacle (False) based on the statement to allow passage.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:51:48.677Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Build/Destroy: Click to Build a bridge segment (True) or Destroy an obstacle (False) based on the statement to allow passage.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:51:48.684Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Charge-Up T/F: Hold Left mouse (charge False) or Right mouse (charge True); release to activate corresponding effect.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:54:44.804Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Charge-Up T/F: Hold Left mouse (charge False) or Right mouse (charge True); release to activate corresponding effect.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:54:44.806Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Charge-Up T/F: Hold Left mouse (charge False) or Right mouse (charge True); release to activate corresponding effect.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:56:05.221Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Elevator Up/Down: Press Up Arrow (True) or Down Arrow (False) to move elevator to correct floor/level based on statement.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:56:05.222Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Elevator Up/Down: Press Up Arrow (True) or Down Arrow (False) to move elevator to correct floor/level based on statement.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.224Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Elevator Up/Down: Press Up Arrow (True) or Down Arrow (False) to move elevator to correct floor/level based on statement.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.225Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Water/Drain: Click to turn on faucet (True) or open drain (False) to manage water level based on statement.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:57:27.225Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Water/Drain: Click to turn on faucet (True) or open drain (False) to manage water level based on statement.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.226Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Water/Drain: Click to turn on faucet (True) or open drain (False) to manage water level based on statement.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.227Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Open/Close Door: Press key to Open (True) or Close (False) a door for an approaching character.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:57:27.231Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Open/Close Door: Press key to Open (True) or Close (False) a door for an approaching character.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.232Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Open/Close Door: Press key to Open (True) or Close (False) a door for an approaching character.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.233Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Agree/Disagree: Click an \"Agree\" (True) or \"Disagree\" (False) button presented clearly. Speed counts.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:57:27.235Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Agree/Disagree: Click an \"Agree\" (True) or \"Disagree\" (False) button presented clearly. Speed counts.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.235Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Agree/Disagree: Click an \"Agree\" (True) or \"Disagree\" (False) button presented clearly. Speed counts.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.238Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Correct/Incorrect Stamp: Click a \"Correct\" (True) or \"Incorrect\" (False) stamp to mark a document/object based on the statement.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:57:27.239Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Correct/Incorrect Stamp: Click a \"Correct\" (True) or \"Incorrect\" (False) stamp to mark a document/object based on the statement.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.239Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Correct/Incorrect Stamp: Click a \"Correct\" (True) or \"Incorrect\" (False) stamp to mark a document/object based on the statement.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.240Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Thumbs Up/Down: Click a Thumbs Up (True) or Thumbs Down (False) icon.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:57:27.240Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Thumbs Up/Down: Click a Thumbs Up (True) or Thumbs Down (False) icon.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.242Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Thumbs Up/Down: Click a Thumbs Up (True) or Thumbs Down (False) icon.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.243Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Checkmark/Cross: Click a Checkmark (True) or Cross (False) icon.",
+    "questionIndex": 0,
+    "timestamp": "2025-04-13T09:57:27.244Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Checkmark/Cross: Click a Checkmark (True) or Cross (False) icon.",
+    "questionIndex": 1,
+    "timestamp": "2025-04-13T09:57:27.244Z"
+  },
+  {
+    "gameType": "tf",
+    "mechanicName": "Checkmark/Cross: Click a Checkmark (True) or Cross (False) icon.",
+    "questionIndex": 2,
+    "timestamp": "2025-04-13T09:57:27.245Z"
+  }
+]

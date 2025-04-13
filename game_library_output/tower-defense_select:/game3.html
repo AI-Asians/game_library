@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Defense MCQ Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #222;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            display: none;
+            font-family: Arial, sans-serif;
+            padding: 10px 15px;
+            background-color: #444;
+            color: #fff;
+            border: 3px solid #777;
+            cursor: pointer;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+
+        // Check if on mobile
+        const isMobile = window.innerWidth <= 768;
+        
+        // Set canvas size based on device
+        if (isMobile) {
+            canvas.width = 360;
+            canvas.height = 640;
+        } else {
+            canvas.width = 800;
+            canvas.height = 600;
+        }
+
+        // Game variables
+        const colors = [
+            '#FF5555', '#55FF55', '#5555FF', '#FFFF55', 
+            '#FF55FF', '#55FFFF', '#FFFFFF', '#FFAA00', 
+            '#AA00FF', '#00AAFF', '#00FF00', '#FF0000'
+        ];
+        
+        let gameOver = false;
+        let gameWon = false;
+        let timeLeft = 10;
+        let towerHealth = 100;
+        
+        // Tower properties
+        const tower = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: isMobile ? 30 : 50,
+            color: '#AA7722',
+            outlineColor: '#553311',
+            drawWindows: true
+        };
+
+        // Answers
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false }
+        ];
+
+        // Enemy class
+        class Enemy {
+            constructor(answer) {
+                this.answer = answer;
+                this.speed = 0.5 + Math.random() * 1;
+                this.radius = isMobile ? 20 : 35;
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+                this.textColor = '#FFFFFF';
+                this.exploding = false;
+                this.explosionRadius = 0;
+                this.explosionDuration = 20;
+                this.explosionTimer = 0;
+                this.hit = false;
+                
+                // Position enemies at random edge positions
+                const side = Math.floor(Math.random() * 4);
+                switch(side) {
+                    case 0: // Top
+                        this.x = Math.random() * canvas.width;
+                        this.y = -this.radius;
+                        break;
+                    case 1: // Right
+                        this.x = canvas.width + this.radius;
+                        this.y = Math.random() * canvas.height;
+                        break;
+                    case 2: // Bottom
+                        this.x = Math.random() * canvas.width;
+                        this.y = canvas.height + this.radius;
+                        break;
+                    case 3: // Left
+                        this.x = -this.radius;
+                        this.y = Math.random() * canvas.height;
+                        break;
+                }
+                
+                // Calculate angle to tower for movement
+                const dx = tower.x - this.x;
+                const dy = tower.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                this.vx = (dx / dist) * this.speed;
+                this.vy = (dy / dist) * this.speed;
+                
+                // Slightly vary movement for more natural look
+                this.vx += (Math.random() * 0.2) - 0.1;
+                this.vy += (Math.random() * 0.2) - 0.1;
+            }
+            
+            update() {
+                if (this.exploding) {
+                    this.explosionTimer++;
+                    this.explosionRadius = (this.explosionTimer / this.explosionDuration) * this.radius * 2;
+                    if (this.explosionTimer >= this.explosionDuration) {
+                        return true; // Remove this enemy
+                    }
+                    return false;
+                }
+                
+                if (this.hit) return false;
+                
+                // Move towards tower
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                // Check collision with tower
+                const dx = this.x - tower.x;
+                const dy = this.y - tower.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < this.radius + tower.radius) {
+                    if (!this.answer.correct) {
+                        towerHealth -= 25; // Damage tower
+                        playSound(200, 'square', 0.3);
+                        this.exploding = true;
+                        
+                        if (towerHealth <= 0) {
+                            endGame(false);
+                        }
+                    }
+                    return true; // Remove this enemy
+                }
+                
+                return false;
+            }
+            
+            draw() {
+                if (this.exploding) {
+                    // Draw explosion
+                    ctx.fillStyle = '#FF7700';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.explosionRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#FFFF00';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.explosionRadius * 0.7, 0, Math.PI * 2);
+                    ctx.fill();
+                    return;
+                }
+                
+                // Draw enemy body
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw enemy eyes
+                ctx.fillStyle = '#000000';
+                const eyeSize = this.radius * 0.2;
+                ctx.fillRect(this.x - this.radius * 0.3 - eyeSize/2, this.y - this.radius * 0.2, eyeSize, eyeSize);
+                ctx.fillRect(this.x + this.radius * 0.3 - eyeSize/2, this.y - this.radius * 0.2, eyeSize, eyeSize);
+                
+                // Draw spikes or details
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    const spikeLength = this.radius * 0.2;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + this.radius * Math.cos(angle), this.y + this.radius * Math.sin(angle));
+                    ctx.lineTo(
+                        this.x + (this.radius + spikeLength) * Math.cos(angle),
+                        this.y + (this.radius + spikeLength) * Math.sin(angle)
+                    );
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = this.color === '#FFFFFF' ? '#000000' : '#FFFFFF';
+                    ctx.stroke();
+                }
+                
+                // Draw enemy text (answer)
+                ctx.fillStyle = this.textColor;
+                ctx.font = `${isMobile ? 12 : 16}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.answer.text, this.x, this.y);
+            }
+            
+            contains(px, py) {
+                const dx = px - this.x;
+                const dy = py - this.y;
+                return dx * dx + dy * dy <= this.radius * this.radius;
+            }
+        }
+
+        // Create enemies
+        let enemies = [];
+        
+        function createEnemies() {
+            // Shuffle answers
+            const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+            
+            // Create one enemy for each answer
+            shuffledAnswers.forEach(answer => {
+                enemies.push(new Enemy(answer));
+            });
+        }
+
+        function drawTower() {
+            // Base
+            ctx.fillStyle = tower.color;
+            ctx.beginPath();
+            ctx.arc(tower.x, tower.y, tower.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Tower details (battlements)
+            ctx.strokeStyle = tower.outlineColor;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(tower.x, tower.y, tower.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Draw battlements
+            const battlementCount = 12;
+            const battlementHeight = tower.radius * 0.15;
+            
+            for (let i = 0; i < battlementCount; i++) {
+                const angle = (i / battlementCount) * Math.PI * 2;
+                const x1 = tower.x + tower.radius * Math.cos(angle);
+                const y1 = tower.y + tower.radius * Math.sin(angle);
+                const x2 = tower.x + (tower.radius + battlementHeight) * Math.cos(angle);
+                const y2 = tower.y + (tower.radius + battlementHeight) * Math.sin(angle);
+                
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+            }
+
+            // Windows
+            if (tower.drawWindows) {
+                const windowCount = 4;
+                const windowSize = tower.radius * 0.25;
+                
+                for (let i = 0; i < windowCount; i++) {
+                    const angle = (i / windowCount) * Math.PI * 2;
+                    const x = tower.x + tower.radius * 0.5 * Math.cos(angle);
+                    const y = tower.y + tower.radius * 0.5 * Math.sin(angle);
+                    
+                    ctx.fillStyle = "#3333AA";
+                    ctx.fillRect(
+                        x - windowSize/2, 
+                        y - windowSize/2, 
+                        windowSize, 
+                        windowSize
+                    );
+                }
+            }
+            
+            // Health bar
+            const healthBarWidth = tower.radius * 2;
+            const healthBarHeight = 10;
+            const healthBarX = tower.x - healthBarWidth / 2;
+            const healthBarY = tower.y + tower.radius + 15;
+            
+            // Background
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+            
+            // Health
+            ctx.fillStyle = towerHealth > 50 ? '#00FF00' : towerHealth > 25 ? '#FFFF00' : '#FF0000';
+            ctx.fillRect(healthBarX, healthBarY, healthBarWidth * (towerHealth / 100), healthBarHeight);
+        }
+
+        function drawUI() {
+            // Question
+            const question = "What is the capital of France?";
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 18 : 24}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 30);
+            
+            // Time left
+            ctx.fillStyle = timeLeft > 3 ? '#FFFFFF' : '#FF5555';
+            ctx.font = `${isMobile ? 18 : 24}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(`Time: ${Math.ceil(timeLeft)}`, canvas.width / 2, canvas.height - 20);
+        }
+
+        function playSound(freq, type = 'sine', duration = 0.1) {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = type;
+                oscillator.frequency.value = freq;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                
+                // Fade out
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                
+                // Stop after duration
+                setTimeout(() => {
+                    oscillator.stop();
+                }, duration * 1000);
+            } catch (e) {
+                console.log("Audio error:", e);
+            }
+        }
+
+        function endGame(success) {
+            gameOver = true;
+            gameWon = success;
+            
+            if (success) {
+                // Play victory sound
+                playSound(440, 'square', 0.1);
+                setTimeout(() => playSound(660, 'square', 0.1), 100);
+                setTimeout(() => playSound(880, 'square', 0.3), 200);
+            } else {
+                // Play failure sound
+                playSound(200, 'sawtooth', 0.1);
+                setTimeout(() => playSound(150, 'sawtooth', 0.3), 100);
+            }
+            
+            restartBtn.style.display = 'block';
+        }
+
+        function update() {
+            if (gameOver) return;
+            
+            // Update timer
+            timeLeft -= 1/60; // Assuming 60fps
+            if (timeLeft <= 0) {
+                endGame(false);
+                return;
+            }
+            
+            // Update enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                if (enemies[i].update()) {
+                    enemies.splice(i, 1);
+                }
+            }
+            
+            // Create new enemies if needed
+            if (enemies.length < 4 && Math.random() < 0.02) {
+                enemies.push(new Enemy(answers[Math.floor(Math.random() * answers.length)]));
+            }
+        }
+
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#222233';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixel grid background for retro feel
+            ctx.fillStyle = '#1A1A28';
+            const gridSize = isMobile ? 20 : 30;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                for (let y = 0; y < canvas.height; y += gridSize) {
+                    if ((x/gridSize + y/gridSize) % 2 === 0) {
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    }
+                }
+            }
+            
+            // Draw tower
+            drawTower();
+            
+            // Draw enemies
+            enemies.forEach(enemy => enemy.draw());
+            
+            // Draw UI
+            drawUI();
+            
+            // Draw game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameWon ? '#55FF55' : '#FF5555';
+                ctx.font = `${isMobile ? 24 : 32}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    gameWon ? 'Correct!' : 'Game Over', 
+                    canvas.width / 2, 
+                    canvas.height / 2 - 20
+                );
+            }
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function handleClick(event) {
+            if (gameOver) return;
+            
+            // Get click position
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clickX = (event.clientX - rect.left) * scaleX;
+            const clickY = (event.clientY - rect.top) * scaleY;
+            
+            // Check if clicked on an enemy
+            for (const enemy of enemies) {
+                if (enemy.contains(clickX, clickY)) {
+                    enemy.hit = true;
+                    if (enemy.answer.correct) {
+                        // Correct answer
+                        playSound(660, 'sine', 0.2);
+                        enemy.exploding = true;
+                        enemy.color = '#55FF55';
+                        setTimeout(() => endGame(true), 400);
+                    } else {
+                        // Incorrect answer
+                        playSound(220, 'sine', 0.2);
+                        enemy.exploding = true;
+                        enemy.color = '#FF5555';
+                        towerHealth -= 15;
+                        
+                        if (towerHealth <= 0) {
+                            setTimeout(() => endGame(false), 400);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        function initGame() {
+            gameOver = false;
+            gameWon = false;
+            timeLeft = 10;
+            towerHealth = 100;
+            enemies = [];
+            createEnemies();
+            restartBtn.style.display = 'none';
+        }
+
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', initGame);
+
+        // Position restart button based on canvas
+        function positionRestartButton() {
+            const rect = canvas.getBoundingClientRect();
+            restartBtn.style.left = `${rect.left + rect.width/2 - 50}px`;
+            restartBtn.style.top = `${rect.top + rect.height/2 + 20}px`;
+        }
+
+        window.addEventListener('resize', positionRestartButton);
+        positionRestartButton();
+
+        // Start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

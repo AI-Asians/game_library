@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game constants
+        const COLORS = {
+            background: '#000022',
+            stars: ['#FFFFFF', '#AAAAFF', '#FFFF88'],
+            terminalBg: '#000033',
+            terminalBorder: '#33AAFF',
+            text: '#FFFFFF',
+            keyBg: '#334488',
+            keyBgHover: '#4455AA',
+            keyBgActive: '#5566CC',
+            keyText: '#FFFFFF',
+            submitBtn: '#AA3333',
+            submitBtnHover: '#CC4444',
+            success: '#44FF44',
+            error: '#FF4444'
+        };
+        
+        // Game state
+        const state = {
+            input: '',
+            correctAnswer: 'MARS',
+            feedback: null,
+            feedbackTimer: 0,
+            stars: [],
+            planets: [],
+            gameEnded: false,
+            activeKey: null,
+            hoverKey: null,
+            restartBtnVisible: false
+        };
+        
+        // Create stars for background
+        for (let i = 0; i < 100; i++) {
+            state.stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 3 + 1,
+                color: COLORS.stars[Math.floor(Math.random() * COLORS.stars.length)],
+                twinkle: Math.random() > 0.7,
+                twinkleSpeed: Math.random() * 0.05 + 0.01
+            });
+        }
+        
+        // Create a red planet
+        state.planets.push({
+            x: canvas.width * 0.8,
+            y: canvas.height * 0.2,
+            radius: canvas.width * 0.1,
+            color: '#AA2222',
+            detail: '#882222'
+        });
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound functions
+        function playKeySound() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(220 + Math.random() * 100, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+        
+        function playSuccessSound() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(330, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start();
+            
+            setTimeout(() => {
+                osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+            }, 100);
+            
+            setTimeout(() => {
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+            }, 200);
+            
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            osc.stop(audioCtx.currentTime + 0.4);
+        }
+        
+        function playErrorSound() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(220, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start();
+            
+            setTimeout(() => {
+                osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+            }, 100);
+            
+            setTimeout(() => {
+                osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+            }, 200);
+            
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            osc.stop(audioCtx.currentTime + 0.4);
+        }
+        
+        // Keyboard layout
+        const keys = [
+            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+            ['Z', 'X', 'C', 'V', 'B', 'N', 'M', 'DEL']
+        ];
+        
+        // Calculate keyboard layout dimensions
+        function calculateKeyboardLayout() {
+            const terminalHeight = canvas.height * 0.15;
+            const keyboardTop = canvas.height * 0.5;
+            const keyboardWidth = canvas.width * 0.9;
+            const keyboardHeight = canvas.height * 0.35;
+            const keyHeight = keyboardHeight / (keys.length + 1);
+            const submitButtonY = keyboardTop + keyboardHeight + keyHeight * 0.5;
+            
+            // Calculate key sizes for each row
+            const keyboardRows = keys.map((row, rowIndex) => {
+                const rowWidth = keyboardWidth * (rowIndex === 1 ? 0.9 : 1);
+                const keyWidth = rowWidth / row.length;
+                const rowOffset = rowIndex === 1 ? (keyboardWidth - rowWidth) / 2 : 0;
+                
+                return {
+                    keys: row.map((key, keyIndex) => {
+                        const keyX = (canvas.width - keyboardWidth) / 2 + rowOffset + keyIndex * keyWidth;
+                        const keyY = keyboardTop + rowIndex * keyHeight;
+                        
+                        return {
+                            key,
+                            x: keyX,
+                            y: keyY,
+                            width: key === 'DEL' ? keyWidth * 1.5 : keyWidth,
+                            height: keyHeight * 0.8
+                        };
+                    })
+                };
+            });
+            
+            return {
+                terminalTop: canvas.height * 0.3,
+                terminalHeight,
+                keyboardRows,
+                submitButton: {
+                    x: canvas.width / 2,
+                    y: submitButtonY,
+                    width: canvas.width * 0.3,
+                    height: keyHeight * 0.8
+                },
+                restartButton: {
+                    x: canvas.width / 2,
+                    y: submitButtonY + keyHeight * 1.5,
+                    width: canvas.width * 0.3,
+                    height: keyHeight * 0.8
+                }
+            };
+        }
+        
+        const layout = calculateKeyboardLayout();
+        
+        // Draw functions
+        function drawPixelRect(x, y, width, height, color) {
+            ctx.fillStyle = color;
+            // Create a pixelated effect by drawing slightly smaller rectangles
+            ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+        }
+        
+        function drawPixelText(text, x, y, size, color, align = 'center') {
+            ctx.fillStyle = color;
+            ctx.font = `${size}px Arial`;
+            ctx.textAlign = align;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+        }
+        
+        function drawKey(keyObj, isHovered, isActive) {
+            let color = COLORS.keyBg;
+            if (isActive) color = COLORS.keyBgActive;
+            else if (isHovered) color = COLORS.keyBgHover;
+            
+            // Draw key background
+            drawPixelRect(keyObj.x, keyObj.y, keyObj.width - 4, keyObj.height - 4, color);
+            
+            // Draw key border
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(keyObj.x, keyObj.y, keyObj.width - 4, keyObj.height - 4);
+            
+            // Draw key text
+            drawPixelText(
+                keyObj.key, 
+                keyObj.x + (keyObj.width - 4) / 2, 
+                keyObj.y + (keyObj.height - 4) / 2, 
+                keyObj.key === 'DEL' ? 16 : 20, 
+                COLORS.keyText
+            );
+        }
+        
+        function drawSubmitButton(isHovered) {
+            const { submitButton } = layout;
+            
+            // Draw button background
+            drawPixelRect(
+                submitButton.x - submitButton.width / 2,
+                submitButton.y - submitButton.height / 2,
+                submitButton.width,
+                submitButton.height,
+                isHovered ? COLORS.submitBtnHover : COLORS.submitBtn
+            );
+            
+            // Draw button border
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                submitButton.x - submitButton.width / 2,
+                submitButton.y - submitButton.height / 2,
+                submitButton.width,
+                submitButton.height
+            );
+            
+            // Draw button text
+            drawPixelText('SUBMIT', submitButton.x, submitButton.y, 20, COLORS.keyText);
+        }
+        
+        function drawRestartButton(isHovered) {
+            const { restartButton } = layout;
+            
+            // Draw button background
+            drawPixelRect(
+                restartButton.x - restartButton.width / 2,
+                restartButton.y - restartButton.height / 2,
+                restartButton.width,
+                restartButton.height,
+                isHovered ? COLORS.submitBtnHover : COLORS.submitBtn
+            );
+            
+            // Draw button border
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                restartButton.x - restartButton.width / 2,
+                restartButton.y - restartButton.height / 2,
+                restartButton.width,
+                restartButton.height
+            );
+            
+            // Draw button text
+            drawPixelText('RESTART', restartButton.x, restartButton.y, 20, COLORS.keyText);
+        }
+        
+        function drawBackground() {
+            // Fill background
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            state.stars.forEach(star => {
+                // Calculate twinkle effect
+                let size = star.size;
+                if (star.twinkle) {
+                    size = star.size * (0.7 + Math.sin(performance.now() * star.twinkleSpeed) * 0.3);
+                }
+                
+                ctx.fillStyle = star.color;
+                ctx.fillRect(star.x, star.y, size, size);
+            });
+            
+            // Draw planets
+            state.planets.forEach(planet => {
+                // Draw planet
+                ctx.fillStyle = planet.color;
+                ctx.beginPath();
+                ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw planet details (craters/texture)
+                ctx.fillStyle = planet.detail;
+                // Add some pixel craters
+                for (let i = 0; i < 5; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * planet.radius * 0.7;
+                    const craterX = planet.x + Math.cos(angle) * dist;
+                    const craterY = planet.y + Math.sin(angle) * dist;
+                    const craterSize = Math.random() * planet.radius * 0.2 + planet.radius * 0.05;
+                    
+                    ctx.beginPath();
+                    ctx.arc(craterX, craterY, craterSize, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+        }
+        
+        function drawQuestion() {
+            const y = canvas.height * 0.15;
+            drawPixelText("Which planet is known as the Red Planet?", canvas.width/2, y, 24, COLORS.text);
+        }
+        
+        function drawTerminal() {
+            const { terminalTop, terminalHeight } = layout;
+            
+            // Draw terminal background
+            drawPixelRect(canvas.width * 0.1, terminalTop, canvas.width * 0.8, terminalHeight, COLORS.terminalBg);
+            
+            // Draw terminal border
+            ctx.strokeStyle = COLORS.terminalBorder;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(canvas.width * 0.1, terminalTop, canvas.width * 0.8, terminalHeight);
+            
+            // Draw command prompt
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '22px Arial';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            
+            // Draw blinking cursor
+            const inputText = state.input;
+            const cursorVisible = Math.floor(performance.now() / 500) % 2 === 0 && !state.gameEnded;
+            const cursorChar = cursorVisible ? '|' : '';
+            
+            ctx.fillText(
+                '> ' + inputText + cursorChar, 
+                canvas.width * 0.15, 
+                terminalTop + terminalHeight / 2
+            );
+            
+            // Draw feedback
+            if (state.feedback) {
+                let color = state.feedback.correct ? COLORS.success : COLORS.error;
+                
+                drawPixelText(
+                    state.feedback.message,
+                    canvas.width / 2,
+                    terminalTop + terminalHeight + 30,
+                    24,
+                    color
+                );
+            }
+        }
+        
+        function drawKeyboard() {
+            // Draw each key
+            layout.keyboardRows.forEach(row => {
+                row.keys.forEach(keyObj => {
+                    const isHovered = state.hoverKey === keyObj.key;
+                    const isActive = state.activeKey === keyObj.key;
+                    drawKey(keyObj, isHovered, isActive);
+                });
+            });
+            
+            // Draw submit button
+            const isHovered = state.hoverKey === 'SUBMIT';
+            drawSubmitButton(isHovered);
+            
+            // Draw restart button if game ended
+            if (state.restartBtnVisible) {
+                const isRestartHovered = state.hoverKey === 'RESTART';
+                drawRestartButton(isRestartHovered);
+            }
+        }
+        
+        function draw() {
+            drawBackground();
+            drawQuestion();
+            drawTerminal();
+            if (!state.gameEnded || state.restartBtnVisible) {
+                drawKeyboard();
+            }
+        }
+        
+        // Game logic
+        function processInput(key) {
+            if (state.gameEnded && key !== 'RESTART') return;
+            
+            playKeySound();
+            
+            if (key === 'DEL') {
+                if (state.input.length > 0) {
+                    state.input = state.input.slice(0, -1);
+                }
+            } else if (key === 'SUBMIT') {
+                checkAnswer();
+            } else if (key === 'RESTART') {
+                restartGame();
+            } else {
+                // Add the key to input (only letters)
+                if (state.input.length < 20) {
+                    state.input += key;
+                }
+            }
+        }
+        
+        function checkAnswer() {
+            const playerAnswer = state.input.trim().toUpperCase();
+            
+            // Animation effect - "thinking"
+            state.activeKey = null;
+            state.feedback = { message: "Checking...", correct: null };
+            
+            setTimeout(() => {
+                if (playerAnswer === state.correctAnswer) {
+                    playSuccessSound();
+                    state.feedback = { message: "CORRECT!", correct: true };
+                } else {
+                    playErrorSound();
+                    state.feedback = { message: `INCORRECT! The answer is ${state.correctAnswer}`, correct: false };
+                }
+                
+                state.gameEnded = true;
+                state.restartBtnVisible = true;
+            }, 500);
+        }
+        
+        function restartGame() {
+            state.input = '';
+            state.feedback = null;
+            state.gameEnded = false;
+            state.restartBtnVisible = false;
+        }
+        
+        // Input handling
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', () => {
+            state.activeKey = null;
+        });
+        
+        document.addEventListener('keydown', function(e) {
+            // Handle physical keyboard input
+            if (e.key.length === 1 && /[A-Za-z]/.test(e.key)) {
+                state.activeKey = e.key.toUpperCase();
+                processInput(e.key.toUpperCase());
+            } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                state.activeKey = 'DEL';
+                processInput('DEL');
+            } else if (e.key === 'Enter') {
+                state.activeKey = 'SUBMIT';
+                processInput('SUBMIT');
+            }
+        });
+        
+        document.addEventListener('keyup', function(e) {
+            state.activeKey = null;
+        });
+        
+        function handleMouseDown(e) {
+            const mousePos = getMousePos(canvas, e);
+            
+            // Check keyboard keys
+            const key = getKeyAtPosition(mousePos);
+            if (key) {
+                state.activeKey = key;
+                processInput(key);
+            }
+        }
+        
+        function handleMouseMove(e) {
+            const mousePos = getMousePos(canvas, e);
+            state.hoverKey = getKeyAtPosition(mousePos);
+        }
+        
+        function getMousePos(canvas, event) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: (event.clientX - rect.left) * (canvas.width / rect.width),
+                y: (event.clientY - rect.top) * (canvas.height / rect.height)
+            };
+        }
+        
+        function getKeyAtPosition(pos) {
+            // Check keyboard keys
+            for (const row of layout.keyboardRows) {
+                for (const keyObj of row.keys) {
+                    if (
+                        pos.x >= keyObj.x && 
+                        pos.x <= keyObj.x + keyObj.width - 4 &&
+                        pos.y >= keyObj.y && 
+                        pos.y <= keyObj.y + keyObj.height - 4
+                    ) {
+                        return keyObj.key;
+                    }
+                }
+            }
+            
+            // Check submit button
+            const { submitButton } = layout;
+            if (
+                pos.x >= submitButton.x - submitButton.width / 2 &&
+                pos.x <= submitButton.x + submitButton.width / 2 &&
+                pos.y >= submitButton.y - submitButton.height / 2 &&
+                pos.y <= submitButton.y + submitButton.height / 2
+            ) {
+                return 'SUBMIT';
+            }
+            
+            // Check restart button if visible
+            if (state.restartBtnVisible) {
+                const { restartButton } = layout;
+                if (
+                    pos.x >= restartButton.x - restartButton.width / 2 &&
+                    pos.x <= restartButton.x + restartButton.width / 2 &&
+                    pos.y >= restartButton.y - restartButton.height / 2 &&
+                    pos.y <= restartButton.y + restartButton.height / 2
+                ) {
+                    return 'RESTART';
+                }
+            }
+            
+            return null;
+        }
+        
+        // Game loop
+        function gameLoop() {
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

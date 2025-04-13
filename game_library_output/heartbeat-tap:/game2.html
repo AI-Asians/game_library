@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Heartbeat Truth or False</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Colors (limited palette)
+        const colors = {
+            background: '#0f380f',
+            border: '#8bac0f',
+            heart: '#e33e2b',
+            heartShadow: '#9c2418',
+            textDark: '#0f380f',
+            textLight: '#9bbc0f',
+            true: '#306230',
+            trueHighlight: '#8bac0f',
+            false: '#8f3f3f',
+            falseHighlight: '#e33e2b',
+            feedback: '#fff'
+        };
+        
+        // Game state
+        let gameState = {
+            pulseSize: 1,
+            pulseDirection: 0.02,
+            pulseSpeed: 0.02,
+            maxPulseSize: 1.5,
+            minPulseSize: 0.8,
+            answered: false,
+            correct: false,
+            restartVisible: false,
+            timeElapsed: 0,
+            lastPulse: 0,
+            readyCountdown: 2,
+            gameStarted: false
+        };
+        
+        // Question
+        const question = "Water boils at 100 degrees Celsius at sea level.";
+        const answer = true;
+        
+        // Sound effects
+        function createBeepSound(frequency, duration) {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = 0.2;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            
+            setTimeout(() => {
+                oscillator.stop();
+                audioCtx.close();
+            }, duration);
+        }
+        
+        function playHeartbeatSound() {
+            createBeepSound(150, 50);
+        }
+        
+        function playCorrectSound() {
+            createBeepSound(440, 100);
+            setTimeout(() => createBeepSound(660, 200), 100);
+        }
+        
+        function playIncorrectSound() {
+            createBeepSound(200, 100);
+            setTimeout(() => createBeepSound(150, 300), 100);
+        }
+        
+        // Draw pixelated heart
+        function drawHeart(x, y, size) {
+            const baseSize = 60;
+            const scaledSize = baseSize * size;
+            
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(size, size);
+            
+            // Draw heart pixel by pixel
+            ctx.fillStyle = colors.heart;
+            
+            // Heart shape using rectangles for pixelated look
+            const heartPixels = [
+                [-20, -15, 15, 10], [10, -15, 15, 10],
+                [-30, -5, 10, 25], [25, -5, 10, 25],
+                [-20, 20, 45, 15],
+                [-10, 35, 25, 10],
+                [0, 45, 5, 5]
+            ];
+            
+            for (let pixel of heartPixels) {
+                ctx.fillRect(pixel[0], pixel[1], pixel[2], pixel[3]);
+            }
+            
+            // Shadow effect for 8-bit look
+            ctx.fillStyle = colors.heartShadow;
+            const shadowPixels = [
+                [-5, -15, 10, 10],
+                [-20, -5, 5, 10], [20, -5, 5, 10],
+                [-5, 20, 15, 10],
+                [0, 30, 10, 5]
+            ];
+            
+            for (let pixel of shadowPixels) {
+                ctx.fillRect(pixel[0], pixel[1], pixel[2], pixel[3]);
+            }
+            
+            ctx.restore();
+        }
+        
+        // Draw pixelated arrows
+        function drawArrow(x, y, pointsLeft, highlight) {
+            ctx.fillStyle = highlight ? colors.textLight : colors.textDark;
+            const size = 15;
+            
+            if (pointsLeft) {
+                ctx.fillRect(x, y, size, size);
+                ctx.fillRect(x + size, y + size, size, size);
+                ctx.fillRect(x + 2 * size, y + 2 * size, size, size);
+                ctx.fillRect(x + size, y + 3 * size, size, size);
+                ctx.fillRect(x, y + 4 * size, size, size);
+            } else {
+                ctx.fillRect(x + 2 * size, y, size, size);
+                ctx.fillRect(x + size, y + size, size, size);
+                ctx.fillRect(x, y + 2 * size, size, size);
+                ctx.fillRect(x + size, y + 3 * size, size, size);
+                ctx.fillRect(x + 2 * size, y + 4 * size, size, size);
+            }
+        }
+        
+        // Draw game
+        function draw() {
+            // Clear canvas with background color
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw pixelated border
+            ctx.fillStyle = colors.border;
+            for (let i = 0; i < canvas.width; i += 8) {
+                ctx.fillRect(i, 0, 4, 4);
+                ctx.fillRect(i, canvas.height - 4, 4, 4);
+            }
+            for (let i = 0; i < canvas.height; i += 8) {
+                ctx.fillRect(0, i, 4, 4);
+                ctx.fillRect(canvas.width - 4, i, 4, 4);
+            }
+            
+            // Draw question
+            ctx.fillStyle = colors.textLight;
+            ctx.font = '20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 80);
+            
+            if (!gameState.gameStarted) {
+                // Draw ready screen
+                ctx.fillStyle = colors.textLight;
+                ctx.font = '30px sans-serif';
+                ctx.fillText('Get Ready!', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.fillText(Math.ceil(gameState.readyCountdown), canvas.width / 2, canvas.height / 2 + 20);
+                return;
+            }
+            
+            if (!gameState.answered) {
+                // Draw TRUE option with background
+                const trueHighlight = gameState.pulseSize > 1.2;
+                ctx.fillStyle = trueHighlight ? colors.trueHighlight : colors.true;
+                ctx.fillRect(100, canvas.height / 2 - 100, 200, 200);
+                
+                ctx.fillStyle = colors.textLight;
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('TRUE', 200, canvas.height / 2);
+                
+                // Draw FALSE option with background
+                const falseHighlight = gameState.pulseSize <= 1.2;
+                ctx.fillStyle = falseHighlight ? colors.falseHighlight : colors.false;
+                ctx.fillRect(canvas.width - 300, canvas.height / 2 - 100, 200, 200);
+                
+                ctx.fillStyle = colors.textLight;
+                ctx.font = '30px sans-serif';
+                ctx.fillText('FALSE', canvas.width - 200, canvas.height / 2);
+                
+                // Draw heart
+                drawHeart(canvas.width / 2, canvas.height / 2, gameState.pulseSize);
+                
+                // Draw arrows
+                drawArrow(150, canvas.height / 2 + 50, true, trueHighlight);
+                drawArrow(canvas.width - 250, canvas.height / 2 + 50, false, falseHighlight);
+                
+                // Show current selection
+                ctx.fillStyle = colors.textLight;
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${gameState.pulseSize > 1.2 ? 'TRUE' : 'FALSE'} selected`, canvas.width / 2, canvas.height / 2 + 150);
+                
+                // Instructions
+                ctx.font = '16px sans-serif';
+                ctx.fillText('Click/tap when the heart is at the right size to select your answer!', canvas.width / 2, 120);
+                ctx.fillText('Larger heart = TRUE, Smaller heart = FALSE', canvas.width / 2, 150);
+            } else {
+                // Draw feedback
+                ctx.fillStyle = gameState.correct ? colors.trueHighlight : colors.falseHighlight;
+                ctx.font = '40px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState.correct ? 'CORRECT!' : 'INCORRECT!', canvas.width / 2, canvas.height / 2 - 50);
+                
+                // Draw heart at fixed size
+                drawHeart(canvas.width / 2, canvas.height / 2, gameState.correct ? 1.4 : 0.9);
+                
+                if (gameState.restartVisible) {
+                    // Draw restart button
+                    ctx.fillStyle = colors.textLight;
+                    ctx.fillRect(canvas.width / 2 - 75, canvas.height / 2 + 70, 150, 50);
+                    
+                    ctx.fillStyle = colors.textDark;
+                    ctx.font = '20px sans-serif';
+                    ctx.fillText('RESTART', canvas.width / 2, canvas.height / 2 + 100);
+                }
+            }
+        }
+        
+        // Update game state
+        function update(deltaTime) {
+            if (!gameState.gameStarted) {
+                gameState.readyCountdown -= deltaTime;
+                if (gameState.readyCountdown <= 0) {
+                    gameState.gameStarted = true;
+                }
+                return;
+            }
+            
+            if (gameState.answered) {
+                gameState.timeElapsed += deltaTime;
+                if (gameState.timeElapsed > 1 && !gameState.restartVisible) {
+                    gameState.restartVisible = true;
+                }
+                return;
+            }
+            
+            // Update pulse size
+            gameState.pulseSize += gameState.pulseDirection * gameState.pulseSpeed;
+            
+            // Increase pulse speed over time for difficulty
+            gameState.pulseSpeed += deltaTime * 0.01;
+            
+            // Change direction at min/max
+            if (gameState.pulseSize >= gameState.maxPulseSize) {
+                gameState.pulseSize = gameState.maxPulseSize;
+                gameState.pulseDirection = -1;
+            } else if (gameState.pulseSize <= gameState.minPulseSize) {
+                gameState.pulseSize = gameState.minPulseSize;
+                gameState.pulseDirection = 1;
+            }
+            
+            // Play heartbeat sound
+            gameState.lastPulse += deltaTime;
+            if ((gameState.pulseSize >= gameState.maxPulseSize || gameState.pulseSize <= gameState.minPulseSize) && gameState.lastPulse > 0.2) {
+                playHeartbeatSound();
+                gameState.lastPulse = 0;
+            }
+        }
+        
+        // Handle player input
+        function handleAnswer() {
+            if (!gameState.gameStarted || gameState.answered) return;
+            
+            const playerAnswer = gameState.pulseSize > 1.2;
+            const isCorrect = playerAnswer === answer;
+            
+            gameState.answered = true;
+            gameState.correct = isCorrect;
+            
+            if (isCorrect) {
+                playCorrectSound();
+            } else {
+                playIncorrectSound();
+            }
+        }
+        
+        // Restart game
+        function restart() {
+            gameState = {
+                pulseSize: 1,
+                pulseDirection: 0.02,
+                pulseSpeed: 0.02,
+                maxPulseSize: 1.5,
+                minPulseSize: 0.8,
+                answered: false,
+                correct: false,
+                restartVisible: false,
+                timeElapsed: 0,
+                lastPulse: 0,
+                readyCountdown: 2,
+                gameStarted: false
+            };
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.bottom;
+            
+            if (gameState.answered && gameState.restartVisible) {
+                const restartBtnX = canvas.width / 2 - 75;
+                const restartBtnY = canvas.height / 2 + 70;
+                const restartBtnWidth = 150;
+                const restartBtnHeight = 50;
+                
+                if (x >= restartBtnX && x <= restartBtnX + restartBtnWidth && 
+                    y >= restartBtnY && y <= restartBtnY + restartBtnHeight) {
+                    restart();
+                }
+            } else {
+                handleAnswer();
+            }
+        });
+        
+        // Game loop
+        let lastTime = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            update(deltaTime);
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Resize canvas to maintain aspect ratio
+        function resizeCanvas() {
+            const targetWidth = 800;
+            const targetHeight = 600;
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            
+            let scale = Math.min(
+                windowWidth / targetWidth,
+                windowHeight / targetHeight
+            );
+            
+            canvas.style.width = (targetWidth * scale) + 'px';
+            canvas.style.height = (targetHeight * scale) + 'px';
+        }
+        
+        // Ensure canvas stays properly sized
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        
+        // Start game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

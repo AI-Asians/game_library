@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>True or False: Great Wall Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #333;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const question = "The Great Wall of China is visible from space.";
+        const answer = false; // The correct answer is FALSE
+        
+        let isTrue = Math.random() > 0.5; // Start with random state
+        let flipSpeed = 800; // Base flip time in ms
+        let lastFlipTime = 0;
+        let gameEnded = false;
+        let gameWon = false;
+        let animationId = null;
+        
+        // Colors in 8-bit palette
+        const colors = {
+            background: "#0f380f",
+            trueBg: "#8bac0f",
+            falseBg: "#ac3232",
+            border: "#9bbc0f",
+            text: "#ffffff",
+            darkText: "#0f380f",
+            highlight: "#ffff00",
+            shadow: "#306230"
+        };
+        
+        // Game sounds
+        const createBeepSound = (frequency, duration, volume = 0.5, type = 'square') => {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = frequency;
+            gainNode.gain.value = volume;
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        };
+        
+        const sounds = {
+            flip: () => createBeepSound(220, 0.1, 0.2),
+            correct: () => createBeepSound(520, 0.3, 0.3),
+            wrong: () => createBeepSound(120, 0.4, 0.3)
+        };
+        
+        // Draw pixel button
+        function drawPixelButton(x, y, width, height, color, borderColor, text) {
+            // Button shadow
+            ctx.fillStyle = colors.shadow;
+            ctx.fillRect(x + 4, y + 4, width, height);
+            
+            // Button background
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, width, height);
+            
+            // Button border
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = borderColor;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Button inner border
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = colors.darkText;
+            ctx.strokeRect(x + 4, y + 4, width - 8, height - 8);
+            
+            // Button text
+            ctx.fillStyle = colors.darkText;
+            ctx.font = `${Math.floor(height/2)}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, x + width/2, y + height/2);
+        }
+        
+        // Draw the current game state
+        function draw(timestamp) {
+            // Background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Calculate sizes
+            const cardWidth = Math.min(canvas.width * 0.8, 300);
+            const cardHeight = Math.min(canvas.height * 0.4, 200);
+            const cardX = (canvas.width - cardWidth) / 2;
+            const cardY = canvas.height * 0.35 - cardHeight / 2;
+            
+            // Question
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            const maxWidth = canvas.width * 0.9;
+            const words = question.split(' ');
+            let line = '';
+            let lines = [];
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                if (metrics.width > maxWidth && i > 0) {
+                    lines.push(line);
+                    line = words[i] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+            
+            const lineHeight = isMobile ? 30 : 36;
+            const totalHeight = lineHeight * lines.length;
+            const startY = cardY - totalHeight - 20;
+            
+            lines.forEach((line, index) => {
+                ctx.fillText(line, canvas.width / 2, startY + index * lineHeight);
+            });
+            
+            // Draw legend
+            const legendY = cardY - 60;
+            const legendSize = isMobile ? 20 : 30;
+            const legendSpacing = isMobile ? 85 : 120;
+            
+            // True legend
+            drawPixelButton(canvas.width/2 - legendSpacing, legendY, legendSize, legendSize, colors.trueBg, colors.border, "");
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+            ctx.textAlign = "left";
+            ctx.fillText("TRUE", canvas.width/2 - legendSpacing + legendSize + 10, legendY + legendSize/2);
+            
+            // False legend
+            drawPixelButton(canvas.width/2 + legendSpacing - legendSize, legendY, legendSize, legendSize, colors.falseBg, colors.border, "");
+            ctx.textAlign = "right";
+            ctx.fillText("FALSE", canvas.width/2 + legendSpacing - legendSize - 10, legendY + legendSize/2);
+            
+            // Instructions
+            ctx.textAlign = "center";
+            ctx.font = `${isMobile ? 16 : 18}px sans-serif`;
+            ctx.fillText("Tap when the correct answer shows!", canvas.width/2, cardY + cardHeight + 40);
+            
+            // Flipping card animation
+            const elapsedTime = timestamp - lastFlipTime;
+            
+            // Gradually decrease flip time (increase speed)
+            if (!gameEnded && elapsedTime > flipSpeed) {
+                isTrue = !isTrue;
+                lastFlipTime = timestamp;
+                flipSpeed = Math.max(400, flipSpeed * 0.98); // Speed up to a reasonable limit
+                sounds.flip();
+            }
+            
+            // Draw the flipping card with pixelated border
+            const cardColor = isTrue ? colors.trueBg : colors.falseBg;
+            const cardText = isTrue ? "TRUE" : "FALSE";
+            
+            // Card with pixelated border
+            ctx.fillStyle = colors.border;
+            ctx.fillRect(cardX - 8, cardY - 8, cardWidth + 16, cardHeight + 16);
+            ctx.fillStyle = cardColor;
+            ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
+            
+            // Pixelated inner border
+            const borderSize = 4;
+            ctx.fillStyle = colors.darkText;
+            ctx.fillRect(cardX + borderSize, cardY + borderSize, cardWidth - borderSize * 2, borderSize); // top
+            ctx.fillRect(cardX + borderSize, cardY + cardHeight - borderSize * 2, cardWidth - borderSize * 2, borderSize); // bottom
+            ctx.fillRect(cardX + borderSize, cardY + borderSize * 2, borderSize, cardHeight - borderSize * 4); // left
+            ctx.fillRect(cardX + cardWidth - borderSize * 2, cardY + borderSize * 2, borderSize, cardHeight - borderSize * 4); // right
+            
+            // Card text
+            ctx.fillStyle = colors.text;
+            ctx.font = `bold ${cardHeight/3}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(cardText, cardX + cardWidth/2, cardY + cardHeight/2);
+            
+            // Game result or restart button
+            if (gameEnded) {
+                // Result text
+                ctx.fillStyle = gameWon ? colors.trueBg : colors.falseBg;
+                ctx.font = `bold ${isMobile ? 28 : 36}px sans-serif`;
+                ctx.fillText(
+                    gameWon ? "CORRECT!" : "WRONG!",
+                    canvas.width / 2,
+                    cardY + cardHeight + 80
+                );
+                
+                // Draw restart button
+                const btnWidth = 140;
+                const btnHeight = 50;
+                const btnX = (canvas.width - btnWidth) / 2;
+                const btnY = cardY + cardHeight + 120;
+                
+                drawPixelButton(btnX, btnY, btnWidth, btnHeight, colors.border, colors.text, "RESTART");
+            }
+            
+            if (!gameEnded) {
+                animationId = requestAnimationFrame(draw);
+            }
+        }
+        
+        // Handle user input
+        function handleClick() {
+            if (gameEnded) {
+                // Restart the game if it's over
+                isTrue = Math.random() > 0.5;
+                flipSpeed = 800;
+                lastFlipTime = performance.now();
+                gameEnded = false;
+                gameWon = false;
+                animationId = requestAnimationFrame(draw);
+            } else {
+                // Check if the answer is correct
+                gameEnded = true;
+                gameWon = (isTrue === answer);
+                
+                if (gameWon) {
+                    sounds.correct();
+                } else {
+                    sounds.wrong();
+                }
+                
+                draw(performance.now()); // One final draw with the result
+            }
+        }
+        
+        // Set up event listeners
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            handleClick();
+        }, false);
+        
+        // Start the game
+        lastFlipTime = performance.now();
+        animationId = requestAnimationFrame(draw);
+    </script>
+</body>
+</html>

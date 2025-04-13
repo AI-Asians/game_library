@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capital Catcher</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 8px 16px;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">PLAY AGAIN</button>
+    
+    <script>
+        // Get canvas and context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let gameOver = false;
+        let correctCaught = false;
+        
+        // Create audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Player variables
+        const playerWidth = canvas.width / 6;
+        const playerHeight = playerWidth / 2;
+        const player = {
+            x: canvas.width / 2 - playerWidth / 2,
+            y: canvas.height - playerHeight - 20,
+            width: playerWidth,
+            height: playerHeight,
+            speed: isMobile ? 6 : 10,
+            color: '#FFD700'
+        };
+        
+        // Answers
+        const answers = [
+            { text: 'Paris', correct: true, color: '#4CAF50' },
+            { text: 'London', correct: false, color: '#F44336' },
+            { text: 'Berlin', correct: false, color: '#2196F3' },
+            { text: 'Rome', correct: false, color: '#FF9800' }
+        ];
+        
+        // Falling answer objects
+        const fallingAnswers = [];
+        
+        // Initialize game
+        function init() {
+            gameOver = false;
+            correctCaught = false;
+            fallingAnswers.length = 0;
+            restartBtn.style.display = 'none';
+            
+            // Create falling answers with staggered starts
+            answers.forEach((answer, index) => {
+                fallingAnswers.push({
+                    text: answer.text,
+                    correct: answer.correct,
+                    color: answer.color,
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: -100 - (index * 200),
+                    width: isMobile ? 120 : 150,
+                    height: isMobile ? 60 : 80,
+                    speed: 1.5 + Math.random() * 2,
+                    opacity: 1
+                });
+            });
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handling
+        let leftPressed = false;
+        let rightPressed = false;
+        
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') leftPressed = true;
+            if (e.key === 'ArrowRight') rightPressed = true;
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft') leftPressed = false;
+            if (e.key === 'ArrowRight') rightPressed = false;
+        });
+        
+        // Touch input for mobile
+        let touchX = null;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchX = e.touches[0].clientX;
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (touchX !== null) {
+                const currentX = e.touches[0].clientX;
+                const diff = currentX - touchX;
+                
+                player.x += diff;
+                if (player.x < 0) player.x = 0;
+                if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+                
+                touchX = currentX;
+            }
+        });
+        
+        canvas.addEventListener('touchend', () => {
+            touchX = null;
+        });
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(660, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            }
+        }
+        
+        // Particles system
+        const particles = [];
+        
+        function createParticles(x, y, color, correct) {
+            const particleCount = correct ? 30 : 15;
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 8 + 2,
+                    speedX: (Math.random() - 0.5) * 8,
+                    speedY: (Math.random() - 0.5) * 8,
+                    color: color,
+                    life: 30
+                });
+            }
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.life--;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawParticles() {
+            for (const p of particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(p.x),
+                    Math.floor(p.y),
+                    Math.floor(p.size),
+                    Math.floor(p.size)
+                );
+            }
+        }
+        
+        // Check collision between player and answer
+        function checkCollision(answer) {
+            return (
+                player.x < answer.x + answer.width &&
+                player.x + player.width > answer.x &&
+                player.y < answer.y + answer.height &&
+                player.y + player.height > answer.y
+            );
+        }
+        
+        // Update game state
+        function update() {
+            if (gameOver) return;
+            
+            // Move player
+            if (leftPressed) player.x -= player.speed;
+            if (rightPressed) player.x += player.speed;
+            
+            // Keep player in bounds
+            if (player.x < 0) player.x = 0;
+            if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+            
+            // Update falling answers
+            for (let i = fallingAnswers.length - 1; i >= 0; i--) {
+                const answer = fallingAnswers[i];
+                answer.y += answer.speed;
+                
+                // Check if player caught answer
+                if (checkCollision(answer)) {
+                    correctCaught = answer.correct;
+                    gameOver = true;
+                    createParticles(
+                        answer.x + answer.width / 2,
+                        answer.y + answer.height / 2,
+                        answer.color,
+                        answer.correct
+                    );
+                    playSound(answer.correct ? 'correct' : 'wrong');
+                    
+                    // Show restart button after a short delay
+                    setTimeout(() => {
+                        restartBtn.style.display = 'block';
+                    }, 1000);
+                }
+                
+                // Remove if out of bounds
+                if (answer.y > canvas.height) {
+                    fallingAnswers.splice(i, 1);
+                }
+            }
+            
+            // Update particles
+            updateParticles();
+        }
+        
+        // Draw game elements
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 40);
+            
+            // Draw falling answers
+            for (const answer of fallingAnswers) {
+                // Draw answer box (pixelated style)
+                ctx.fillStyle = answer.color;
+                
+                // Main box
+                const boxX = Math.floor(answer.x);
+                const boxY = Math.floor(answer.y);
+                const boxW = Math.floor(answer.width);
+                const boxH = Math.floor(answer.height);
+                
+                ctx.fillRect(boxX, boxY, boxW, boxH);
+                
+                // Dark border (pixel style)
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(boxX + boxW - 8, boxY, 8, boxH);
+                ctx.fillRect(boxX, boxY + boxH - 8, boxW, 8);
+                
+                // Light border (pixel style)
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillRect(boxX, boxY, 8, boxH);
+                ctx.fillRect(boxX, boxY, boxW, 8);
+                
+                // Draw text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `${isMobile ? 18 : 22}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(answer.text, answer.x + answer.width / 2, answer.y + answer.height / 2);
+            }
+            
+            // Draw player (catcher)
+            ctx.fillStyle = player.color;
+            
+            // Main basket shape
+            const px = Math.floor(player.x);
+            const py = Math.floor(player.y);
+            const pw = Math.floor(player.width);
+            const ph = Math.floor(player.height);
+            
+            // Bottom part (basket)
+            ctx.fillRect(px, py + ph - ph/3, pw, ph/3);
+            
+            // Left side
+            ctx.fillRect(px, py, pw/6, ph);
+            
+            // Right side
+            ctx.fillRect(px + pw - pw/6, py, pw/6, ph);
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw game over text
+            if (gameOver) {
+                ctx.fillStyle = correctCaught ? '#4CAF50' : '#F44336';
+                ctx.font = `${isMobile ? 28 : 32}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    correctCaught ? 'CORRECT!' : 'WRONG!',
+                    canvas.width / 2,
+                    canvas.height / 2
+                );
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            
+            if (!gameOver || particles.length > 0) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+        
+        // Start game
+        restartBtn.addEventListener('click', init);
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJ Scratch Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+
+        // Game colors (limited 8-bit palette)
+        const COLORS = {
+            background: '#0f0f2d',
+            turntable: '#444444',
+            record: '#222222',
+            recordGrooves: '#111111',
+            arm: '#888888',
+            displayBg: '#003300',
+            displayText: '#00ff00',
+            correctText: '#ffff00',
+            buttonUp: '#aa0000',
+            buttonDown: '#ff0000',
+            questionText: '#ffffff'
+        };
+
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Game state
+        let isDragging = false;
+        let lastMouseX = 0;
+        let recordAngle = 0;
+        let recordAngularVelocity = 0;
+        let currentAnswerIndex = 0;
+        let gameOver = false;
+        let selectButtonPressed = false;
+
+        // Question and answers
+        const question = "Which planet is known as the Red Planet?";
+        const answers = ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn"];
+        const correctAnswerIndex = 3; // Mars
+
+        // Create scratch sound
+        function playScratching(direction) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(direction > 0 ? 120 : 80, audioCtx.currentTime);
+            oscillator.frequency.linearRampToValueAtTime(
+                direction > 0 ? 100 : 120, 
+                audioCtx.currentTime + 0.1
+            );
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+
+        // Create success sound
+        function playSuccessSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(330, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // Create failure sound
+        function playFailureSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(110, audioCtx.currentTime + 0.2);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // Draw pixelated circle
+        function drawPixelatedCircle(x, y, radius, color) {
+            const pixelSize = 3;
+            ctx.fillStyle = color;
+            
+            for (let py = -radius; py <= radius; py += pixelSize) {
+                for (let px = -radius; px <= radius; px += pixelSize) {
+                    if (px*px + py*py <= radius*radius) {
+                        ctx.fillRect(
+                            Math.floor(x + px), 
+                            Math.floor(y + py), 
+                            pixelSize, 
+                            pixelSize
+                        );
+                    }
+                }
+            }
+        }
+
+        // Draw record grooves
+        function drawRecordGrooves(x, y, radius, grooveSpacing, angle) {
+            ctx.strokeStyle = COLORS.recordGrooves;
+            ctx.lineWidth = 2;
+            
+            for (let r = 20; r < radius; r += grooveSpacing) {
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            // Draw record label
+            drawPixelatedCircle(x, y, 25, '#881111');
+            
+            // Draw record segments for rotation visibility
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+            
+            for (let i = 0; i < 8; i++) {
+                const rot = i * Math.PI / 4;
+                ctx.fillStyle = i % 2 === 0 ? '#222222' : '#333333';
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.arc(0, 0, radius, rot, rot + Math.PI/4);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        // Draw turntable arm
+        function drawTurntableArm(x, y, recordRadius, angle) {
+            const armLength = recordRadius * 0.9;
+            const armWidth = 8;
+            
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(-Math.PI/4 + angle/5);
+            
+            // Arm base
+            ctx.fillStyle = '#555555';
+            ctx.fillRect(-10, -10, 20, 20);
+            
+            // Arm
+            ctx.fillStyle = COLORS.arm;
+            ctx.fillRect(0, -armWidth/2, armLength, armWidth);
+            
+            // Needle head
+            ctx.fillStyle = '#cccccc';
+            ctx.fillRect(armLength - 5, -armWidth - 5, 10, armWidth + 10);
+            
+            ctx.restore();
+        }
+
+        // Draw display screen
+        function drawDisplay(x, y, width, height, text) {
+            // Display background
+            ctx.fillStyle = COLORS.displayBg;
+            ctx.fillRect(x, y, width, height);
+            
+            // Display border
+            ctx.strokeStyle = '#555555';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Scanlines effect
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            for (let i = y; i < y + height; i += 4) {
+                ctx.fillRect(x, i, width, 2);
+            }
+            
+            // Text
+            ctx.fillStyle = gameOver && currentAnswerIndex === correctAnswerIndex ? 
+                            COLORS.correctText : COLORS.displayText;
+            ctx.font = (isMobile ? '24px' : '32px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Flash effect for correct answer
+            if (gameOver && currentAnswerIndex === correctAnswerIndex && 
+                Math.floor(Date.now() / 100) % 2 === 0) {
+                ctx.fillStyle = '#ffffff';
+            }
+            
+            ctx.fillText(text, x + width/2, y + height/2);
+        }
+
+        // Draw select button
+        function drawSelectButton(x, y, width, height, pressed) {
+            // Button base
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(x - 5, y - 5, width + 10, height + 10);
+            
+            // Button top
+            ctx.fillStyle = pressed ? COLORS.buttonDown : COLORS.buttonUp;
+            ctx.fillRect(x, y, width, height);
+            
+            // Button highlight
+            if (!pressed) {
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillRect(x, y, width, height/3);
+            }
+            
+            // Button text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = (isMobile ? '18px' : '24px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('SELECT', x + width/2, y + height/2);
+            
+            // Pulsing effect when not pressed and game not over
+            if (!pressed && !gameOver && Math.floor(Date.now() / 500) % 2 === 0) {
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x - 3, y - 3, width + 6, height + 6);
+            }
+        }
+
+        // Draw restart button
+        function drawRestartButton(x, y, width, height) {
+            // Button base
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(x, y, width, height);
+            
+            // Button border
+            ctx.strokeStyle = '#888888';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Button text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = (isMobile ? '16px' : '20px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('RESTART', x + width/2, y + height/2);
+        }
+
+        // Update game state
+        function update() {
+            if (!gameOver) {
+                // Apply friction to record rotation
+                recordAngularVelocity *= 0.95;
+                recordAngle += recordAngularVelocity;
+                
+                // Ensure angle stays within 0-2π
+                recordAngle = recordAngle % (Math.PI * 2);
+                if (recordAngle < 0) recordAngle += Math.PI * 2;
+                
+                // Update current answer based on rotation
+                const normalizedAngle = recordAngle / (Math.PI * 2);
+                currentAnswerIndex = Math.floor(normalizedAngle * answers.length) % answers.length;
+            }
+        }
+
+        // Draw game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = COLORS.questionText;
+            ctx.font = (isMobile ? '20px' : '24px') + ' sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width/2, isMobile ? 60 : 80);
+            
+            // Calculate turntable position
+            const turntableX = canvas.width / 2;
+            const turntableY = isMobile ? 250 : 250;
+            const turntableRadius = isMobile ? 120 : 150;
+            
+            // Draw turntable base
+            drawPixelatedCircle(turntableX, turntableY, turntableRadius + 20, COLORS.turntable);
+            
+            // Draw record
+            drawPixelatedCircle(turntableX, turntableY, turntableRadius, COLORS.record);
+            drawRecordGrooves(turntableX, turntableY, turntableRadius, 10, recordAngle);
+            
+            // Draw turntable arm
+            drawTurntableArm(
+                turntableX + turntableRadius * 0.7, 
+                turntableY - turntableRadius * 0.7, 
+                turntableRadius, 
+                recordAngle
+            );
+            
+            // Draw display
+            const displayWidth = isMobile ? 280 : 400;
+            const displayHeight = isMobile ? 60 : 70;
+            const displayY = turntableY + turntableRadius + 40;
+            
+            drawDisplay(
+                canvas.width/2 - displayWidth/2,
+                displayY,
+                displayWidth,
+                displayHeight,
+                answers[currentAnswerIndex]
+            );
+            
+            // Draw select button
+            const buttonWidth = isMobile ? 120 : 140;
+            const buttonHeight = isMobile ? 50 : 60;
+            const buttonY = displayY + displayHeight + 30;
+            
+            drawSelectButton(
+                canvas.width/2 - buttonWidth/2,
+                buttonY,
+                buttonWidth,
+                buttonHeight,
+                selectButtonPressed
+            );
+            
+            // Draw restart button if game is over
+            if (gameOver) {
+                const restartWidth = isMobile ? 100 : 120;
+                const restartHeight = isMobile ? 40 : 50;
+                
+                drawRestartButton(
+                    canvas.width/2 - restartWidth/2,
+                    buttonY + buttonHeight + 30,
+                    restartWidth,
+                    restartHeight
+                );
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event handlers
+        canvas.addEventListener('mousedown', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            const turntableX = canvas.width / 2;
+            const turntableY = isMobile ? 250 : 250;
+            const turntableRadius = isMobile ? 120 : 150;
+            
+            // Check if clicking on the record
+            const dx = mouseX - turntableX;
+            const dy = mouseY - turntableY;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            
+            if (distance <= turntableRadius) {
+                isDragging = true;
+                lastMouseX = mouseX;
+            }
+            
+            // Check if clicking select button
+            const buttonWidth = isMobile ? 120 : 140;
+            const buttonHeight = isMobile ? 50 : 60;
+            const displayHeight = isMobile ? 60 : 70;
+            const displayY = turntableY + turntableRadius + 40;
+            const buttonY = displayY + displayHeight + 30;
+            const buttonX = canvas.width/2 - buttonWidth/2;
+            
+            if (mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
+                mouseY >= buttonY && mouseY <= buttonY + buttonHeight) {
+                selectButtonPressed = true;
+                
+                // If not game over, check answer
+                if (!gameOver) {
+                    gameOver = true;
+                    
+                    if (currentAnswerIndex === correctAnswerIndex) {
+                        playSuccessSound();
+                    } else {
+                        playFailureSound();
+                    }
+                }
+            }
+            
+            // Check if clicking restart button
+            if (gameOver) {
+                const restartWidth = isMobile ? 100 : 120;
+                const restartHeight = isMobile ? 40 : 50;
+                const restartX = canvas.width/2 - restartWidth/2;
+                const restartY = buttonY + buttonHeight + 30;
+                
+                if (mouseX >= restartX && mouseX <= restartX + restartWidth &&
+                    mouseY >= restartY && mouseY <= restartY + restartHeight) {
+                    // Reset game
+                    gameOver = false;
+                    recordAngle = 0;
+                    recordAngularVelocity = 0;
+                    currentAnswerIndex = 0;
+                }
+            }
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (isDragging && !gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                
+                // Calculate the change in mouse position
+                const dx = mouseX - lastMouseX;
+                
+                // Update record angular velocity based on mouse movement
+                recordAngularVelocity = dx * 0.01;
+                
+                // Play scratching sound if significant movement
+                if (Math.abs(dx) > 3) {
+                    playScratching(dx);
+                }
+                
+                lastMouseX = mouseX;
+            }
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            isDragging = false;
+            selectButtonPressed = false;
+        });
+        
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup');
+            canvas.dispatchEvent(mouseEvent);
+        });
+
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

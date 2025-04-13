@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Quiz Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            border: 4px solid #444;
+            background-color: #111;
+            image-rendering: pixelated;
+        }
+        #restartButton {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 3px solid #555;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+        #restartButton:hover {
+            background-color: #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartButton">RESTART</button>
+    <script>
+        // Game initialization
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartButton = document.getElementById('restartButton');
+        
+        // Device detection and canvas sizing
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        const question = "What is the capital of France?";
+        const answers = [
+            { text: "Paris", correct: true },
+            { text: "London", correct: false },
+            { text: "Berlin", correct: false },
+            { text: "Rome", correct: false },
+            { text: "Madrid", correct: false }
+        ];
+        
+        let gameOver = false;
+        let gameWon = false;
+        
+        // Create falling objects
+        const fallingObjects = [];
+        const colors = ["#FF5555", "#55FF55", "#5555FF", "#FFFF55", "#FF55FF", "#55FFFF"];
+        
+        function createFallingObjects() {
+            const shuffled = [...answers].sort(() => 0.5 - Math.random());
+            
+            for (let i = 0; i < shuffled.length; i++) {
+                fallingObjects.push({
+                    x: Math.random() * (canvas.width - 100) + 50,
+                    y: -100 - (i * 150),
+                    width: isMobile ? 100 : 130,
+                    height: isMobile ? 50 : 60,
+                    speed: 1 + Math.random() * 1.5,
+                    color: colors[i % colors.length],
+                    text: shuffled[i].text,
+                    correct: shuffled[i].correct,
+                    rotation: Math.random() * 0.1 - 0.05
+                });
+            }
+        }
+        
+        // Particle system for effects
+        const particles = [];
+        
+        function createParticles(x, y, color, correct) {
+            const particleCount = correct ? 40 : 20;
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 8 + 2,
+                    color: correct ? "#FFFF00" : color,
+                    vx: Math.random() * 10 - 5,
+                    vy: Math.random() * 10 - 5,
+                    life: 30
+                });
+            }
+        }
+        
+        // Audio
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(frequency, type, duration) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+        
+        function playCorrectSound() {
+            playSound(523.25, 'square', 0.1); // C5
+            setTimeout(() => playSound(659.25, 'square', 0.1), 100); // E5
+            setTimeout(() => playSound(783.99, 'square', 0.2), 200); // G5
+        }
+        
+        function playWrongSound() {
+            playSound(196.00, 'sawtooth', 0.3); // G3
+            setTimeout(() => playSound(185.00, 'sawtooth', 0.3), 100);
+        }
+        
+        function playClickSound() {
+            playSound(440, 'square', 0.1); // A4
+        }
+        
+        // Arrow animation for question
+        let arrowOffset = 0;
+        let arrowDirection = 1;
+        
+        // Game logic
+        function update() {
+            if (gameOver) return;
+            
+            // Update arrow animation
+            arrowOffset += 0.5 * arrowDirection;
+            if (arrowOffset > 10 || arrowOffset < 0) {
+                arrowDirection *= -1;
+            }
+            
+            // Update falling objects
+            fallingObjects.forEach(obj => {
+                obj.y += obj.speed;
+                
+                // Game over if object goes off screen
+                if (obj.y > canvas.height + 50 && obj.correct) {
+                    gameOver = true;
+                    gameWon = false;
+                    restartButton.style.display = 'block';
+                    playWrongSound();
+                }
+            });
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].x += particles[i].vx;
+                particles[i].y += particles[i].vy;
+                particles[i].life--;
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Render game
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#111122';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question with arrow indicator
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `${isMobile ? 20 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw arrow
+            ctx.fillStyle = '#FFFF00';
+            const arrowY = 70 + arrowOffset;
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 - 50, arrowY);
+            ctx.lineTo(canvas.width / 2 - 30, arrowY);
+            ctx.lineTo(canvas.width / 2 - 30, arrowY - 10);
+            ctx.lineTo(canvas.width / 2 - 10, arrowY + 5);
+            ctx.lineTo(canvas.width / 2 - 30, arrowY + 20);
+            ctx.lineTo(canvas.width / 2 - 30, arrowY + 10);
+            ctx.lineTo(canvas.width / 2 - 50, arrowY + 10);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Draw falling objects in 8-bit style
+            fallingObjects.forEach(obj => {
+                // Draw pixelated box
+                ctx.save();
+                ctx.translate(obj.x + obj.width / 2, obj.y + obj.height / 2);
+                ctx.rotate(obj.rotation);
+                
+                // Main box
+                ctx.fillStyle = obj.color;
+                ctx.fillRect(-obj.width / 2, -obj.height / 2, obj.width, obj.height);
+                
+                // 8-bit border
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#000000';
+                ctx.strokeRect(-obj.width / 2, -obj.height / 2, obj.width, obj.height);
+                
+                // Pixel details
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(-obj.width / 2 + 8, -obj.height / 2 + 8, 8, 8);
+                ctx.fillRect(obj.width / 2 - 16, obj.height / 2 - 16, 8, 8);
+                
+                // Text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(obj.text, 0, 0);
+                
+                ctx.restore();
+            });
+            
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            
+            // Game over message
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = gameWon ? '#55FF55' : '#FF5555';
+                ctx.font = `${isMobile ? 30 : 40}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(gameWon ? 'CORRECT!' : 'WRONG!', canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle clicks/taps
+        function handleClick(event) {
+            if (gameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Check if any object was clicked
+            for (let i = fallingObjects.length - 1; i >= 0; i--) {
+                const obj = fallingObjects[i];
+                if (clickX >= obj.x && clickX <= obj.x + obj.width &&
+                    clickY >= obj.y && clickY <= obj.y + obj.height) {
+                    
+                    // Create particles at click location
+                    createParticles(obj.x + obj.width / 2, obj.y + obj.height / 2, obj.color, obj.correct);
+                    
+                    // Handle correct/incorrect
+                    gameOver = true;
+                    gameWon = obj.correct;
+                    
+                    // Play sound
+                    if (obj.correct) {
+                        playCorrectSound();
+                    } else {
+                        playWrongSound();
+                    }
+                    
+                    restartButton.style.display = 'block';
+                    break;
+                }
+            }
+            
+            // Play click sound if no object was hit
+            if (!gameOver) {
+                playClickSound();
+            }
+        }
+        
+        // Reset game
+        function restartGame() {
+            gameOver = false;
+            gameWon = false;
+            fallingObjects.length = 0;
+            particles.length = 0;
+            createFallingObjects();
+            restartButton.style.display = 'none';
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartButton.addEventListener('click', restartGame);
+        
+        // Start game
+        createFallingObjects();
+        gameLoop();
+    </script>
+</body>
+</html>

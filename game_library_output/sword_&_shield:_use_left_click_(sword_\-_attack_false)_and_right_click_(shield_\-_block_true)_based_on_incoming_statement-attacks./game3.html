@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sword & Shield Truth Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="instructions">Left Click = Sword (Attack False) | Right Click = Shield (Block True)</div>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        let gameActive = true;
+        let gameResult = null;
+        let restartButton = { x: 350, y: 350, width: 100, height: 40 };
+        
+        // Colors
+        const COLORS = {
+            background: '#4a6d8c',
+            ground: '#5d3b18',
+            player: '#7e7e7e',
+            playerFace: '#ffd78c',
+            sword: '#ff5555',
+            shield: '#55aaff',
+            statement: '#f3e7c9',
+            statementBorder: '#8a7654',
+            correct: '#55ff55',
+            incorrect: '#ff5555',
+            text: '#333333',
+            restartButton: '#5d3b18',
+            restartText: '#ffffff'
+        };
+        
+        // Player
+        const player = {
+            x: 150,
+            y: 400,
+            width: 40,
+            height: 60,
+            usingSword: false,
+            swordAngle: 0,
+            usingShield: false,
+            shieldFrame: 0
+        };
+        
+        // Statement
+        const statement = {
+            text: "The Great Wall of China is visible from space.",
+            isTrue: false, // The correct answer is False
+            x: 850,
+            y: 380,
+            width: 300,
+            height: 80,
+            speed: 2,
+            hit: false
+        };
+        
+        // Sound effects
+        function playSound(type) {
+            let oscillator = new AudioContext().createOscillator();
+            let gain = new AudioContext().createGain();
+            oscillator.connect(gain);
+            gain.connect(new AudioContext().destination);
+            
+            if (type === 'sword') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(220, new AudioContext().currentTime);
+                oscillator.frequency.linearRampToValueAtTime(110, new AudioContext().currentTime + 0.1);
+                gain.gain.setValueAtTime(0.3, new AudioContext().currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, new AudioContext().currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(new AudioContext().currentTime + 0.2);
+            } else if (type === 'shield') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(440, new AudioContext().currentTime);
+                oscillator.frequency.linearRampToValueAtTime(330, new AudioContext().currentTime + 0.2);
+                gain.gain.setValueAtTime(0.2, new AudioContext().currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, new AudioContext().currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(new AudioContext().currentTime + 0.3);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, new AudioContext().currentTime);
+                oscillator.frequency.setValueAtTime(440, new AudioContext().currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(550, new AudioContext().currentTime + 0.2);
+                gain.gain.setValueAtTime(0.2, new AudioContext().currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, new AudioContext().currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(new AudioContext().currentTime + 0.3);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, new AudioContext().currentTime);
+                oscillator.frequency.setValueAtTime(110, new AudioContext().currentTime + 0.1);
+                gain.gain.setValueAtTime(0.3, new AudioContext().currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, new AudioContext().currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(new AudioContext().currentTime + 0.2);
+            }
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', function(event) {
+            if (!gameActive && gameResult !== null) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = event.clientX - rect.left;
+                const mouseY = event.clientY - rect.top;
+                
+                // Check if restart button was clicked
+                if (mouseX >= restartButton.x && mouseX <= restartButton.x + restartButton.width &&
+                    mouseY >= restartButton.y && mouseY <= restartButton.y + restartButton.height) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            // Check if player is close enough to interact with statement
+            const distance = Math.abs(statement.x - player.x);
+            
+            if (distance < 200) {
+                if (event.button === 0) { // Left click - Sword
+                    player.usingSword = true;
+                    player.swordAngle = 0;
+                    playSound('sword');
+                    
+                    // Check if answer is correct (statement is false, player attacks)
+                    if (!statement.isTrue) {
+                        gameResult = 'correct';
+                        gameActive = false;
+                        statement.hit = true;
+                        playSound('correct');
+                    } else {
+                        gameResult = 'incorrect';
+                        gameActive = false;
+                        playSound('incorrect');
+                    }
+                } else if (event.button === 2) { // Right click - Shield
+                    player.usingShield = true;
+                    player.shieldFrame = 0;
+                    playSound('shield');
+                    
+                    // Check if answer is correct (statement is true, player blocks)
+                    if (statement.isTrue) {
+                        gameResult = 'correct';
+                        gameActive = false;
+                        statement.hit = true;
+                        playSound('correct');
+                    } else {
+                        gameResult = 'incorrect';
+                        gameActive = false;
+                        playSound('incorrect');
+                    }
+                }
+            }
+        });
+        
+        canvas.addEventListener('contextmenu', function(event) {
+            event.preventDefault();
+        });
+        
+        function resetGame() {
+            gameActive = true;
+            gameResult = null;
+            statement.x = 850;
+            statement.hit = false;
+            player.usingSword = false;
+            player.usingShield = false;
+        }
+        
+        // Draw functions
+        function drawBackground() {
+            // Sky
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Ground
+            ctx.fillStyle = COLORS.ground;
+            ctx.fillRect(0, 450, canvas.width, 150);
+            
+            // Background mountains/castle (pixel style)
+            ctx.fillStyle = '#355070';
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * 200, 450);
+                ctx.lineTo(i * 200 + 100, 300 + Math.sin(i) * 50);
+                ctx.lineTo(i * 200 + 200, 450);
+                ctx.fill();
+            }
+            
+            // Castle
+            ctx.fillStyle = '#6d4c41';
+            ctx.fillRect(600, 350, 120, 100);
+            ctx.fillStyle = '#4d3319';
+            ctx.fillRect(610, 330, 20, 20);
+            ctx.fillRect(650, 330, 20, 20);
+            ctx.fillRect(690, 330, 20, 20);
+        }
+        
+        function drawPlayer() {
+            // Body
+            ctx.fillStyle = COLORS.player;
+            ctx.fillRect(player.x - player.width/2, player.y - player.height/2, player.width, player.height);
+            
+            // Face
+            ctx.fillStyle = COLORS.playerFace;
+            ctx.fillRect(player.x - player.width/4, player.y - player.height/3, player.width/2, player.height/3);
+            
+            // Eyes
+            ctx.fillStyle = 'black';
+            ctx.fillRect(player.x - player.width/5, player.y - player.height/4, 4, 4);
+            ctx.fillRect(player.x + player.width/10, player.y - player.height/4, 4, 4);
+            
+            // Sword
+            if (player.usingSword) {
+                ctx.save();
+                ctx.translate(player.x + player.width/2, player.y);
+                ctx.rotate(player.swordAngle);
+                ctx.fillStyle = '#8c5e2a';  // Handle
+                ctx.fillRect(0, -5, 15, 10);
+                ctx.fillStyle = COLORS.sword;  // Blade
+                ctx.fillRect(15, -10, 30, 20);
+                ctx.restore();
+                
+                player.swordAngle += 0.2;
+                if (player.swordAngle >= Math.PI/2) {
+                    player.usingSword = false;
+                }
+            } else {
+                ctx.fillStyle = '#8c5e2a';  // Handle
+                ctx.fillRect(player.x + player.width/2, player.y - 5, 10, 10);
+                ctx.fillStyle = COLORS.sword;  // Blade
+                ctx.fillRect(player.x + player.width/2 + 10, player.y - 5, 20, 10);
+            }
+            
+            // Shield
+            if (player.usingShield) {
+                ctx.fillStyle = COLORS.shield;
+                
+                // Make shield "pop" out with animation
+                let shieldSize = 15 + (player.shieldFrame * 2);
+                if (player.shieldFrame < 5) player.shieldFrame++;
+                
+                ctx.beginPath();
+                ctx.moveTo(player.x - player.width/2 - shieldSize, player.y - shieldSize);
+                ctx.lineTo(player.x - player.width/2 - shieldSize, player.y + shieldSize);
+                ctx.lineTo(player.x - player.width/2, player.y + shieldSize/2);
+                ctx.lineTo(player.x - player.width/2, player.y - shieldSize/2);
+                ctx.closePath();
+                ctx.fill();
+            } else {
+                ctx.fillStyle = COLORS.shield;
+                ctx.beginPath();
+                ctx.moveTo(player.x - player.width/2 - 15, player.y - 15);
+                ctx.lineTo(player.x - player.width/2 - 15, player.y + 15);
+                ctx.lineTo(player.x - player.width/2, player.y + 7);
+                ctx.lineTo(player.x - player.width/2, player.y - 7);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+        
+        function drawStatement() {
+            // Statement scroll
+            ctx.fillStyle = COLORS.statement;
+            ctx.strokeStyle = COLORS.statementBorder;
+            ctx.lineWidth = 3;
+            ctx.fillRect(statement.x - statement.width/2, statement.y - statement.height/2, statement.width, statement.height);
+            ctx.strokeRect(statement.x - statement.width/2, statement.y - statement.height/2, statement.width, statement.height);
+            
+            // Text
+            ctx.fillStyle = COLORS.text;
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Wrap text to fit within statement width
+            const maxWidth = statement.width - 20;
+            const words = statement.text.split(' ');
+            let line = '';
+            let y = statement.y - 10;
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                const metrics = ctx.measureText(testLine);
+                const testWidth = metrics.width;
+                
+                if (testWidth > maxWidth && i > 0) {
+                    ctx.fillText(line, statement.x, y);
+                    line = words[i] + ' ';
+                    y += 25;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, statement.x, y);
+            
+            // Hit effect
+            if (statement.hit) {
+                if (gameResult === 'correct') {
+                    ctx.strokeStyle = COLORS.correct;
+                } else {
+                    ctx.strokeStyle = COLORS.incorrect;
+                }
+                ctx.lineWidth = 6;
+                ctx.strokeRect(statement.x - statement.width/2, statement.y - statement.height/2, statement.width, statement.height);
+            }
+        }
+        
+        function drawResult() {
+            if (gameResult === 'correct') {
+                ctx.fillStyle = COLORS.correct;
+                ctx.font = '32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('CORRECT!', canvas.width/2, 200);
+            } else if (gameResult === 'incorrect') {
+                ctx.fillStyle = COLORS.incorrect;
+                ctx.font = '32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('WRONG!', canvas.width/2, 200);
+            }
+            
+            // Draw restart button
+            ctx.fillStyle = COLORS.restartButton;
+            ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+            ctx.fillStyle = COLORS.restartText;
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('RESTART', restartButton.x + restartButton.width/2, restartButton.y + restartButton.height/2);
+        }
+        
+        // Game loop
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw game elements
+            drawBackground();
+            drawPlayer();
+            drawStatement();
+            
+            // Update game state
+            if (gameActive) {
+                statement.x -= statement.speed;
+                
+                // End game if statement passes player
+                if (statement.x < player.x - 80) {
+                    gameResult = 'incorrect';
+                    gameActive = false;
+                    playSound('incorrect');
+                }
+            } else if (gameResult !== null) {
+                drawResult();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

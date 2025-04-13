@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Paint Bucket Quiz Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            border: 4px solid #444;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive sizing
+        function resizeCanvas() {
+            if (window.innerWidth < 500) { // Mobile
+                canvas.width = 360;
+                canvas.height = 640;
+            } else { // Web
+                canvas.width = 800;
+                canvas.height = 600;
+            }
+            setup();
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Game variables
+        let gameState = 'playing'; // playing, correct, incorrect
+        let buckets = [];
+        let eiffelTower = [];
+        let restartButton = {};
+        let fillLevel = 0;
+        let selectedBucket = null;
+        let question = "What is the capital of France?";
+        let options = ["Paris", "London", "Berlin", "Rome"];
+        let correctAnswer = "Paris";
+        let colors = ['#FF3333', '#3366FF', '#FFCC00', '#33CC33'];
+        let pixelSize = 4;
+        let fillSpeed = 0;
+        let fillArray = [];
+        let audioCtx;
+        
+        function setup() {
+            gameState = 'playing';
+            fillLevel = 0;
+            selectedBucket = null;
+            fillSpeed = 0;
+            fillArray = [];
+            
+            // Create buckets
+            const bucketWidth = canvas.width / 5;
+            buckets = options.map((option, i) => {
+                return {
+                    x: (i + 1) * bucketWidth,
+                    y: canvas.height - 100,
+                    width: 60,
+                    height: 80,
+                    color: colors[i],
+                    option: option,
+                    selected: false,
+                    slosh: 0,
+                    sloshDir: 1
+                };
+            });
+            
+            // Create Eiffel Tower outline pixels
+            createEiffelTower();
+            
+            // Create restart button
+            restartButton = {
+                x: canvas.width / 2 - 60,
+                y: canvas.height / 2 + 50,
+                width: 120,
+                height: 40,
+                visible: false
+            };
+        }
+        
+        function createEiffelTower() {
+            eiffelTower = [];
+            const towerHeight = canvas.height - 200;
+            const towerWidth = canvas.width / 2;
+            const baseX = canvas.width / 2;
+            const baseY = 150;
+            
+            // Create pixel positions for the Eiffel Tower
+            for (let y = 0; y < towerHeight; y += pixelSize) {
+                const rowWidth = Math.max(20, towerWidth * (1 - y / towerHeight * 0.9));
+                for (let x = -rowWidth/2; x < rowWidth/2; x += pixelSize) {
+                    // Add some randomness to make it look pixelated
+                    if (Math.random() > 0.7) continue;
+                    
+                    // Create some structural elements
+                    const distFromCenter = Math.abs(x) / (rowWidth/2);
+                    if (y % 40 < 20 && distFromCenter > 0.3 && distFromCenter < 0.9) continue;
+                    
+                    eiffelTower.push({
+                        x: baseX + x,
+                        y: baseY + y,
+                        filled: false,
+                        size: pixelSize
+                    });
+                }
+            }
+        }
+        
+        function playSound(type) {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'select') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(550, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.4);
+            } else if (type === 'incorrect') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(150, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            }
+        }
+        
+        function update() {
+            // Update bucket slosh animation
+            buckets.forEach(bucket => {
+                if (bucket.selected) {
+                    bucket.slosh += 0.2 * bucket.sloshDir;
+                    if (Math.abs(bucket.slosh) > 5) {
+                        bucket.sloshDir *= -1;
+                    }
+                } else {
+                    bucket.slosh = 0;
+                }
+            });
+            
+            // Update fill animation
+            if (selectedBucket) {
+                fillSpeed += 0.05;
+                if (fillArray.length === 0) {
+                    // Initialize fill array with shuffled tower pixels
+                    fillArray = [...eiffelTower];
+                    // Shuffle array so fill looks random
+                    for (let i = fillArray.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [fillArray[i], fillArray[j]] = [fillArray[j], fillArray[i]];
+                    }
+                }
+                
+                // Fill pixels
+                const pixelsToFill = Math.floor(fillSpeed);
+                for (let i = 0; i < pixelsToFill && fillArray.length > 0; i++) {
+                    const pixel = fillArray.pop();
+                    const pixelIndex = eiffelTower.findIndex(p => p.x === pixel.x && p.y === pixel.y);
+                    if (pixelIndex !== -1) {
+                        eiffelTower[pixelIndex].filled = true;
+                    }
+                }
+                
+                // Check if filling is complete
+                if (fillArray.length === 0 && gameState === 'playing') {
+                    if (selectedBucket.option === correctAnswer) {
+                        gameState = 'correct';
+                        playSound('correct');
+                    } else {
+                        gameState = 'incorrect';
+                        playSound('incorrect');
+                    }
+                    restartButton.visible = true;
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#111122';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(question, canvas.width / 2, 50);
+            
+            // Draw Eiffel Tower outline
+            eiffelTower.forEach(pixel => {
+                if (pixel.filled) {
+                    // Color from selected bucket
+                    ctx.fillStyle = selectedBucket ? selectedBucket.color : '#888888';
+                } else {
+                    // Outline color
+                    ctx.fillStyle = '#888888';
+                    if (gameState === 'playing') {
+                        // Only show outline in playing state
+                        ctx.globalAlpha = 0.3;
+                    }
+                }
+                ctx.fillRect(pixel.x, pixel.y, pixel.size, pixel.size);
+                ctx.globalAlpha = 1.0;
+            });
+            
+            // Draw paint buckets
+            buckets.forEach(bucket => {
+                // Draw bucket
+                ctx.fillStyle = bucket.color;
+                ctx.fillRect(bucket.x - bucket.width/2, bucket.y, bucket.width, bucket.height);
+                
+                // Draw bucket rim
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(bucket.x - bucket.width/2 - 5, bucket.y, bucket.width + 10, 10);
+                
+                // Draw slosh effect
+                if (bucket.selected) {
+                    ctx.fillStyle = bucket.color;
+                    ctx.beginPath();
+                    ctx.moveTo(bucket.x - bucket.width/2, bucket.y);
+                    ctx.lineTo(bucket.x - bucket.width/2, bucket.y - 15 - bucket.slosh);
+                    ctx.lineTo(bucket.x - bucket.width/4, bucket.y - 10 - bucket.slosh);
+                    ctx.lineTo(bucket.x, bucket.y - 15 - bucket.slosh);
+                    ctx.lineTo(bucket.x + bucket.width/4, bucket.y - 10 - bucket.slosh);
+                    ctx.lineTo(bucket.x + bucket.width/2, bucket.y - 15 - bucket.slosh);
+                    ctx.lineTo(bucket.x + bucket.width/2, bucket.y);
+                    ctx.fill();
+                }
+                
+                // Draw option label
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(bucket.option, bucket.x, bucket.y + bucket.height + 25);
+            });
+            
+            // Draw game state message
+            if (gameState === 'correct') {
+                ctx.fillStyle = '#33CC33';
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Correct!', canvas.width / 2, canvas.height / 2);
+            } else if (gameState === 'incorrect') {
+                ctx.fillStyle = '#FF3333';
+                ctx.font = '30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Incorrect!', canvas.width / 2, canvas.height / 2);
+                
+                // Show correct answer
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '24px sans-serif';
+                ctx.fillText(`The answer is ${correctAnswer}`, canvas.width / 2, canvas.height / 2 + 30);
+            }
+            
+            // Draw restart button if visible
+            if (restartButton.visible) {
+                ctx.fillStyle = '#555555';
+                ctx.fillRect(restartButton.x, restartButton.y, restartButton.width, restartButton.height);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Restart', restartButton.x + restartButton.width/2, restartButton.y + restartButton.height/2 + 7);
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (event.clientX - rect.left) * scaleX;
+            const y = (event.clientY - rect.top) * scaleY;
+            
+            if (gameState === 'playing') {
+                // Check if a bucket was clicked
+                buckets.forEach(bucket => {
+                    if (x > bucket.x - bucket.width/2 && x < bucket.x + bucket.width/2 &&
+                        y > bucket.y && y < bucket.y + bucket.height) {
+                        if (!selectedBucket) {
+                            bucket.selected = true;
+                            selectedBucket = bucket;
+                            playSound('select');
+                        }
+                    }
+                });
+            } else {
+                // Check if restart button was clicked
+                if (restartButton.visible &&
+                    x > restartButton.x && x < restartButton.x + restartButton.width &&
+                    y > restartButton.y && y < restartButton.y + restartButton.height) {
+                    setup();
+                }
+            }
+        });
+        
+        // Start the game
+        setup();
+        gameLoop();
+    </script>
+</body>
+</html>

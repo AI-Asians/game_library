@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>True or False: Great Wall of China</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #444;
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - 8-bit palette
+        const colors = {
+            background: '#0f380f',
+            trueGate: '#8bac0f',
+            trueGateOpen: '#9bbc0f',
+            falseGate: '#ac3232',
+            falseGateOpen: '#e83b3b',
+            itemBorder: '#306230',
+            itemFill: '#8bac0f',
+            text: '#0f380f',
+            uiText: '#9bbc0f',
+            particles: ['#9bbc0f', '#8bac0f', '#306230', '#0f380f']
+        };
+        
+        // Audio context for retro sounds
+        let audioCtx;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.log('Web Audio API not supported.');
+        }
+        
+        // Play retro sound
+        function playSound(type) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'openGate':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(440, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+                case 'wrong':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                    break;
+            }
+        }
+        
+        // Game state
+        let gameState = {
+            item: {
+                text: "The Great Wall of China is visible from space.",
+                isTrue: false,
+                x: canvas.width / 2,
+                y: -80,
+                width: canvas.width * 0.7,
+                height: 80,
+                speed: canvas.height / 300
+            },
+            trueGate: {
+                x: canvas.width / 4,
+                y: canvas.height - 100,
+                width: canvas.width / 3,
+                height: 80,
+                isOpen: false
+            },
+            falseGate: {
+                x: canvas.width * 3 / 4,
+                y: canvas.height - 100,
+                width: canvas.width / 3,
+                height: 80,
+                isOpen: false
+            },
+            gameOver: false,
+            win: false,
+            particles: [],
+            restartButton: {
+                x: canvas.width / 2,
+                y: canvas.height / 2 + 80,
+                width: 120,
+                height: 40,
+                visible: false
+            }
+        };
+        
+        // Create particle effect
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                gameState.particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 6 + 2,
+                    speedX: (Math.random() - 0.5) * 5,
+                    speedY: (Math.random() - 0.5) * 5,
+                    color: colors.particles[Math.floor(Math.random() * colors.particles.length)],
+                    life: 1
+                });
+            }
+        }
+        
+        // Handle key presses
+        document.addEventListener('keydown', (event) => {
+            if (gameState.gameOver) {
+                if (event.key === 'r' || event.key === 'R') {
+                    resetGame();
+                }
+                return;
+            }
+            
+            if (event.key === 't' || event.key === 'T') {
+                gameState.trueGate.isOpen = true;
+                playSound('openGate');
+            }
+            if (event.key === 'f' || event.key === 'F') {
+                gameState.falseGate.isOpen = true;
+                playSound('openGate');
+            }
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            if (event.key === 't' || event.key === 'T') {
+                gameState.trueGate.isOpen = false;
+            }
+            if (event.key === 'f' || event.key === 'F') {
+                gameState.falseGate.isOpen = false;
+            }
+        });
+        
+        // Handle touch for mobile
+        canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            const touch = event.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const x = touch.clientX - rect.left;
+            
+            if (gameState.gameOver && gameState.restartButton.visible) {
+                if (x > gameState.restartButton.x - gameState.restartButton.width/2 && 
+                    x < gameState.restartButton.x + gameState.restartButton.width/2) {
+                    resetGame();
+                }
+                return;
+            }
+            
+            if (x < canvas.width / 2) {
+                gameState.trueGate.isOpen = true;
+                playSound('openGate');
+            } else {
+                gameState.falseGate.isOpen = true;
+                playSound('openGate');
+            }
+        });
+        
+        canvas.addEventListener('touchend', () => {
+            gameState.trueGate.isOpen = false;
+            gameState.falseGate.isOpen = false;
+        });
+        
+        // For restart button click
+        canvas.addEventListener('click', (event) => {
+            if (gameState.gameOver && gameState.restartButton.visible) {
+                const rect = canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                
+                if (x > gameState.restartButton.x - gameState.restartButton.width/2 && 
+                    x < gameState.restartButton.x + gameState.restartButton.width/2 &&
+                    y > gameState.restartButton.y - gameState.restartButton.height/2 &&
+                    y < gameState.restartButton.y + gameState.restartButton.height/2) {
+                    resetGame();
+                }
+            }
+        });
+        
+        // Reset game
+        function resetGame() {
+            gameState = {
+                item: {
+                    text: "The Great Wall of China is visible from space.",
+                    isTrue: false, // This fact is actually false
+                    x: canvas.width / 2,
+                    y: -80,
+                    width: canvas.width * 0.7,
+                    height: 80,
+                    speed: canvas.height / 300
+                },
+                trueGate: {
+                    x: canvas.width / 4,
+                    y: canvas.height - 100,
+                    width: canvas.width / 3,
+                    height: 80,
+                    isOpen: false
+                },
+                falseGate: {
+                    x: canvas.width * 3 / 4,
+                    y: canvas.height - 100,
+                    width: canvas.width / 3,
+                    height: 80,
+                    isOpen: false
+                },
+                gameOver: false,
+                win: false,
+                particles: [],
+                restartButton: {
+                    x: canvas.width / 2,
+                    y: canvas.height / 2 + 80,
+                    width: 120,
+                    height: 40,
+                    visible: false
+                }
+            };
+        }
+        
+        // Check collision
+        function checkCollision() {
+            const item = gameState.item;
+            const trueGate = gameState.trueGate;
+            const falseGate = gameState.falseGate;
+            
+            // Check if item is at gate level
+            if (item.y + item.height >= trueGate.y) {
+                // Check if item is passing through true gate
+                if (item.x - item.width/2 < trueGate.x + trueGate.width/2 && 
+                    item.x + item.width/2 > trueGate.x - trueGate.width/2) {
+                    if (trueGate.isOpen) {
+                        // Correct answer if item is true
+                        if (item.isTrue) {
+                            gameState.win = true;
+                            playSound('correct');
+                            createParticles(item.x, item.y, colors.trueGate);
+                        } else {
+                            gameState.win = false;
+                            playSound('wrong');
+                            createParticles(item.x, item.y, colors.falseGate);
+                        }
+                        gameState.gameOver = true;
+                    } else {
+                        // Item crashed into closed gate
+                        gameState.win = false;
+                        playSound('wrong');
+                        createParticles(item.x, item.y, colors.falseGate);
+                        gameState.gameOver = true;
+                    }
+                }
+                
+                // Check if item is passing through false gate
+                if (item.x - item.width/2 < falseGate.x + falseGate.width/2 && 
+                    item.x + item.width/2 > falseGate.x - falseGate.width/2) {
+                    if (falseGate.isOpen) {
+                        // Correct answer if item is false
+                        if (!item.isTrue) {
+                            gameState.win = true;
+                            playSound('correct');
+                            createParticles(item.x, item.y, colors.trueGate);
+                        } else {
+                            gameState.win = false;
+                            playSound('wrong');
+                            createParticles(item.x, item.y, colors.falseGate);
+                        }
+                        gameState.gameOver = true;
+                    } else {
+                        // Item crashed into closed gate
+                        gameState.win = false;
+                        playSound('wrong');
+                        createParticles(item.x, item.y, colors.falseGate);
+                        gameState.gameOver = true;
+                    }
+                }
+            }
+            
+            // If item reached bottom without passing through any gate
+            if (item.y > canvas.height && !gameState.gameOver) {
+                gameState.gameOver = true;
+                gameState.win = false;
+                playSound('wrong');
+                createParticles(item.x, canvas.height - 50, colors.falseGate);
+            }
+        }
+        
+        // Update game state
+        function update() {
+            if (!gameState.gameOver) {
+                // Move item down
+                gameState.item.y += gameState.item.speed;
+                
+                // Check for collision with gates
+                checkCollision();
+            } else {
+                // Show restart button after game over
+                gameState.restartButton.visible = true;
+            }
+            
+            // Update particles
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const particle = gameState.particles[i];
+                particle.x += particle.speedX;
+                particle.y += particle.speedY;
+                particle.life -= 0.02;
+                
+                if (particle.life <= 0) {
+                    gameState.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Draw functions
+        function drawItem(item) {
+            // Draw speech bubble
+            ctx.fillStyle = colors.itemBorder;
+            ctx.fillRect(item.x - item.width/2, item.y, item.width, item.height);
+            
+            ctx.fillStyle = colors.itemFill;
+            ctx.fillRect(item.x - item.width/2 + 4, item.y + 4, item.width - 8, item.height - 8);
+            
+            // Draw tail of speech bubble
+            ctx.beginPath();
+            ctx.moveTo(item.x - 10, item.y + item.height);
+            ctx.lineTo(item.x, item.y + item.height + 20);
+            ctx.lineTo(item.x + 10, item.y + item.height);
+            ctx.fillStyle = colors.itemFill;
+            ctx.fill();
+            
+            // Draw text
+            ctx.fillStyle = colors.text;
+            ctx.font = `bold ${Math.floor(item.height/4)}px Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Word wrap for text
+            const words = item.text.split(' ');
+            const lineHeight = item.height/4;
+            let line = '';
+            let y = item.y + item.height/3;
+            
+            for (let i = 0; i < words.length; i++) {
+                const testLine = line + words[i] + ' ';
+                if (ctx.measureText(testLine).width > item.width - 20) {
+                    ctx.fillText(line, item.x, y);
+                    line = words[i] + ' ';
+                    y += lineHeight;
+                } else {
+                    line = testLine;
+                }
+            }
+            ctx.fillText(line, item.x, y);
+        }
+        
+        function drawGate(gate, label, color, openColor) {
+            // Draw gate base
+            ctx.fillStyle = gate.isOpen ? openColor : color;
+            ctx.fillRect(gate.x - gate.width/2, gate.y, gate.width, gate.height);
+            
+            // Draw gate details
+            const gateBarWidth = gate.width * 0.1;
+            const gateBarSpacing = gate.width * 0.2;
+            
+            if (!gate.isOpen) {
+                // Draw closed gate bars
+                ctx.fillStyle = '#222';
+                for (let i = 0; i < 4; i++) {
+                    ctx.fillRect(
+                        gate.x - gate.width/2 + gateBarSpacing * (i+1),
+                        gate.y + 10,
+                        gateBarWidth,
+                        gate.height - 20
+                    );
+                }
+            }
+            
+            // Draw gate outline
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(gate.x - gate.width/2, gate.y, gate.width, gate.height);
+            
+            // Draw label
+            ctx.fillStyle = colors.uiText;
+            ctx.font = 'bold 24px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(label, gate.x, gate.y + gate.height/2 + 8);
+            
+            // Draw key indicator
+            ctx.fillStyle = '#222';
+            ctx.fillRect(gate.x - 20, gate.y - 30, 40, 30);
+            
+            ctx.fillStyle = colors.uiText;
+            ctx.font = 'bold 18px Arial, sans-serif';
+            ctx.fillText(label[0], gate.x, gate.y - 10);
+        }
+        
+        function drawParticles() {
+            for (const particle of gameState.particles) {
+                ctx.globalAlpha = particle.life;
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(
+                    particle.x - particle.size/2,
+                    particle.y - particle.size/2,
+                    particle.size,
+                    particle.size
+                );
+            }
+            ctx.globalAlpha = 1;
+        }
+        
+        function drawRestartButton() {
+            if (!gameState.restartButton.visible) return;
+            
+            const btn = gameState.restartButton;
+            
+            // Draw button
+            ctx.fillStyle = '#306230';
+            ctx.fillRect(btn.x - btn.width/2, btn.y - btn.height/2, btn.width, btn.height);
+            
+            ctx.strokeStyle = '#8bac0f';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(btn.x - btn.width/2, btn.y - btn.height/2, btn.width, btn.height);
+            
+            // Draw text
+            ctx.fillStyle = colors.uiText;
+            ctx.font = 'bold 20px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('RESTART', btn.x, btn.y);
+        }
+        
+        function drawGameOver() {
+            if (!gameState.gameOver) return;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = gameState.win ? colors.trueGate : colors.falseGate;
+            ctx.font = 'bold 36px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(gameState.win ? 'CORRECT!' : 'WRONG!', canvas.width/2, canvas.height/2 - 40);
+            
+            // Draw correct answer
+            ctx.fillStyle = colors.uiText;
+            ctx.font = 'bold 24px Arial, sans-serif';
+            ctx.fillText(
+                gameState.item.isTrue ? 'The answer is TRUE' : 'The answer is FALSE',
+                canvas.width/2,
+                canvas.height/2 + 20
+            );
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw gates
+            drawGate(gameState.trueGate, 'TRUE', colors.trueGate, colors.trueGateOpen);
+            drawGate(gameState.falseGate, 'FALSE', colors.falseGate, colors.falseGateOpen);
+            
+            // Draw item
+            drawItem(gameState.item);
+            
+            // Draw particles
+            drawParticles();
+            
+            // Draw game over state
+            drawGameOver();
+            
+            // Draw restart button
+            drawRestartButton();
+            
+            // Draw instructions
+            if (!gameState.gameOver) {
+                ctx.fillStyle = colors.uiText;
+                ctx.font = '16px Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Press T for TRUE or F for FALSE', canvas.width/2, 30);
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>

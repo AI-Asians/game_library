@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Orbit-Tap Planet Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        #restartBtn {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: 3px solid #888;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn">RESTART</button>
+    <script>
+        // Game canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = window.innerWidth <= 800;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Audio context for simple sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Game state
+        let gameOver = false;
+        let stars = [];
+        let planets = [];
+        
+        // Planet options - answers for the question
+        const planetOptions = [
+            { name: "Mars", correct: true, color: "#dd3333", size: 25, speed: 0.0012, distance: canvas.height * 0.25 },
+            { name: "Venus", correct: false, color: "#ffcc99", size: 30, speed: 0.0008, distance: canvas.height * 0.18 },
+            { name: "Jupiter", correct: false, color: "#ffaa66", size: 35, speed: 0.0006, distance: canvas.height * 0.32 },
+            { name: "Mercury", correct: false, color: "#aaaaaa", size: 20, speed: 0.0015, distance: canvas.height * 0.12 }
+        ];
+        
+        // Generate stars
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                twinkle: Math.random() * 0.05 + 0.95
+            });
+        }
+        
+        // Initialize planets
+        function initPlanets() {
+            planets = [];
+            for (let i = 0; i < planetOptions.length; i++) {
+                const option = planetOptions[i];
+                const angle = Math.random() * Math.PI * 2;
+                planets.push({
+                    ...option,
+                    angle,
+                    x: canvas.width / 2 + Math.cos(angle) * option.distance,
+                    y: canvas.height / 2 + Math.sin(angle) * option.distance,
+                    exploding: false,
+                    explosionFrame: 0
+                });
+            }
+        }
+        
+        // Play sound
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            if (type === 'correct') {
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'wrong') {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                oscillator.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'click') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            }
+        }
+        
+        // Draw a pixelated circle
+        function drawPixelCircle(x, y, radius, color) {
+            ctx.fillStyle = color;
+            for (let i = -radius; i <= radius; i++) {
+                for (let j = -radius; j <= radius; j++) {
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillRect(Math.floor(x+i), Math.floor(y+j), 1, 1);
+                    }
+                }
+            }
+        }
+        
+        // Draw explosion
+        function drawExplosion(x, y, frame, size) {
+            const particles = 8;
+            const maxDistance = size * (frame / 10);
+            
+            ctx.fillStyle = '#ff9933';
+            for (let i = 0; i < particles; i++) {
+                const angle = (i / particles) * Math.PI * 2;
+                const distance = maxDistance * (0.5 + Math.random() * 0.5);
+                const particleX = x + Math.cos(angle) * distance;
+                const particleY = y + Math.sin(angle) * distance;
+                const particleSize = Math.max(1, Math.floor(size / 3 * (1 - frame / 15)));
+                drawPixelCircle(particleX, particleY, particleSize, '#ff9933');
+            }
+        }
+        
+        // Draw orbit path
+        function drawOrbitPath(distance) {
+            ctx.strokeStyle = '#555555';
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(canvas.width / 2, canvas.height / 2, distance, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+        
+        // Main draw function
+        function draw() {
+            // Clear canvas with black background
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw stars
+            for (let i = 0; i < stars.length; i++) {
+                const star = stars[i];
+                star.twinkle = Math.min(1, Math.max(0.3, star.twinkle + (Math.random() - 0.5) * 0.05));
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.twinkle})`;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            }
+            
+            // Draw sun (central point)
+            const sunPulse = 1 + Math.sin(Date.now() * 0.003) * 0.2;
+            drawPixelCircle(canvas.width / 2, canvas.height / 2, 15 * sunPulse, '#ffff00');
+            
+            // Draw orbit paths
+            for (let i = 0; i < planetOptions.length; i++) {
+                drawOrbitPath(planetOptions[i].distance);
+            }
+            
+            // Update and draw planets
+            for (let i = 0; i < planets.length; i++) {
+                const planet = planets[i];
+                
+                if (planet.exploding) {
+                    planet.explosionFrame++;
+                    drawExplosion(planet.x, planet.y, planet.explosionFrame, planet.size);
+                    if (planet.explosionFrame > 15) {
+                        planets.splice(i, 1);
+                        i--;
+                    }
+                    continue;
+                }
+                
+                // Update planet position
+                if (!gameOver) {
+                    planet.angle += planet.speed;
+                    planet.x = canvas.width / 2 + Math.cos(planet.angle) * planet.distance;
+                    planet.y = canvas.height / 2 + Math.sin(planet.angle) * planet.distance;
+                }
+                
+                // Draw planet
+                drawPixelCircle(planet.x, planet.y, planet.size, planet.color);
+                
+                // Draw planet name
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.font = '14px sans-serif';
+                ctx.fillText(planet.name, planet.x, planet.y + planet.size + 15);
+            }
+            
+            // Draw question
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 18px sans-serif';
+            
+            // Split question for better readability
+            const questionText = "Which planet is known as the Red Planet?";
+            ctx.fillText(questionText, canvas.width / 2, 30);
+            
+            if (gameOver) {
+                restartBtn.style.display = 'block';
+            }
+            
+            requestAnimationFrame(draw);
+        }
+        
+        // Handle clicks
+        function handleClick(e) {
+            if (gameOver) return;
+            
+            // Get click position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            playSound('click');
+            
+            // Check if a planet was clicked
+            for (let i = 0; i < planets.length; i++) {
+                const planet = planets[i];
+                if (!planet.exploding) {
+                    const distance = Math.sqrt((planet.x - clickX)**2 + (planet.y - clickY)**2);
+                    if (distance <= planet.size) {
+                        if (planet.correct) {
+                            // Correct answer
+                            gameOver = true;
+                            playSound('correct');
+                            drawPixelCircle(planet.x, planet.y, planet.size + 10, '#ffffff');
+                        } else {
+                            // Wrong answer
+                            playSound('wrong');
+                            planet.exploding = true;
+                            planet.explosionFrame = 0;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Handle restart
+        function restart() {
+            gameOver = false;
+            initPlanets();
+            restartBtn.style.display = 'none';
+        }
+        
+        // Initialize game
+        function init() {
+            canvas.addEventListener('click', handleClick);
+            restartBtn.addEventListener('click', restart);
+            initPlanets();
+            draw();
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>

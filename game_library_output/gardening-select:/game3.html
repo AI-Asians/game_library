@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capital Garden Quiz</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+        }
+        canvas {
+            border: 4px solid #222;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Color palette (16 colors for 8-bit feel)
+        const colors = {
+            black: '#000000',
+            white: '#FFFFFF',
+            lightGray: '#AAAAAA',
+            darkGray: '#555555',
+            brown: '#8B4513',
+            lightBrown: '#CD853F',
+            darkBrown: '#5D4037',
+            darkGreen: '#2E7D32',
+            green: '#4CAF50',
+            lightGreen: '#8BC34A',
+            brightGreen: '#A5D6A7',
+            skyBlue: '#81D4FA',
+            red: '#F44336',
+            yellow: '#FFEB3B',
+            pink: '#F48FB1',
+            purple: '#9C27B0'
+        };
+        
+        // Game state
+        let gameOver = false;
+        let correctAnswerSelected = false;
+        let selectedPlant = -1;
+        let animationFrame = 0;
+        let wateringAnimation = -1;
+        let wateringX = 0;
+        let wateringY = 0;
+        
+        // Plant data
+        const plants = [
+            { x: 150, y: 350, width: 100, height: 150, text: "Paris", correct: true, growState: 0 },
+            { x: 350, y: 350, width: 100, height: 150, text: "London", correct: false, growState: 0 },
+            { x: 550, y: 350, width: 100, height: 150, text: "Berlin", correct: false, growState: 0 }
+        ];
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSelectSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playCorrectSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            
+            setTimeout(() => oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1), 100); // E5
+            setTimeout(() => oscillator.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2), 200); // G5
+            
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.5);
+        }
+        
+        function playWrongSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            setTimeout(() => oscillator.frequency.setValueAtTime(196, audioCtx.currentTime + 0.2), 200);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.4);
+        }
+        
+        // Draw functions
+        function drawGardenBackground() {
+            // Sky
+            ctx.fillStyle = colors.skyBlue;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Ground
+            ctx.fillStyle = colors.lightBrown;
+            ctx.fillRect(0, 400, canvas.width, 200);
+            
+            // Garden grid pattern
+            ctx.fillStyle = colors.darkBrown;
+            for (let x = 0; x < canvas.width; x += 20) {
+                for (let y = 400; y < canvas.height; y += 20) {
+                    if ((x + y) % 40 === 0) {
+                        ctx.fillRect(x, y, 10, 10);
+                    }
+                }
+            }
+        }
+        
+        function drawPlantPot(x, y, width, height) {
+            // Pot
+            ctx.fillStyle = colors.brown;
+            
+            // Base - make it chunky and pixelated
+            for (let i = 0; i < width; i += 8) {
+                ctx.fillRect(x + i, y + height - 40, 8, 40);
+            }
+            
+            // Top rim
+            ctx.fillStyle = colors.lightBrown;
+            for (let i = 0; i < width + 20; i += 8) {
+                ctx.fillRect(x - 10 + i, y + height - 50, 8, 10);
+            }
+        }
+        
+        function drawPlant(plant, index) {
+            drawPlantPot(plant.x, plant.y, plant.width, plant.height);
+            
+            // Plant stem and leaves
+            ctx.fillStyle = colors.darkGreen;
+            
+            let stemHeight = 40;
+            if (plant.growState > 0) {
+                stemHeight = plant.growState * 10 + 40;
+            }
+            
+            // Basic stem
+            for (let i = 0; i < 16; i += 8) {
+                ctx.fillRect(plant.x + plant.width/2 - 4 + i, plant.y + plant.height - 50 - stemHeight, 4, stemHeight);
+            }
+            
+            // Leaves
+            if (plant.growState > 2) {
+                ctx.fillStyle = colors.green;
+                
+                // Left leaf
+                ctx.fillRect(plant.x + plant.width/2 - 20, plant.y + plant.height - 70 - plant.growState * 5, 16, 8);
+                ctx.fillRect(plant.x + plant.width/2 - 28, plant.y + plant.height - 70 - plant.growState * 5, 8, 16);
+                
+                // Right leaf
+                ctx.fillRect(plant.x + plant.width/2 + 12, plant.y + plant.height - 90 - plant.growState * 5, 16, 8);
+                ctx.fillRect(plant.x + plant.width/2 + 20, plant.y + plant.height - 90 - plant.growState * 5, 8, 16);
+            }
+            
+            // Flower or wither based on selection and correctness
+            if (selectedPlant === index) {
+                if (plant.correct) {
+                    // Draw blooming flower
+                    ctx.fillStyle = colors.yellow;
+                    let flowerSize = Math.min(plant.growState * 5, 30);
+                    
+                    // Flower center
+                    for (let x = 0; x < flowerSize; x += 4) {
+                        for (let y = 0; y < flowerSize; y += 4) {
+                            const distSq = Math.pow(x - flowerSize/2, 2) + Math.pow(y - flowerSize/2, 2);
+                            if (distSq <= Math.pow(flowerSize/2, 2)) {
+                                ctx.fillRect(
+                                    plant.x + plant.width/2 - flowerSize/2 + x,
+                                    plant.y + plant.height - 110 - plant.growState * 5 + y, 
+                                    4, 4
+                                );
+                            }
+                        }
+                    }
+                    
+                    // Petals
+                    ctx.fillStyle = colors.pink;
+                    const petalSize = flowerSize * 0.8;
+                    
+                    // Draw 8-bit style petals in cardinal directions
+                    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI/4) {
+                        const offsetX = Math.cos(angle) * flowerSize;
+                        const offsetY = Math.sin(angle) * flowerSize;
+                        
+                        for (let px = 0; px < petalSize; px += 4) {
+                            for (let py = 0; py < petalSize; py += 4) {
+                                const distSq = Math.pow(px - petalSize/2, 2) + Math.pow(py - petalSize/2, 2);
+                                if (distSq <= Math.pow(petalSize/2, 2)) {
+                                    ctx.fillRect(
+                                        plant.x + plant.width/2 - petalSize/2 + px + offsetX,
+                                        plant.y + plant.height - 110 - plant.growState * 5 + py + offsetY, 
+                                        4, 4
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    
+                } else {
+                    // Withering plant
+                    ctx.fillStyle = colors.darkGray;
+                    ctx.fillRect(plant.x + plant.width/2 - 20, plant.y + plant.height - 80, 40, 8);
+                    ctx.fillRect(plant.x + plant.width/2 - 16, plant.y + plant.height - 88, 32, 8);
+                    ctx.fillRect(plant.x + plant.width/2 - 12, plant.y + plant.height - 96, 24, 8);
+                }
+            }
+            
+            // Plant label
+            ctx.fillStyle = colors.white;
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(plant.text, plant.x + plant.width/2, plant.y + plant.height - 10);
+        }
+        
+        function drawWateringCan(x, y) {
+            ctx.fillStyle = colors.darkGray;
+            
+            // Handle
+            ctx.fillRect(x, y, 24, 8);
+            ctx.fillRect(x + 24, y - 8, 8, 16);
+            
+            // Can body
+            ctx.fillRect(x + 32, y, 32, 24);
+            
+            // Spout
+            ctx.fillRect(x + 32, y + 8, 8, 24);
+            ctx.fillRect(x + 24, y + 24, 8, 8);
+            ctx.fillRect(x + 16, y + 24, 8, 16);
+            
+            // Water drops
+            if (wateringAnimation > -1) {
+                ctx.fillStyle = colors.skyBlue;
+                for (let i = 0; i < 3; i++) {
+                    const offsetY = i * 12 + wateringAnimation * 4;
+                    if (offsetY < 60) {  // Max distance water drops fall
+                        ctx.fillRect(x + 16, y + 40 + offsetY, 4, 8);
+                    }
+                }
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = colors.black;
+            ctx.fillRect(150, 80, 500, 60);
+            ctx.strokeStyle = colors.white;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(150, 80, 500, 60);
+            
+            ctx.fillStyle = colors.white;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("What is the capital of France?", canvas.width/2, 120);
+        }
+        
+        function drawRestartButton() {
+            ctx.fillStyle = colors.darkGray;
+            ctx.fillRect(350, 500, 100, 40);
+            
+            ctx.strokeStyle = colors.white;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(350, 500, 100, 40);
+            
+            ctx.fillStyle = colors.white;
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Restart", 400, 525);
+        }
+        
+        // Main game functions
+        function update() {
+            animationFrame++;
+            
+            if (selectedPlant >= 0 && plants[selectedPlant].correct) {
+                plants[selectedPlant].growState = Math.min(plants[selectedPlant].growState + 0.5, 10);
+            }
+            
+            if (wateringAnimation >= 0) {
+                wateringAnimation = (wateringAnimation + 1) % 15;
+            }
+        }
+        
+        function draw() {
+            drawGardenBackground();
+            drawQuestion();
+            
+            // Draw plants
+            for (let i = 0; i < plants.length; i++) {
+                drawPlant(plants[i], i);
+            }
+            
+            // Draw watering can
+            if (wateringAnimation >= 0) {
+                drawWateringCan(wateringX, wateringY);
+            }
+            
+            if (gameOver) {
+                drawRestartButton();
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Event handlers
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Scale for responsive canvas
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const scaledX = clickX * scaleX;
+            const scaledY = clickY * scaleY;
+            
+            if (gameOver) {
+                // Check if restart button was clicked
+                if (scaledX >= 350 && scaledX <= 450 && scaledY >= 500 && scaledY <= 540) {
+                    resetGame();
+                    return;
+                }
+            } else {
+                // Check if any plant was clicked
+                for (let i = 0; i < plants.length; i++) {
+                    const plant = plants[i];
+                    if (
+                        scaledX >= plant.x && 
+                        scaledX <= plant.x + plant.width &&
+                        scaledY >= plant.y && 
+                        scaledY <= plant.y + plant.height
+                    ) {
+                        selectedPlant = i;
+                        wateringAnimation = 0;
+                        wateringX = plant.x - 20;
+                        wateringY = plant.y - 40;
+                        
+                        playSelectSound();
+                        
+                        if (plant.correct) {
+                            playCorrectSound();
+                            correctAnswerSelected = true;
+                        } else {
+                            playWrongSound();
+                        }
+                        
+                        gameOver = true;
+                        break;
+                    }
+                }
+            }
+        });
+        
+        function resetGame() {
+            gameOver = false;
+            correctAnswerSelected = false;
+            selectedPlant = -1;
+            wateringAnimation = -1;
+            
+            // Reset plant growth states
+            plants.forEach(plant => plant.growState = 0);
+        }
+        
+        // Start the game
+        gameLoop();
+        
+        // Make canvas responsive
+        window.addEventListener('resize', function() {
+            // Keep the aspect ratio but fit to viewport
+            const container = document.body;
+            const windowWidth = container.clientWidth;
+            const windowHeight = container.clientHeight;
+            const windowRatio = windowWidth / windowHeight;
+            const canvasRatio = canvas.width / canvas.height;
+            
+            if (windowRatio < canvasRatio) {
+                canvas.style.width = windowWidth + 'px';
+                canvas.style.height = (windowWidth / canvasRatio) + 'px';
+            } else {
+                canvas.style.width = (windowHeight * canvasRatio) + 'px';
+                canvas.style.height = windowHeight + 'px';
+            }
+        });
+        
+        // Trigger initial resize
+        window.dispatchEvent(new Event('resize'));
+    </script>
+</body>
+</html>

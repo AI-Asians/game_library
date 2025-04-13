@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>True or False Platformer</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      overflow: hidden;
+    }
+    canvas {
+      border: 4px solid #444;
+      image-rendering: pixelated;
+    }
+    #instructions {
+      position: absolute;
+      top: 10px;
+      color: white;
+      font-family: sans-serif;
+      text-align: center;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="instructions">Press SPACEBAR to jump ONLY if statement is TRUE</div>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game constants
+    const GROUND_Y = 500;
+    const PLAYER_WIDTH = 40;
+    const PLAYER_HEIGHT = 60;
+    const GRAVITY = 1;
+    const JUMP_POWER = 20;
+    const RUN_SPEED = 5;
+    const COLORS = {
+      sky: '#5C94FC',
+      ground: '#8A5929',
+      grassTop: '#00A800',
+      player: '#FF0000',
+      obstacle: '#333333',
+      text: '#FFFFFF',
+      cloud: '#FFFFFF',
+      restartBtn: '#444444'
+    };
+    
+    // Game variables
+    let player = {
+      x: 100,
+      y: GROUND_Y - PLAYER_HEIGHT,
+      yVelocity: 0,
+      isJumping: false,
+      frameCount: 0,
+      frameState: 0
+    };
+    
+    // The game question (true or false)
+    const question = "The Great Wall of China is visible from space.";
+    const answer = false; // The correct answer
+    
+    let obstacle = {
+      x: canvas.width + 100,
+      width: 80,
+      passed: false
+    };
+    
+    let clouds = [
+      {x: canvas.width * 0.3, y: 100, size: 50},
+      {x: canvas.width * 0.7, y: 150, size: 70}
+    ];
+    
+    let gameState = 'playing'; // playing, won, lost
+    let playerAction = null; // jumped or didn't jump
+    
+    // Sound effects
+    function playJumpSound() {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(300, audioContext.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.3);
+    }
+    
+    function playCorrectSound() {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(660, audioContext.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.3);
+    }
+    
+    function playIncorrectSound() {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(180, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(100, audioContext.currentTime + 0.2);
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.4);
+    }
+    
+    // Draw functions
+    function drawSky() {
+      ctx.fillStyle = COLORS.sky;
+      ctx.fillRect(0, 0, canvas.width, GROUND_Y);
+    }
+    
+    function drawGround() {
+      // Ground base
+      ctx.fillStyle = COLORS.ground;
+      ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+      
+      // Grass top
+      ctx.fillStyle = COLORS.grassTop;
+      ctx.fillRect(0, GROUND_Y, canvas.width, 10);
+      
+      // Ground details
+      ctx.fillStyle = '#7A4919';
+      for (let i = 0; i < canvas.width; i += 40) {
+        ctx.fillRect(i, GROUND_Y + 20, 20, 10);
+      }
+    }
+    
+    function drawClouds() {
+      ctx.fillStyle = COLORS.cloud;
+      for (const cloud of clouds) {
+        // Draw cloud in chunky pixel style
+        ctx.fillRect(cloud.x, cloud.y, cloud.size, cloud.size/2);
+        ctx.fillRect(cloud.x - cloud.size/4, cloud.y + cloud.size/4, cloud.size*1.5, cloud.size/2);
+      }
+    }
+    
+    function drawPlayer() {
+      // Body
+      ctx.fillStyle = COLORS.player;
+      ctx.fillRect(player.x, player.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+      
+      // "Face" - make a simple face on the character
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(player.x + PLAYER_WIDTH - 15, player.y + 10, 10, 10); // Eye
+      
+      // Legs animation
+      if (player.isJumping) {
+        // Tucked legs for jump
+        ctx.fillRect(player.x + 5, player.y + PLAYER_HEIGHT - 15, 15, 15);
+        ctx.fillRect(player.x + 25, player.y + PLAYER_HEIGHT - 15, 15, 15);
+      } else {
+        // Running animation
+        if (player.frameState === 0) {
+          ctx.fillRect(player.x + 5, player.y + PLAYER_HEIGHT, 15, 15);
+          ctx.fillRect(player.x + 25, player.y + PLAYER_HEIGHT - 15, 15, 15);
+        } else {
+          ctx.fillRect(player.x + 5, player.y + PLAYER_HEIGHT - 15, 15, 15);
+          ctx.fillRect(player.x + 25, player.y + PLAYER_HEIGHT, 15, 15);
+        }
+      }
+    }
+    
+    function drawObstacle() {
+      ctx.fillStyle = COLORS.obstacle;
+      ctx.fillRect(obstacle.x, GROUND_Y - 50, obstacle.width, 50);
+      
+      // Add warning sign before obstacle
+      if (obstacle.x > 400 && obstacle.x < canvas.width) {
+        ctx.fillStyle = '#FFCC00';
+        ctx.fillRect(obstacle.x - 200, GROUND_Y - 100, 30, 30);
+        ctx.fillStyle = '#000000';
+        ctx.font = '24px sans-serif';
+        ctx.fillText('!', obstacle.x - 193, GROUND_Y - 80);
+      }
+    }
+    
+    function drawQuestion() {
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(question, canvas.width / 2, 70);
+    }
+    
+    function drawGameStatus() {
+      if (gameState === 'won') {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = '#00FF00';
+        ctx.font = '40px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('CORRECT!', canvas.width / 2, canvas.height / 2);
+        
+        drawRestartButton();
+      } else if (gameState === 'lost') {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = '#FF0000';
+        ctx.font = '40px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('WRONG!', canvas.width / 2, canvas.height / 2);
+        
+        drawRestartButton();
+      }
+    }
+    
+    function drawRestartButton() {
+      // Draw a simple restart button
+      ctx.fillStyle = COLORS.restartBtn;
+      ctx.fillRect(canvas.width / 2 - 75, canvas.height / 2 + 40, 150, 50);
+      
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Restart', canvas.width / 2, canvas.height / 2 + 75);
+    }
+    
+    // Game functions
+    function update() {
+      if (gameState === 'playing') {
+        // Update player
+        if (player.isJumping) {
+          player.yVelocity += GRAVITY;
+          player.y += player.yVelocity;
+          
+          // Check if player landed
+          if (player.y >= GROUND_Y - PLAYER_HEIGHT) {
+            player.y = GROUND_Y - PLAYER_HEIGHT;
+            player.isJumping = false;
+            player.yVelocity = 0;
+          }
+        }
+        
+        // Animate player
+        player.frameCount++;
+        if (player.frameCount >= 10) {
+          player.frameCount = 0;
+          player.frameState = player.frameState === 0 ? 1 : 0;
+        }
+        
+        // Update obstacle
+        obstacle.x -= RUN_SPEED;
+        
+        // Move clouds
+        for (const cloud of clouds) {
+          cloud.x -= RUN_SPEED * 0.3;
+          if (cloud.x < -cloud.size*2) {
+            cloud.x = canvas.width + cloud.size;
+            cloud.y = 50 + Math.random() * 150;
+          }
+        }
+        
+        // Check if player made a choice when passing the obstacle
+        if (!obstacle.passed && player.x > obstacle.x + obstacle.width) {
+          obstacle.passed = true;
+          
+          // Check if player made the right choice
+          if ((playerAction === 'jumped' && answer === true) || 
+              (playerAction === null && answer === false)) {
+            gameState = 'won';
+            playCorrectSound();
+          } else {
+            gameState = 'lost';
+            playIncorrectSound();
+          }
+        }
+        
+        // Check collision with obstacle
+        if (player.x + PLAYER_WIDTH > obstacle.x && 
+            player.x < obstacle.x + obstacle.width && 
+            player.y + PLAYER_HEIGHT > GROUND_Y - 50) {
+          gameState = 'lost';
+          playIncorrectSound();
+        }
+        
+        // Reset obstacle if it goes off screen
+        if (obstacle.x < -obstacle.width) {
+          obstacle.x = canvas.width + 100;
+          obstacle.passed = false;
+        }
+      }
+    }
+    
+    function draw() {
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw environment
+      drawSky();
+      drawClouds();
+      drawGround();
+      
+      // Draw game elements
+      drawObstacle();
+      drawPlayer();
+      drawQuestion();
+      
+      // Draw game status if game is over
+      drawGameStatus();
+    }
+    
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Event listeners
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && gameState === 'playing' && !player.isJumping) {
+        player.isJumping = true;
+        player.yVelocity = -JUMP_POWER;
+        playerAction = 'jumped';
+        playJumpSound();
+      }
+    });
+    
+    canvas.addEventListener('click', (e) => {
+      if (gameState !== 'playing') {
+        // Check if restart button was clicked
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        if (x > canvas.width / 2 - 75 && 
+            x < canvas.width / 2 + 75 && 
+            y > canvas.height / 2 + 40 && 
+            y > canvas.height / 2 && 
+            y < canvas.height / 2 + 90) {
+          // Reset game
+          player = {
+            x: 100,
+            y: GROUND_Y - PLAYER_HEIGHT,
+            yVelocity: 0,
+            isJumping: false,
+            frameCount: 0,
+            frameState: 0
+          };
+          
+          obstacle = {
+            x: canvas.width + 100,
+            width: 80,
+            passed: false
+          };
+          
+          gameState = 'playing';
+          playerAction = null;
+        }
+      } else if (!player.isJumping) {
+        // Clicking also makes the player jump (for mobile/touch)
+        player.isJumping = true;
+        player.yVelocity = -JUMP_POWER;
+        playerAction = 'jumped';
+        playJumpSound();
+      }
+    });
+    
+    // Start the game
+    gameLoop();
+  </script>
+</body>
+</html>

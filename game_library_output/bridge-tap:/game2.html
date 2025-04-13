@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bridge-Tap Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            background-color: #87CEEB;
+            image-rendering: pixelated;
+            border: 4px solid #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game constants
+        const COLORS = {
+            SKY: '#87CEEB',
+            GROUND: '#8B4513',
+            GRASS: '#228B22',
+            BRIDGE: '#A0522D',
+            BRIDGE_PLANKS: '#8B4513',
+            TRUE_PLATFORM: '#4CAF50',
+            FALSE_PLATFORM: '#F44336',
+            TEXT: '#FFFFFF',
+            PLAYER: '#FFD700'
+        };
+        
+        // Game state
+        let state = {
+            bridgeLength: 0,
+            isBuilding: false,
+            gameOver: false,
+            success: false,
+            restartButton: {
+                x: canvas.width / 2 - 50,
+                y: canvas.height / 2 + 50,
+                width: 100,
+                height: 40
+            },
+            question: "Water boils at 100 degrees Celsius at sea level.",
+            correctAnswer: true,
+            playerPosition: { x: 100, y: 380 },
+            playerMoving: false,
+            bridgeStartX: 150,
+            gapWidth: 300,
+            platformWidth: 150,
+            animationFrame: 0,
+            frameCounter: 0
+        };
+        
+        // Audio context for sound effects
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Sound functions
+        function playExtendSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.value = 440;
+            gainNode.gain.value = 0.1;
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.05);
+        }
+        
+        function playSuccessSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(392, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(523, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(659, audioCtx.currentTime + 0.2);
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        function playFailSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(330, audioCtx.currentTime);
+            oscillator.frequency.setValueAtTime(262, audioCtx.currentTime + 0.1);
+            oscillator.frequency.setValueAtTime(196, audioCtx.currentTime + 0.2);
+            gainNode.gain.value = 0.2;
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        // Event listeners
+        canvas.addEventListener('mousedown', startBuilding);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            startBuilding();
+        });
+        
+        canvas.addEventListener('mouseup', stopBuilding);
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            stopBuilding();
+        });
+        
+        canvas.addEventListener('click', (e) => {
+            if (state.gameOver) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                if (
+                    mouseX >= state.restartButton.x &&
+                    mouseX <= state.restartButton.x + state.restartButton.width &&
+                    mouseY >= state.restartButton.y &&
+                    mouseY <= state.restartButton.y + state.restartButton.height
+                ) {
+                    resetGame();
+                }
+            }
+        });
+        
+        function startBuilding() {
+            if (!state.gameOver && !state.isBuilding) {
+                state.isBuilding = true;
+            }
+        }
+        
+        function stopBuilding() {
+            if (state.isBuilding) {
+                state.isBuilding = false;
+                checkBridgeLength();
+            }
+        }
+        
+        function checkBridgeLength() {
+            const targetLength = state.gapWidth;
+            const tolerance = 40;
+            
+            if (Math.abs(state.bridgeLength - targetLength) <= tolerance) {
+                // Success! Bridge reaches the other side
+                state.success = true;
+                state.playerMoving = true;
+                playSuccessSound();
+            } else {
+                // Failure - bridge is too short or too long
+                state.gameOver = true;
+                playFailSound();
+            }
+        }
+        
+        function resetGame() {
+            state.bridgeLength = 0;
+            state.isBuilding = false;
+            state.gameOver = false;
+            state.success = false;
+            state.playerMoving = false;
+            state.playerPosition = { x: 100, y: 380 };
+        }
+        
+        // Drawing functions
+        function drawScene() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.SKY;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw ground
+            ctx.fillStyle = COLORS.GROUND;
+            ctx.fillRect(0, 400, canvas.width, 200);
+            
+            // Draw left platform with grass
+            ctx.fillStyle = COLORS.GRASS;
+            ctx.fillRect(0, 395, state.bridgeStartX, 5);
+            
+            // Draw TRUE platform
+            ctx.fillStyle = COLORS.TRUE_PLATFORM;
+            ctx.fillRect(state.bridgeStartX + state.gapWidth, 350, state.platformWidth, 50);
+            ctx.fillStyle = COLORS.GRASS;
+            ctx.fillRect(state.bridgeStartX + state.gapWidth, 395, state.platformWidth, 5);
+            
+            // Draw text on TRUE platform
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("TRUE", state.bridgeStartX + state.gapWidth + state.platformWidth/2, 380);
+            
+            // Draw FALSE platform
+            ctx.fillStyle = COLORS.FALSE_PLATFORM;
+            ctx.fillRect(state.bridgeStartX + state.gapWidth + state.platformWidth + 50, 350, state.platformWidth, 50);
+            ctx.fillStyle = COLORS.GRASS;
+            ctx.fillRect(state.bridgeStartX + state.gapWidth + state.platformWidth + 50, 395, state.platformWidth, 5);
+            
+            // Draw text on FALSE platform
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("FALSE", state.bridgeStartX + state.gapWidth + state.platformWidth + 50 + state.platformWidth/2, 380);
+            
+            // Draw bridge guide line (subtle visual cue)
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = "rgba(255,255,255,0.3)";
+            ctx.beginPath();
+            ctx.moveTo(state.bridgeStartX, 400);
+            ctx.lineTo(state.bridgeStartX + state.gapWidth, 400);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw bridge
+            if (state.bridgeLength > 0) {
+                drawBridge();
+            }
+            
+            // Draw player
+            drawPlayer();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw restart button if game over
+            if (state.gameOver) {
+                drawRestartButton();
+            }
+        }
+        
+        function drawBridge() {
+            // Main bridge structure
+            ctx.fillStyle = COLORS.BRIDGE;
+            ctx.fillRect(state.bridgeStartX, 395, state.bridgeLength, 5);
+            
+            // Bridge planks
+            const plankWidth = 10;
+            const plankSpacing = 15;
+            
+            for (let i = 0; i < state.bridgeLength; i += plankSpacing) {
+                ctx.fillStyle = COLORS.BRIDGE_PLANKS;
+                ctx.fillRect(state.bridgeStartX + i, 395, plankWidth, 5);
+            }
+            
+            // Bridge failure animation
+            if (state.gameOver && !state.success) {
+                // Draw a broken bridge
+                ctx.save();
+                ctx.translate(state.bridgeStartX + state.bridgeLength / 2, 400);
+                ctx.rotate(Math.PI / 8);
+                ctx.fillStyle = COLORS.BRIDGE;
+                ctx.fillRect(-state.bridgeLength / 2, -5, state.bridgeLength, 5);
+                
+                // Bridge planks
+                for (let i = -state.bridgeLength / 2; i < state.bridgeLength / 2; i += plankSpacing) {
+                    ctx.fillStyle = COLORS.BRIDGE_PLANKS;
+                    ctx.fillRect(i, -5, plankWidth, 5);
+                }
+                ctx.restore();
+            }
+        }
+        
+        function drawPlayer() {
+            ctx.fillStyle = COLORS.PLAYER;
+            
+            // Simple 8-bit style character (16x24 pixels)
+            const playerWidth = 16;
+            const playerHeight = 24;
+            
+            // Determine player animation frame
+            let frameOffset = 0;
+            if (state.playerMoving) {
+                frameOffset = Math.floor(state.animationFrame / 10) % 2;
+            }
+            
+            // Draw player body
+            ctx.fillRect(state.playerPosition.x, state.playerPosition.y - playerHeight, playerWidth, playerHeight);
+            
+            // Draw player eyes
+            ctx.fillStyle = "#000";
+            ctx.fillRect(state.playerPosition.x + playerWidth - 6, state.playerPosition.y - playerHeight + 5, 3, 3);
+            
+            // Draw player legs with animation
+            ctx.fillStyle = COLORS.PLAYER;
+            if (frameOffset === 0) {
+                ctx.fillRect(state.playerPosition.x + 2, state.playerPosition.y, 4, 5);
+                ctx.fillRect(state.playerPosition.x + 10, state.playerPosition.y, 4, 5);
+            } else {
+                ctx.fillRect(state.playerPosition.x, state.playerPosition.y, 4, 5);
+                ctx.fillRect(state.playerPosition.x + 12, state.playerPosition.y, 4, 5);
+            }
+        }
+        
+        function drawQuestion() {
+            ctx.fillStyle = COLORS.TEXT;
+            ctx.font = "20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(state.question, canvas.width / 2, 100);
+            
+            // Draw instructions
+            ctx.font = "16px Arial";
+            ctx.fillText("Click and hold to build bridge. Release at the right length!", canvas.width / 2, 130);
+        }
+        
+        function drawRestartButton() {
+            ctx.fillStyle = "#4285F4";
+            ctx.fillRect(
+                state.restartButton.x,
+                state.restartButton.y,
+                state.restartButton.width,
+                state.restartButton.height
+            );
+            
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "16px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(
+                "RESTART",
+                state.restartButton.x + state.restartButton.width / 2,
+                state.restartButton.y + state.restartButton.height / 2
+            );
+        }
+        
+        // Update game state
+        function update() {
+            state.frameCounter++;
+            state.animationFrame = (state.animationFrame + 1) % 60;
+            
+            if (state.isBuilding && !state.gameOver) {
+                state.bridgeLength += 3;
+                
+                // Play bridge extending sound every few frames
+                if (state.frameCounter % 10 === 0) {
+                    playExtendSound();
+                }
+            }
+            
+            // Move player across bridge if successful
+            if (state.playerMoving) {
+                state.playerPosition.x += 2;
+                
+                // Check if player reached the platform
+                if (state.playerPosition.x > state.bridgeStartX + state.gapWidth + 50) {
+                    state.playerMoving = false;
+                    state.gameOver = true;
+                }
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            drawScene();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle window resize
+        function resizeCanvas() {
+            const gameRatio = canvas.width / canvas.height;
+            const windowRatio = window.innerWidth / window.innerHeight;
+            
+            let newWidth, newHeight;
+            
+            if (windowRatio < gameRatio) {
+                newWidth = window.innerWidth;
+                newHeight = newWidth / gameRatio;
+            } else {
+                newHeight = window.innerHeight;
+                newWidth = newHeight * gameRatio;
+            }
+            
+            canvas.style.width = newWidth + 'px';
+            canvas.style.height = newHeight + 'px';
+        }
+        
+        // Initialize and start the game
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        gameLoop();
+    </script>
+</body>
+</html>

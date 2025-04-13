@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Truth Shield</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #111;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #222;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background-color: #333;
+            color: #fff;
+            border: 4px solid #555;
+            font-family: sans-serif;
+            cursor: pointer;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">RESTART</button>
+    <script>
+        // Set up canvas
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const isMobile = window.innerWidth <= 480;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game variables
+        let angle = 0;
+        let gameOver = false;
+        let rotationSpeed = Math.PI / 180; // Speed in radians per frame (2 degrees)
+        const restartBtn = document.getElementById('restart');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const shieldRadius = isMobile ? 120 : 180;
+        const pointerOffset = shieldRadius + 20;
+        const colors = {
+            true: '#4CAF50',
+            false: '#F44336',
+            pointer: '#FFEB3B',
+            background: '#222',
+            text: '#FFFFFF'
+        };
+        
+        // Correct answer
+        const correctAnswer = false; // "The Great Wall of China is visible from space" is FALSE
+        
+        // Audio context for sounds
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Generate sound functions
+        function playTone(freq, duration, type = 'square') {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = type;
+            oscillator.frequency.value = freq;
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            // Start sound
+            oscillator.start();
+            
+            // Create 8-bit style envelope
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+            
+            // Stop sound
+            setTimeout(() => oscillator.stop(), duration * 1000);
+        }
+        
+        function playSuccessSound() {
+            playTone(523.25, 0.1); // C5
+            setTimeout(() => playTone(659.25, 0.1), 100); // E5
+            setTimeout(() => playTone(783.99, 0.2), 200); // G5
+        }
+        
+        function playFailSound() {
+            playTone(440, 0.1);
+            setTimeout(() => playTone(330, 0.3), 100);
+        }
+        
+        function playClickSound() {
+            playTone(660, 0.05);
+        }
+        
+        // Game functions
+        function drawPixelatedCircle(x, y, radius, color) {
+            // Draw a pixelated circle by using small rectangles
+            const pixelSize = 4;
+            
+            for (let i = -radius; i <= radius; i += pixelSize) {
+                for (let j = -radius; j <= radius; j += pixelSize) {
+                    // If this pixel is inside the circle
+                    if (i*i + j*j <= radius*radius) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x + i, y + j, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+        
+        function drawShield() {
+            // Draw pixelated shield segments
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(angle);
+            
+            // True half
+            ctx.fillStyle = colors.true;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, shieldRadius, -Math.PI/2, Math.PI/2);
+            ctx.closePath();
+            ctx.fill();
+            
+            // False half
+            ctx.fillStyle = colors.false;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, shieldRadius, Math.PI/2, -Math.PI/2);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Pixelated edge detail
+            const edgePixels = 24;
+            const angleStep = (2 * Math.PI) / edgePixels;
+            for (let i = 0; i < edgePixels; i++) {
+                const edgeAngle = i * angleStep;
+                const edgeX = (shieldRadius - 8) * Math.cos(edgeAngle);
+                const edgeY = (shieldRadius - 8) * Math.sin(edgeAngle);
+                
+                ctx.fillStyle = i % 2 === 0 ? '#000' : '#555';
+                ctx.fillRect(edgeX - 4, edgeY - 4, 8, 8);
+            }
+            
+            // Draw TRUE label
+            ctx.fillStyle = '#FFF';
+            ctx.font = `${isMobile ? 16 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('TRUE', 0, -shieldRadius / 2);
+            
+            // Draw FALSE label
+            ctx.fillText('FALSE', 0, shieldRadius / 2);
+            
+            ctx.restore();
+        }
+        
+        function drawPointer() {
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            
+            // Draw the pointing triangle
+            ctx.fillStyle = colors.pointer;
+            ctx.beginPath();
+            ctx.moveTo(0, -pointerOffset);
+            ctx.lineTo(-10, -pointerOffset - 15);
+            ctx.lineTo(10, -pointerOffset - 15);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Add pixel effect to pointer
+            ctx.fillStyle = '#000';
+            ctx.fillRect(-8, -pointerOffset - 13, 4, 4);
+            ctx.fillRect(4, -pointerOffset - 13, 4, 4);
+            
+            ctx.restore();
+        }
+        
+        function drawQuestion() {
+            const question = "The Great Wall of China is visible from space.";
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // For web, show on one line
+            if (!isMobile) {
+                ctx.fillText(question, centerX, centerY - shieldRadius - 50);
+            } else {
+                // For mobile, break into two lines
+                const words = question.split(' ');
+                const firstHalf = words.slice(0, 5).join(' ');
+                const secondHalf = words.slice(5).join(' ');
+                ctx.fillText(firstHalf, centerX, centerY - shieldRadius - 70);
+                ctx.fillText(secondHalf, centerX, centerY - shieldRadius - 40);
+            }
+        }
+        
+        function drawResult(isCorrect) {
+            ctx.fillStyle = isCorrect ? colors.true : colors.false;
+            ctx.font = `${isMobile ? 24 : 32}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(isCorrect ? 'CORRECT!' : 'WRONG!', centerX, centerY + shieldRadius + 50);
+        }
+        
+        function drawBackground() {
+            // Draw pixelated background
+            const gridSize = 32;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                for (let y = 0; y < canvas.height; y += gridSize) {
+                    ctx.fillStyle = (x/gridSize + y/gridSize) % 2 === 0 ? '#1a1a1a' : '#222';
+                    ctx.fillRect(x, y, gridSize, gridSize);
+                }
+            }
+        }
+        
+        function update() {
+            if (!gameOver) {
+                // Rotate the shield in steps for 8-bit feel
+                angle += rotationSpeed;
+                
+                // Make rotation step-like for 8-bit effect
+                angle = Math.round(angle * 15) / 15;
+                
+                if (angle >= Math.PI * 2) {
+                    angle = 0;
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            drawBackground();
+            
+            // Draw shield and pointer
+            drawShield();
+            drawPointer();
+            
+            // Draw question
+            drawQuestion();
+            
+            // Draw result if game is over
+            if (gameOver) {
+                const pointerAngle = -Math.PI/2; // Pointer is at the top
+                const normalizedAngle = (angle % (Math.PI*2) + Math.PI*2) % (Math.PI*2);
+                
+                // Calculate if pointer is on TRUE or FALSE
+                const onTrue = normalizedAngle > Math.PI/2 && normalizedAngle < Math.PI*3/2;
+                const playerSelectedTrue = onTrue;
+                
+                const isCorrect = (playerSelectedTrue === correctAnswer);
+                drawResult(isCorrect);
+            }
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function handleClick() {
+            if (!gameOver) {
+                gameOver = true;
+                playClickSound();
+                
+                // Determine if player's answer is correct
+                const normalizedAngle = (angle % (Math.PI*2) + Math.PI*2) % (Math.PI*2);
+                const onTrue = normalizedAngle > Math.PI/2 && normalizedAngle < Math.PI*3/2;
+                const playerSelectedTrue = onTrue;
+                
+                const isCorrect = (playerSelectedTrue === correctAnswer);
+                
+                // Play appropriate sound
+                setTimeout(() => {
+                    if (isCorrect) {
+                        playSuccessSound();
+                    } else {
+                        playFailSound();
+                    }
+                }, 200);
+                
+                // Show restart button
+                setTimeout(() => {
+                    restartBtn.style.display = 'block';
+                }, 1000);
+            }
+        }
+        
+        function restart() {
+            gameOver = false;
+            angle = 0;
+            restartBtn.style.display = 'none';
+            playClickSound();
+        }
+        
+        // Event listeners
+        canvas.addEventListener('click', handleClick);
+        restartBtn.addEventListener('click', restart);
+        
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>

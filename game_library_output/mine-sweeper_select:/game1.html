@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capital Minesweeper</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #222;
+      font-family: sans-serif;
+    }
+    canvas {
+      border: 2px solid #444;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Check if on mobile and resize canvas accordingly
+    if (window.innerWidth <= 480) {
+      canvas.width = 360;
+      canvas.height = 640;
+    }
+
+    const colors = {
+      background: '#444',
+      grid: '#555',
+      unrevealed: '#888',
+      revealed: '#666',
+      text: '#fff',
+      highlight: '#7af',
+      correct: '#6d2',
+      incorrect: '#e44'
+    };
+
+    // Game state
+    let gameOver = false;
+    let gameWon = false;
+    let gridSize = 4; // 4x4 grid
+    let gridCells = [];
+    let tileSize = 80; // Size of each tile
+    let gridOffset = { 
+      x: (canvas.width - gridSize * tileSize) / 2,
+      y: (canvas.height - gridSize * tileSize) / 2 + 40
+    };
+    
+    // Sound effects using AudioContext
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(type) {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      if (type === 'click') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2);
+      } else if (type === 'correct') {
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+        setTimeout(() => oscillator.frequency.setValueAtTime(660, audioContext.currentTime), 100);
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.3);
+      } else if (type === 'incorrect') {
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
+        setTimeout(() => oscillator.frequency.setValueAtTime(100, audioContext.currentTime), 150);
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.4);
+      }
+    }
+
+    // Answer options
+    const answers = [
+      { text: 'Paris', correct: true },
+      { text: 'London', correct: false },
+      { text: 'Berlin', correct: false },
+      { text: 'Rome', correct: false },
+      { text: 'Madrid', correct: false },
+      { text: 'Brussels', correct: false },
+      { text: 'Amsterdam', correct: false },
+      { text: 'Vienna', correct: false },
+      { text: 'Lisbon', correct: false },
+      { text: 'Dublin', correct: false },
+      { text: 'Athens', correct: false },
+      { text: 'Warsaw', correct: false },
+      { text: 'Stockholm', correct: false },
+      { text: 'Prague', correct: false },
+      { text: 'Budapest', correct: false },
+      { text: 'Copenhagen', correct: false }
+    ];
+
+    // Initialize game
+    function initGame() {
+      gameOver = false;
+      gameWon = false;
+      gridCells = [];
+      
+      // Shuffle the answers
+      const shuffledAnswers = [...answers].sort(() => Math.random() - 0.5);
+      
+      // Take only what we need for the grid
+      const gridAnswers = shuffledAnswers.slice(0, gridSize * gridSize);
+      
+      // Make sure at least one correct answer is included
+      let hasCorrect = gridAnswers.some(answer => answer.correct);
+      if (!hasCorrect) {
+        const correctAnswer = answers.find(answer => answer.correct);
+        const randomIndex = Math.floor(Math.random() * gridSize * gridSize);
+        gridAnswers[randomIndex] = correctAnswer;
+      }
+      
+      // Create grid cells
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const index = y * gridSize + x;
+          gridCells.push({
+            x: gridOffset.x + x * tileSize,
+            y: gridOffset.y + y * tileSize,
+            width: tileSize,
+            height: tileSize,
+            revealed: false,
+            answer: gridAnswers[index]
+          });
+        }
+      }
+    }
+
+    function drawTile(cell) {
+      const x = cell.x;
+      const y = cell.y;
+      const w = cell.width;
+      const h = cell.height;
+      const padding = 4;
+      
+      if (!cell.revealed) {
+        // Unrevealed tile with beveled edges
+        ctx.fillStyle = colors.unrevealed;
+        ctx.fillRect(x, y, w, h);
+        
+        // Light bevel
+        ctx.fillStyle = '#aaa';
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + w, y);
+        ctx.lineTo(x + w - padding, y + padding);
+        ctx.lineTo(x + padding, y + padding);
+        ctx.lineTo(x + padding, y + h - padding);
+        ctx.lineTo(x, y + h);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Dark bevel
+        ctx.fillStyle = '#666';
+        ctx.beginPath();
+        ctx.moveTo(x + w, y);
+        ctx.lineTo(x + w, y + h);
+        ctx.lineTo(x, y + h);
+        ctx.lineTo(x + padding, y + h - padding);
+        ctx.lineTo(x + w - padding, y + h - padding);
+        ctx.lineTo(x + w - padding, y + padding);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // Revealed tile
+        ctx.fillStyle = colors.revealed;
+        ctx.fillRect(x, y, w, h);
+        
+        // Draw border
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        
+        // Draw answer text
+        ctx.fillStyle = cell.answer.correct ? colors.correct : colors.incorrect;
+        ctx.font = '18px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(cell.answer.text, x + w/2, y + h/2);
+        
+        // Draw icon for correct/incorrect
+        if (cell.answer.correct) {
+          // Checkmark icon for correct
+          ctx.strokeStyle = colors.correct;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(x + w - 20, y + 15);
+          ctx.lineTo(x + w - 30, y + 25);
+          ctx.lineTo(x + w - 40, y + 15);
+          ctx.stroke();
+        } else {
+          // X icon for incorrect
+          ctx.strokeStyle = colors.incorrect;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(x + w - 25, y + 10);
+          ctx.lineTo(x + w - 15, y + 20);
+          ctx.moveTo(x + w - 15, y + 10);
+          ctx.lineTo(x + w - 25, y + 20);
+          ctx.stroke();
+        }
+      }
+    }
+    
+    function drawRestartButton() {
+      const buttonWidth = 150;
+      const buttonHeight = 40;
+      const buttonX = (canvas.width - buttonWidth) / 2;
+      const buttonY = gridOffset.y + gridSize * tileSize + 30;
+      
+      // Draw button
+      ctx.fillStyle = colors.grid;
+      ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+      
+      // Light bevel
+      ctx.fillStyle = '#aaa';
+      ctx.beginPath();
+      ctx.moveTo(buttonX, buttonY);
+      ctx.lineTo(buttonX + buttonWidth, buttonY);
+      ctx.lineTo(buttonX + buttonWidth - 4, buttonY + 4);
+      ctx.lineTo(buttonX + 4, buttonY + 4);
+      ctx.lineTo(buttonX + 4, buttonY + buttonHeight - 4);
+      ctx.lineTo(buttonX, buttonY + buttonHeight);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Dark bevel
+      ctx.fillStyle = '#666';
+      ctx.beginPath();
+      ctx.moveTo(buttonX + buttonWidth, buttonY);
+      ctx.lineTo(buttonX + buttonWidth, buttonY + buttonHeight);
+      ctx.lineTo(buttonX, buttonY + buttonHeight);
+      ctx.lineTo(buttonX + 4, buttonY + buttonHeight - 4);
+      ctx.lineTo(buttonX + buttonWidth - 4, buttonY + buttonHeight - 4);
+      ctx.lineTo(buttonX + buttonWidth - 4, buttonY + 4);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Button text
+      ctx.fillStyle = colors.text;
+      ctx.font = '18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Restart', buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
+      
+      // Store button location for click handling
+      return {
+        x: buttonX,
+        y: buttonY,
+        width: buttonWidth,
+        height: buttonHeight
+      };
+    }
+
+    function draw() {
+      // Clear canvas
+      ctx.fillStyle = colors.background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw question
+      ctx.fillStyle = colors.text;
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('What is the capital of France?', canvas.width / 2, gridOffset.y - 40);
+      
+      // Draw grid
+      gridCells.forEach(cell => drawTile(cell));
+      
+      // Draw game over message if necessary
+      if (gameOver) {
+        const button = drawRestartButton();
+        
+        // Store the button for click handling
+        restartButton = button;
+      }
+    }
+
+    let restartButton = null;
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const clickX = (e.clientX - rect.left) * scaleX;
+      const clickY = (e.clientY - rect.top) * scaleY;
+      
+      if (gameOver) {
+        // Check if restart button was clicked
+        if (restartButton && 
+            clickX >= restartButton.x && 
+            clickX <= restartButton.x + restartButton.width && 
+            clickY >= restartButton.y && 
+            clickY <= restartButton.y + restartButton.height) {
+          initGame();
+          draw();
+        }
+      } else {
+        // Check if a grid cell was clicked
+        for (let cell of gridCells) {
+          if (clickX >= cell.x && 
+              clickX <= cell.x + cell.width && 
+              clickY >= cell.y && 
+              clickY <= cell.y + cell.height &&
+              !cell.revealed) {
+            
+            // Reveal the cell
+            cell.revealed = true;
+            playSound('click');
+            
+            // Check if it's the correct answer
+            if (cell.answer.correct) {
+              gameOver = true;
+              gameWon = true;
+              playSound('correct');
+              
+              // Reveal all cells
+              gridCells.forEach(c => c.revealed = true);
+            } else {
+              gameOver = true;
+              gameWon = false;
+              playSound('incorrect');
+              
+              // Reveal all cells
+              gridCells.forEach(c => c.revealed = true);
+            }
+            
+            draw();
+            break;
+          }
+        }
+      }
+    });
+
+    // Initialize and start the game
+    initGame();
+    draw();
+  </script>
+</body>
+</html>

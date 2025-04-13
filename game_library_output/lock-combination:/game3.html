@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lock Combination Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            overflow: hidden;
+        }
+        canvas {
+            image-rendering: pixelated;
+            border: 4px solid #444;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Game Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors - limited palette
+        const colors = {
+            background: '#1a1c2c',
+            metal: '#566c86',
+            metalDark: '#333c57',
+            metalLight: '#94b0c2',
+            highlight: '#f4f4f4',
+            shadow: '#333c57',
+            dialBg: '#94b0c2',
+            text: '#f4f4f4',
+            arrow: '#ffcd75',
+            arrowHover: '#f4f4f4',
+            correct: '#6abe30',
+            incorrect: '#d95763'
+        };
+
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        // Game state
+        const state = {
+            dials: [
+                { options: ['London', 'Paris', 'Berlin', 'Rome'], current: 0 },
+                { options: ['Madrid', 'Vienna', 'Oslo', 'Paris'], current: 0 },
+                { options: ['Paris', 'Athens', 'Dublin', 'Warsaw'], current: 0 }
+            ],
+            correctAnswer: 'Paris',
+            isCorrect: false,
+            animation: 0,
+            showRestart: false,
+            unlockAnimation: 0
+        };
+
+        // Arrow buttons for each dial
+        const arrows = [];
+        
+        // Initialize the game
+        function init() {
+            // Position arrows for each dial
+            const dialWidth = canvas.width * 0.7;
+            const dialHeight = 60;
+            const dialSpacing = 20;
+            const startY = canvas.height / 2 - (state.dials.length * (dialHeight + dialSpacing)) / 2;
+            
+            state.dials.forEach((dial, i) => {
+                const y = startY + i * (dialHeight + dialSpacing);
+                
+                // Up arrow
+                arrows.push({
+                    x: canvas.width / 2 - dialWidth / 2 - 40,
+                    y: y,
+                    width: 30,
+                    height: 30,
+                    dial: i,
+                    direction: -1,
+                    hover: false
+                });
+                
+                // Down arrow
+                arrows.push({
+                    x: canvas.width / 2 + dialWidth / 2 + 10,
+                    y: y,
+                    width: 30,
+                    height: 30,
+                    dial: i,
+                    direction: 1,
+                    hover: false
+                });
+            });
+            
+            // Event listeners
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('mousemove', handleMouseMove);
+            canvas.addEventListener('touchstart', handleTouch);
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Handle mouse clicks
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            // Check if restart button is clicked
+            if (state.showRestart) {
+                const buttonX = canvas.width / 2 - 60;
+                const buttonY = canvas.height - 100;
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth && 
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    resetGame();
+                    return;
+                }
+            }
+            
+            // Check if any arrow is clicked
+            arrows.forEach(arrow => {
+                if (x >= arrow.x && x <= arrow.x + arrow.width &&
+                    y >= arrow.y && y <= arrow.y + arrow.height) {
+                    // Rotate the dial
+                    rotateDial(arrow.dial, arrow.direction);
+                    playClickSound();
+                }
+            });
+        }
+        
+        // Handle mouse movement
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            
+            // Check if mouse is over any arrow
+            arrows.forEach(arrow => {
+                arrow.hover = x >= arrow.x && x <= arrow.x + arrow.width &&
+                               y >= arrow.y && y <= arrow.y + arrow.height;
+            });
+        }
+        
+        // Handle touch events for mobile
+        function handleTouch(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.touches[0].clientX - rect.left) * scaleX;
+            const y = (e.touches[0].clientY - rect.top) * scaleY;
+            
+            // Check if restart button is touched
+            if (state.showRestart) {
+                const buttonX = canvas.width / 2 - 60;
+                const buttonY = canvas.height - 100;
+                const buttonWidth = 120;
+                const buttonHeight = 40;
+                
+                if (x >= buttonX && x <= buttonX + buttonWidth && 
+                    y >= buttonY && y <= buttonY + buttonHeight) {
+                    resetGame();
+                    return;
+                }
+            }
+            
+            // Check if any arrow is touched
+            arrows.forEach(arrow => {
+                if (x >= arrow.x && x <= arrow.x + arrow.width &&
+                    y >= arrow.y && y <= arrow.y + arrow.height) {
+                    // Rotate the dial
+                    rotateDial(arrow.dial, arrow.direction);
+                    playClickSound();
+                }
+            });
+        }
+        
+        // Rotate a dial
+        function rotateDial(dialIndex, direction) {
+            if (state.showRestart) return;
+            
+            const dial = state.dials[dialIndex];
+            dial.current = (dial.current + direction + dial.options.length) % dial.options.length;
+            
+            // Check if all dials are set to the correct answer
+            checkCombination();
+        }
+        
+        // Check if the combination is correct
+        function checkCombination() {
+            // Check each dial's current selection
+            let allCorrect = true;
+            
+            for (const dial of state.dials) {
+                if (dial.options[dial.current] !== state.correctAnswer) {
+                    allCorrect = false;
+                    break;
+                }
+            }
+            
+            if (allCorrect && !state.isCorrect) {
+                state.isCorrect = true;
+                state.unlockAnimation = 1;
+                playUnlockSound();
+                
+                // Show restart button after animation
+                setTimeout(() => {
+                    state.showRestart = true;
+                }, 1500);
+            }
+        }
+        
+        // Reset the game
+        function resetGame() {
+            state.dials.forEach(dial => {
+                dial.current = Math.floor(Math.random() * dial.options.length);
+            });
+            state.isCorrect = false;
+            state.animation = 0;
+            state.showRestart = false;
+            state.unlockAnimation = 0;
+        }
+        
+        // Main game loop
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Update game state
+        function update() {
+            state.animation += 0.03;
+            
+            if (state.unlockAnimation > 0 && state.unlockAnimation < 1) {
+                state.unlockAnimation += 0.05;
+            }
+        }
+        
+        // Render the game
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw the question
+            drawQuestion();
+            
+            // Draw the lock
+            drawLock();
+            
+            // Draw the dials
+            drawDials();
+            
+            // Draw the arrows
+            drawArrows();
+            
+            // Draw the restart button if needed
+            if (state.showRestart) {
+                drawRestartButton();
+            }
+        }
+        
+        // Draw the question
+        function drawQuestion() {
+            ctx.fillStyle = colors.text;
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('What is the capital of France?', canvas.width / 2, 80);
+        }
+        
+        // Draw the lock
+        function drawLock() {
+            const lockWidth = canvas.width * 0.8;
+            const lockHeight = canvas.height * 0.7;
+            const lockX = canvas.width / 2 - lockWidth / 2;
+            const lockY = canvas.height / 2 - lockHeight / 2;
+            
+            // Lock body
+            ctx.fillStyle = colors.metalDark;
+            roundRect(ctx, lockX, lockY, lockWidth, lockHeight, 10, true);
+            
+            // Lock body inner highlight
+            ctx.fillStyle = colors.metal;
+            roundRect(ctx, lockX + 10, lockY + 10, lockWidth - 20, lockHeight - 20, 5, true);
+            
+            // Draw pixelated screws in corners
+            drawScrew(lockX + 20, lockY + 20);
+            drawScrew(lockX + lockWidth - 20, lockY + 20);
+            drawScrew(lockX + 20, lockY + lockHeight - 20);
+            drawScrew(lockX + lockWidth - 20, lockY + lockHeight - 20);
+            
+            // Draw lock shackle
+            if (state.isCorrect) {
+                const openAmount = Math.min(30, 30 * state.unlockAnimation);
+                drawShackle(canvas.width / 2, lockY - 10 - openAmount);
+            } else {
+                drawShackle(canvas.width / 2, lockY - 10);
+            }
+        }
+        
+        // Draw a screw
+        function drawScrew(x, y) {
+            ctx.fillStyle = colors.metalLight;
+            ctx.fillRect(x - 5, y - 5, 10, 10);
+            
+            ctx.fillStyle = colors.metalDark;
+            ctx.fillRect(x - 2, y - 1, 4, 2);
+        }
+        
+        // Draw the lock shackle
+        function drawShackle(centerX, topY) {
+            const shackleWidth = 80;
+            const shackleHeight = 50;
+            
+            ctx.fillStyle = colors.metalLight;
+            
+            // Left side
+            ctx.fillRect(centerX - shackleWidth / 2, topY, 10, shackleHeight);
+            
+            // Right side
+            ctx.fillRect(centerX + shackleWidth / 2 - 10, topY, 10, shackleHeight);
+            
+            // Top
+            ctx.fillRect(centerX - shackleWidth / 2, topY, shackleWidth, 10);
+            
+            // Inner highlight
+            ctx.fillStyle = colors.metalDark;
+            ctx.fillRect(centerX - shackleWidth / 2 + 3, topY + 3, shackleWidth - 6, 4);
+        }
+        
+        // Draw the dials
+        function drawDials() {
+            const dialWidth = canvas.width * 0.7;
+            const dialHeight = 60;
+            const dialSpacing = 20;
+            const startY = canvas.height / 2 - (state.dials.length * (dialHeight + dialSpacing)) / 2;
+            
+            state.dials.forEach((dial, i) => {
+                const y = startY + i * (dialHeight + dialSpacing);
+                const x = canvas.width / 2 - dialWidth / 2;
+                
+                // Dial background
+                ctx.fillStyle = colors.metalDark;
+                ctx.fillRect(x, y, dialWidth, dialHeight);
+                
+                // Dial inner
+                ctx.fillStyle = colors.dialBg;
+                ctx.fillRect(x + 5, y + 5, dialWidth - 10, dialHeight - 10);
+                
+                // Dial text
+                ctx.fillStyle = colors.text;
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Add a subtle wobble to dials when not solved
+                const wobble = !state.isCorrect ? Math.sin(state.animation * 2 + i) * 2 : 0;
+                
+                ctx.fillText(dial.options[dial.current], canvas.width / 2 + wobble, y + dialHeight / 2);
+                
+                // Dial notches (decorative pixel lines)
+                ctx.fillStyle = colors.metalDark;
+                for (let j = 1; j < 8; j++) {
+                    const notchX = x + (dialWidth / 8) * j - 1;
+                    ctx.fillRect(notchX, y + 5, 2, dialHeight - 10);
+                }
+            });
+        }
+        
+        // Draw the arrows
+        function drawArrows() {
+            arrows.forEach(arrow => {
+                const color = arrow.hover ? colors.arrowHover : colors.arrow;
+                
+                // Draw arrow shape
+                ctx.fillStyle = color;
+                
+                if (arrow.direction === -1) {
+                    // Up arrow
+                    ctx.beginPath();
+                    ctx.moveTo(arrow.x + arrow.width / 2, arrow.y);
+                    ctx.lineTo(arrow.x, arrow.y + arrow.height);
+                    ctx.lineTo(arrow.x + arrow.width, arrow.y + arrow.height);
+                    ctx.closePath();
+                    ctx.fill();
+                } else {
+                    // Down arrow
+                    ctx.beginPath();
+                    ctx.moveTo(arrow.x + arrow.width / 2, arrow.y + arrow.height);
+                    ctx.lineTo(arrow.x, arrow.y);
+                    ctx.lineTo(arrow.x + arrow.width, arrow.y);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            });
+        }
+        
+        // Draw the restart button
+        function drawRestartButton() {
+            const buttonX = canvas.width / 2 - 60;
+            const buttonY = canvas.height - 100;
+            const buttonWidth = 120;
+            const buttonHeight = 40;
+            
+            // Button background
+            ctx.fillStyle = colors.metalDark;
+            roundRect(ctx, buttonX, buttonY, buttonWidth, buttonHeight, 5, true);
+            
+            // Button text
+            ctx.fillStyle = colors.text;
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Restart', buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
+        }
+        
+        // Helper function to draw rounded rectangles
+        function roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            if (fill) {
+                ctx.fill();
+            }
+            if (stroke) {
+                ctx.stroke();
+            }
+        }
+        
+        // Sound effects
+        function playClickSound() {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+        
+        function playUnlockSound() {
+            // First tone
+            const osc1 = audioCtx.createOscillator();
+            const gain1 = audioCtx.createGain();
+            
+            osc1.type = 'square';
+            osc1.frequency.setValueAtTime(330, audioCtx.currentTime);
+            osc1.frequency.linearRampToValueAtTime(440, audioCtx.currentTime + 0.1);
+            
+            gain1.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain1.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            osc1.connect(gain1);
+            gain1.connect(audioCtx.destination);
+            
+            osc1.start();
+            osc1.stop(audioCtx.currentTime + 0.3);
+            
+            // Second tone
+            setTimeout(() => {
+                const osc2 = audioCtx.createOscillator();
+                const gain2 = audioCtx.createGain();
+                
+                osc2.type = 'square';
+                osc2.frequency.setValueAtTime(660, audioCtx.currentTime);
+                
+                gain2.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                
+                osc2.connect(gain2);
+                gain2.connect(audioCtx.destination);
+                
+                osc2.start();
+                osc2.stop(audioCtx.currentTime + 0.5);
+            }, 200);
+        }
+        
+        // Initialize the game
+        init();
+    </script>
+</body>
+</html>

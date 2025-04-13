@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factory Sort Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 4px solid #555;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #restart {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            background: #444;
+            color: #fff;
+            border: 3px solid #666;
+            cursor: pointer;
+            font-family: sans-serif;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <button id="restart">Restart</button>
+    <script>
+        // Game setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restart');
+        
+        // Set canvas size based on device
+        const isMobile = window.innerWidth <= 600;
+        canvas.width = isMobile ? 360 : 800;
+        canvas.height = isMobile ? 640 : 600;
+        
+        // Game colors (limited palette)
+        const colors = {
+            background: '#1a1c2c',
+            conveyor: '#5a6988',
+            conveyorBelt: '#41465e',
+            metal: '#94b0c2',
+            metalDark: '#566c86',
+            correct: '#40b93c',
+            incorrect: '#e43b44',
+            text: '#f2f4f6',
+            textShadow: '#333344',
+            button: '#ff9914',
+            buttonPressed: '#e76e10',
+            questionBg: '#566c86',
+            boxBg: '#f2f4f6',
+            boxText: '#333344'
+        };
+        
+        // Audio context for sound effects
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+        
+        // Sound effects
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            switch(type) {
+                case 'conveyor':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(120, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.2);
+                    break;
+                case 'correct':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'incorrect':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(110, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'button':
+                    oscillator.type = 'square';
+                    oscillator.frequency.setValueAtTime(260, audioCtx.currentTime);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+            }
+        }
+        
+        // Game variables
+        let gameState = 'playing'; // playing, correct, incorrect
+        const question = 'What is the capital of France?';
+        const answers = [
+            { text: 'Paris', correct: true },
+            { text: 'London', correct: false },
+            { text: 'Berlin', correct: false },
+            { text: 'Rome', correct: false }
+        ];
+        
+        // Shuffle answers
+        for (let i = answers.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [answers[i], answers[j]] = [answers[j], answers[i]];
+        }
+        
+        // Factory elements
+        const conveyorY = canvas.height * 0.4;
+        const conveyorHeight = 80;
+        const conveyorSpeed = 1.5;
+        let beltOffset = 0;
+        
+        // Create boxes on conveyor
+        const boxWidth = isMobile ? 150 : 200;
+        const boxHeight = 60;
+        const boxes = answers.map((answer, i) => {
+            return {
+                x: canvas.width + (i * (boxWidth + 80)),
+                y: conveyorY - boxHeight - 5,
+                width: boxWidth,
+                height: boxHeight,
+                text: answer.text,
+                correct: answer.correct,
+                sorted: false,
+                destination: null // 'correct' or 'incorrect'
+            };
+        });
+        
+        // Sorting chutes
+        const chuteWidth = canvas.width * 0.45;
+        const correctChute = {
+            x: 0,
+            y: conveyorY + conveyorHeight,
+            width: chuteWidth,
+            height: canvas.height - (conveyorY + conveyorHeight),
+            type: 'correct'
+        };
+        
+        const incorrectChute = {
+            x: canvas.width - chuteWidth,
+            y: conveyorY + conveyorHeight,
+            width: chuteWidth,
+            height: canvas.height - (conveyorY + conveyorHeight),
+            type: 'incorrect'
+        };
+        
+        // Control levers
+        const leverHeight = 60;
+        const leftLever = {
+            x: canvas.width * 0.3 - 25,
+            y: conveyorY + conveyorHeight + 20,
+            width: 50,
+            height: leverHeight,
+            pressed: false
+        };
+        
+        const rightLever = {
+            x: canvas.width * 0.7 - 25,
+            y: conveyorY + conveyorHeight + 20,
+            width: 50,
+            height: leverHeight,
+            pressed: false
+        };
+        
+        // Game timer and animation tick
+        let lastTime = 0;
+        let timeSinceLastSound = 0;
+        
+        // Gear rotation animation
+        let gearRotation = 0;
+        
+        // Draw factory elements
+        function drawFactory() {
+            // Background
+            ctx.fillStyle = colors.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw question display
+            const questionHeight = 80;
+            ctx.fillStyle = colors.questionBg;
+            ctx.fillRect(0, 0, canvas.width, questionHeight);
+            
+            // Question text
+            ctx.fillStyle = colors.text;
+            ctx.font = `${isMobile ? 18 : 24}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(question, canvas.width / 2, questionHeight / 2);
+            
+            // Conveyor belt
+            ctx.fillStyle = colors.conveyor;
+            ctx.fillRect(0, conveyorY, canvas.width, conveyorHeight);
+            
+            // Conveyor belt lines
+            ctx.fillStyle = colors.conveyorBelt;
+            for (let i = 0; i < canvas.width / 20 + 1; i++) {
+                const x = (i * 20 + beltOffset) % canvas.width;
+                ctx.fillRect(x - 5, conveyorY + 10, 10, conveyorHeight - 20);
+            }
+            
+            // Draw gears
+            drawGear(50, conveyorY - 30, 25);
+            drawGear(canvas.width - 50, conveyorY - 30, 25);
+            
+            // Draw chutes
+            ctx.fillStyle = colors.metalDark;
+            // Left chute
+            ctx.fillRect(correctChute.x, correctChute.y, correctChute.width, correctChute.height);
+            // Right chute
+            ctx.fillRect(incorrectChute.x, incorrectChute.y, incorrectChute.width, incorrectChute.height);
+            
+            // Chute indicators
+            ctx.fillStyle = colors.correct;
+            ctx.fillRect(correctChute.x + 10, correctChute.y + 10, correctChute.width - 20, 30);
+            ctx.fillStyle = colors.incorrect;
+            ctx.fillRect(incorrectChute.x + 10, incorrectChute.y + 10, incorrectChute.width - 20, 30);
+            
+            // Levers
+            drawLever(leftLever);
+            drawLever(rightLever);
+            
+            // Divider in the middle
+            ctx.fillStyle = colors.metal;
+            const dividerWidth = 30;
+            ctx.fillRect(canvas.width / 2 - dividerWidth / 2, conveyorY + conveyorHeight, 
+                        dividerWidth, canvas.height - (conveyorY + conveyorHeight));
+            
+            // Boxes on conveyor
+            for (const box of boxes) {
+                if (!box.sorted) {
+                    drawBox(box);
+                }
+            }
+            
+            // Warning label for sorting decision
+            if (boxes.some(box => box.x > canvas.width * 0.4 && box.x < canvas.width * 0.6 && !box.sorted)) {
+                ctx.fillStyle = colors.button;
+                ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('SORT!', canvas.width / 2, conveyorY + conveyorHeight - 15);
+            }
+        }
+        
+        function drawGear(x, y, radius) {
+            const numTeeth = 8;
+            const outerRadius = radius;
+            const innerRadius = radius * 0.7;
+            
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(gearRotation);
+            
+            ctx.fillStyle = colors.metal;
+            ctx.beginPath();
+            for (let i = 0; i < numTeeth; i++) {
+                const angle = (i / numTeeth) * Math.PI * 2;
+                const nextAngle = ((i + 0.5) / numTeeth) * Math.PI * 2;
+                const nextNextAngle = ((i + 1) / numTeeth) * Math.PI * 2;
+                
+                ctx.lineTo(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius);
+                ctx.lineTo(Math.cos(nextAngle) * innerRadius, Math.sin(nextAngle) * innerRadius);
+                ctx.lineTo(Math.cos(nextNextAngle) * outerRadius, Math.sin(nextNextAngle) * outerRadius);
+            }
+            ctx.closePath();
+            ctx.fill();
+            
+            // Inner circle
+            ctx.fillStyle = colors.metalDark;
+            ctx.beginPath();
+            ctx.arc(0, 0, radius * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        function drawLever(lever) {
+            // Base
+            ctx.fillStyle = colors.metal;
+            ctx.fillRect(lever.x - 10, lever.y + lever.height, lever.width + 20, 15);
+            
+            // Lever
+            ctx.fillStyle = lever.pressed ? colors.buttonPressed : colors.button;
+            const leverY = lever.pressed ? lever.y + 10 : lever.y;
+            ctx.fillRect(lever.x, leverY, lever.width, lever.height - 10);
+            
+            // Lever top
+            ctx.fillStyle = colors.metalDark;
+            ctx.fillRect(lever.x - 5, leverY - 10, lever.width + 10, 15);
+        }
+        
+        function drawBox(box) {
+            // Box shadow
+            ctx.fillStyle = '#00000033';
+            ctx.fillRect(box.x + 5, box.y + 5, box.width, box.height);
+            
+            // Box
+            ctx.fillStyle = colors.boxBg;
+            ctx.fillRect(box.x, box.y, box.width, box.height);
+            
+            // Box border
+            ctx.strokeStyle = colors.metalDark;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(box.x, box.y, box.width, box.height);
+            
+            // Text
+            ctx.fillStyle = colors.boxText;
+            ctx.font = `${isMobile ? 16 : 20}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(box.text, box.x + box.width / 2, box.y + box.height / 2);
+        }
+        
+        function updateGame(deltaTime) {
+            if (gameState !== 'playing') return;
+            
+            // Update belt animation
+            beltOffset = (beltOffset + conveyorSpeed) % 20;
+            
+            // Update gear rotation
+            gearRotation += 0.01;
+            
+            // Conveyor sound
+            timeSinceLastSound += deltaTime;
+            if (timeSinceLastSound > 500 && boxes.some(box => !box.sorted)) {
+                playSound('conveyor');
+                timeSinceLastSound = 0;
+            }
+            
+            // Update boxes
+            for (const box of boxes) {
+                if (!box.sorted) {
+                    box.x -= conveyorSpeed;
+                    
+                    // If box passes center, check if it needs to be sorted
+                    if (box.x + box.width < canvas.width / 2 && !box.destination) {
+                        if (leftLever.pressed) {
+                            box.destination = 'correct';
+                        } else if (rightLever.pressed) {
+                            box.destination = 'incorrect';
+                        }
+                    }
+                    
+                    // If box has a destination, check if it went to the correct one
+                    if (box.destination) {
+                        if (box.x + box.width < 0) {
+                            box.sorted = true;
+                            
+                            // Check if this box determined the outcome
+                            if (box.destination === 'correct') {
+                                if (box.correct) {
+                                    gameState = 'correct';
+                                    playSound('correct');
+                                    restartBtn.style.display = 'block';
+                                } else {
+                                    gameState = 'incorrect';
+                                    playSound('incorrect');
+                                    restartBtn.style.display = 'block';
+                                }
+                            } else if (box.destination === 'incorrect') {
+                                if (!box.correct) {
+                                    // This is fine, continue
+                                } else {
+                                    gameState = 'incorrect';
+                                    playSound('incorrect');
+                                    restartBtn.style.display = 'block';
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Check if box has gone off screen without being sorted
+                    if (box.x + box.width < 0 && !box.destination) {
+                        box.sorted = true;
+                        gameState = 'incorrect';
+                        playSound('incorrect');
+                        restartBtn.style.display = 'block';
+                    }
+                }
+            }
+        }
+        
+        function drawGameResult() {
+            if (gameState === 'correct') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = colors.correct;
+                ctx.font = `${isMobile ? 30 : 40}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('CORRECT!', canvas.width / 2, canvas.height / 2);
+            } else if (gameState === 'incorrect') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = colors.incorrect;
+                ctx.font = `${isMobile ? 30 : 40}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('INCORRECT!', canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            updateGame(deltaTime);
+            drawFactory();
+            drawGameResult();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Input handling
+        canvas.addEventListener('mousedown', handleInput);
+        canvas.addEventListener('touchstart', handleTouchInput);
+        
+        function handleTouchInput(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const canvasX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+            const canvasY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+            
+            checkInputPosition(canvasX, canvasY);
+        }
+        
+        function handleInput(e) {
+            const rect = canvas.getBoundingClientRect();
+            const canvasX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const canvasY = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            checkInputPosition(canvasX, canvasY);
+        }
+        
+        function checkInputPosition(x, y) {
+            if (gameState !== 'playing') return;
+            
+            // Check if clicked on left lever
+            if (x >= leftLever.x && x <= leftLever.x + leftLever.width &&
+                y >= leftLever.y && y <= leftLever.y + leftLever.height) {
+                leftLever.pressed = true;
+                rightLever.pressed = false;
+                playSound('button');
+            }
+            
+            // Check if clicked on right lever
+            if (x >= rightLever.x && x <= rightLever.x + rightLever.width &&
+                y >= rightLever.y && y <= rightLever.y + rightLever.height) {
+                rightLever.pressed = true;
+                leftLever.pressed = false;
+                playSound('button');
+            }
+        }
+        
+        // Mouse up and touch end
+        canvas.addEventListener('mouseup', resetLevers);
+        canvas.addEventListener('touchend', resetLevers);
+        
+        function resetLevers() {
+            // Levers don't reset in this game - they stay down until the other is pressed
+        }
+        
+        // Restart button
+        restartBtn.addEventListener('click', function() {
+            location.reload();
+        });
+        
+        // Start the game
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
